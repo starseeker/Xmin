@@ -1,0 +1,12 @@
+/build/
+/build-*/
+/cmake-build-*/
+/install/
+/compile_commands.json
+
+# CMake package output
+/_CPack_Packages/
+/*.tar.gz
+/*.tar.xz
+/*.zip
+

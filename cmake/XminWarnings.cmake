@@ -1,0 +1,16 @@
+include_guard(GLOBAL)
+
+function(xmin_enable_warnings target)
+  if(MSVC)
+    target_compile_options(${target} PRIVATE /W4)
+    if(XMIN_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE /WX)
+    endif()
+  elseif(CMAKE_C_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(${target} PRIVATE -Wall -Wextra -Wpedantic)
+    if(XMIN_WARNINGS_AS_ERRORS)
+      target_compile_options(${target} PRIVATE -Werror)
+    endif()
+  endif()
+endfunction()
+

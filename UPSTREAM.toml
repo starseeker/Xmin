@@ -1,0 +1,59 @@
+manifest_version = 1
+
+# Entries are candidates until source is actually imported. Add sha256, license,
+# retained_paths, and patches fields as part of each audited import.
+
+[[source]]
+name = "xorg-server"
+revision = "21.1.23"
+url = "https://www.x.org/releases/individual/xserver/"
+status = "candidate"
+
+[[source]]
+name = "xorgproto"
+revision = "2024.1"
+url = "https://www.x.org/releases/individual/proto/"
+status = "candidate"
+
+[[source]]
+name = "pixman"
+revision = "0.46.2"
+url = "https://www.cairographics.org/releases/"
+status = "candidate"
+
+[[source]]
+name = "xtrans"
+revision = "1.6.0"
+url = "https://www.x.org/releases/individual/lib/"
+status = "candidate"
+
+[[source]]
+name = "libXfont2"
+revision = "2.0.8"
+url = "https://www.x.org/releases/individual/lib/"
+status = "candidate"
+
+[[source]]
+name = "libXau"
+revision = "1.0.12"
+url = "https://www.x.org/releases/individual/lib/"
+status = "candidate"
+
+[[source]]
+name = "libxkbfile"
+revision = "1.2.0"
+url = "https://www.x.org/releases/individual/lib/"
+status = "candidate"
+
+[[source]]
+name = "xkeyboard-config"
+revision = "2.47"
+url = "https://www.x.org/releases/individual/data/xkeyboard-config/"
+status = "generation-only candidate"
+
+[[source]]
+name = "osmesa"
+revision = "986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c"
+url = "https://github.com/starseeker/osmesa"
+status = "candidate"
+

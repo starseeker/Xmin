@@ -1,4 +1,4 @@
-# Minimal self-contained Xvfb design
+# Xmin: minimal self-contained X11 server design
 
 Status: initial architecture and implementation inventory, July 2026.
 
@@ -10,7 +10,7 @@ font stack, OpenGL implementation, device drivers, or graphics hardware.
 
 The normal release is a relocatable package containing:
 
-1. `Xvfb`, with the X11 server, modern server extensions, software 2D renderer,
+1. `Xmin`, with the X11 server, modern server extensions, software 2D renderer,
    fonts, keyboard map, and authentication support compiled in; and
 2. if OpenGL 2.0 support is enabled, a companion client-side GLX software bridge
    using the project's OSMesa implementation.
@@ -21,7 +21,7 @@ process.  It is still part of this project and requires no system installation.
 The server does **not** need `libX11`, `libxcb`, or the client libraries named after
 X extensions.  Applications already use those libraries to encode X11 requests.
 This project must instead compile the corresponding **server-side protocol
-implementations** into `Xvfb`.
+implementations** into `Xmin`.
 
 ### Goals
 
@@ -59,7 +59,7 @@ implementations** into `Xvfb`.
        +------------+------------+
                     v
   +----------------------------------------------------+
-  | Xvfb process                                       |
+  | Xmin process                                       |
   |                                                    |
   | transport/auth -> DIX resource & event core        |
   |                         |                           |
@@ -324,18 +324,18 @@ small project-owned files or clearly recorded patches instead of rewriting the c
 
 ## 9. CMake design
 
-Build component object/static libraries and link them into `Xvfb`; do not install
+Build component object/static libraries and link them into `Xmin`; do not install
 them as public libraries.  The normal build performs no `find_package(X11)`,
 pkg-config lookup, or implicit host Mesa/font lookup.
 
 Suggested controls:
 
-- `XVFB_BUILD_GLX=ON|OFF` -- OSMesa server GLX and companion bridge.
-- `XVFB_ENABLE_MITSHM=AUTO|ON|OFF` -- based on genuine platform support.
-- `XVFB_ENABLE_TCP=OFF` -- explicit opt-in only.
-- `XVFB_PIXMAN_SIMD=AUTO|ON|OFF` -- generic C is always available.
-- `XVFB_BUILD_LAUNCHER=ON` -- integrated authenticated child runner.
-- `XVFB_BUILD_TESTS=OFF` -- may discover external test clients/toolkits.
+- `XMIN_BUILD_GLX=ON|OFF` -- OSMesa server GLX and companion bridge.
+- `XMIN_ENABLE_MITSHM=AUTO|ON|OFF` -- based on genuine platform support.
+- `XMIN_ENABLE_TCP=OFF` -- explicit opt-in only.
+- `XMIN_PIXMAN_SIMD=AUTO|ON|OFF` -- generic C is always available.
+- `XMIN_BUILD_LAUNCHER=ON` -- integrated authenticated child runner.
+- `XMIN_BUILD_TESTS=ON|OFF` -- may discover external test clients/toolkits.
 
 CMake must probe headers, functions, endianness, type sizes, Unix sockets, peer
 credentials, polling APIs, shared memory, secure randomness, and thread support.
