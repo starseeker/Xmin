@@ -37,4 +37,6 @@ sequence are documented in DESIGN.md.
 
 The repository scaffold, CMake options, build commands, and source-import workflow are
 documented in BUILDING.md.  The current Xmin executable is an intentionally non-functional
-stub that verifies the build, configuration, test, and installation paths.
+stub that verifies the build, configuration, test, and installation paths.  The first imported
+foundation now includes selected xorgproto headers, generic-C pixman, portable Xorg libc
+fallbacks, and the Xorg DIX atom implementation.

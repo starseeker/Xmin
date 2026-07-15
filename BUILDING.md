@@ -1,8 +1,10 @@
 # Building Xmin
 
-Xmin currently builds a deliberately non-functional server stub. The scaffold
-establishes the target names, component boundaries, generated configuration,
-platform probes, tests, and install rules that the real server will use.
+Xmin currently builds a deliberately non-functional server stub plus the first
+upstream foundation: selected X11 protocol headers, generic pixman, portable Xorg
+libc fallbacks where the host needs them, and the DIX atom table. The scaffold
+establishes the remaining target boundaries, generated configuration, platform
+probes, tests, and install rules that the real server will use.
 
 ## Requirements
 
@@ -96,3 +98,22 @@ Generated headers are written under `build/generated`; the source tree is never
 modified by configuration. The normal build must remain offline and must not add
 `find_package(X11)`, pkg-config discovery of a host graphics stack, or runtime module
 loading. Record every actual source import in `UPSTREAM.toml` before enabling it.
+
+## Refreshing imported sources
+
+The normal build never downloads source. To reproduce the current retained import,
+download and checksum the archives listed in `UPSTREAM.toml`, extract them outside
+the repository, and run:
+
+```sh
+sh tools/import-xorg.sh \
+  /path/to/xorgproto-2024.1 \
+  /path/to/xorg-server-21.1.23 \
+  /path/to/pixman-0.46.2
+```
+
+The script copies an explicit allowlist for protocol and C sources. Private X server
+headers are temporarily retained as a unit because their type graph is tightly
+interconnected; they will be reduced after all selected server components compile.
+Never edit imported files in place without recording a reproducible patch in the
+corresponding manifest entry.

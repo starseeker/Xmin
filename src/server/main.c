@@ -1,5 +1,7 @@
 #include "xmin/config.h"
 
+#include <pixman.h>
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +30,7 @@ print_version(void)
            XMIN_BUILD_GLX ? "on" : "off",
            XMIN_HAVE_MITSHM ? "on" : "off",
            XMIN_ENABLE_TCP ? "on" : "off");
+    printf("embedded pixman: %s (generic C)\n", pixman_version_string());
 }
 
 int
@@ -53,4 +56,3 @@ main(int argc, char **argv)
             XMIN_VERSION);
     return EXIT_FAILURE;
 }
-

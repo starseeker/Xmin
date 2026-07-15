@@ -1,0 +1,23 @@
+#ifndef XMIN_DIX_CONFIG_H
+#define XMIN_DIX_CONFIG_H
+
+/* Minimal compatibility configuration consumed by retained Xorg sources. */
+#define HAVE_DIX_CONFIG_H 1
+
+#cmakedefine HAVE_REALLOCARRAY 1
+#cmakedefine HAVE_STRCASECMP 1
+#cmakedefine HAVE_STRNCASECMP 1
+#cmakedefine HAVE_STRCASESTR 1
+#cmakedefine HAVE_STRLCAT 1
+#cmakedefine HAVE_STRLCPY 1
+#cmakedefine HAVE_STRNDUP 1
+#cmakedefine HAVE_TIMINGSAFE_MEMCMP 1
+#cmakedefine HAVE_VASPRINTF 1
+
+#define PACKAGE_NAME "Xmin"
+#define PACKAGE_STRING "Xmin @PROJECT_VERSION@"
+#define PACKAGE_VERSION "@PROJECT_VERSION@"
+#define XORG_VERSION_CURRENT @PROJECT_VERSION_MAJOR@@PROJECT_VERSION_MINOR@@PROJECT_VERSION_PATCH@
+
+#endif
+

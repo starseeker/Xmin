@@ -1,25 +1,68 @@
 manifest_version = 1
 
-# Entries are candidates until source is actually imported. Add sha256, license,
-# retained_paths, and patches fields as part of each audited import.
+# Candidate entries have not yet been imported. Imported and partial entries record
+# the exact archive, checksum, retained paths, license location, and local patches.
 
 [[source]]
 name = "xorg-server"
 revision = "21.1.23"
 url = "https://www.x.org/releases/individual/xserver/"
-status = "candidate"
+archive = "xorg-server-21.1.23.tar.xz"
+sha256 = "e39832e5617dadaf072fdf9f0e19e5d2e1c2a13607ac280bac1aba9f8fe14634"
+signature_key = "3C2C43D9447D5938EF4551EBE23B7E70B467F0BF"
+signature_verified = false
+signature_note = "Detached signature present; release public key was unavailable in the import environment."
+status = "partial"
+local_path = "third_party/xorg-server"
+retained_paths = [
+  "include/*.h",
+  "Xext/geext.h",
+  "dix/atom.c",
+  "dix/initatoms.c",
+  "os portable libc fallbacks",
+]
+license_paths = ["LICENSES/xorg-server/COPYING"]
+patches = []
+importer = "tools/import-xorg.sh"
 
 [[source]]
 name = "xorgproto"
 revision = "2024.1"
 url = "https://www.x.org/releases/individual/proto/"
-status = "candidate"
+archive = "xorgproto-2024.1.tar.xz"
+sha256 = "372225fd40815b8423547f5d890c5debc72e88b91088fbfb13158c20495ccb59"
+signature_key = "67DC86F2623FC5FD4BB5225D14706DBE1E4B4540"
+signature_verified = false
+signature_note = "Detached signature present; release public key was unavailable in the import environment."
+status = "imported"
+local_path = "third_party/xorgproto"
+retained_paths = [
+  "core X11 protocol headers",
+  "declared Xmin extension protocol headers",
+  "GLX protocol headers",
+  "core font protocol headers",
+  "dri3proto.h as a Present wire-type dependency only",
+]
+license_paths = ["LICENSES/xorgproto/COPYING-*"]
+patches = []
+importer = "tools/import-xorg.sh"
 
 [[source]]
 name = "pixman"
 revision = "0.46.2"
 url = "https://www.cairographics.org/releases/"
-status = "candidate"
+archive = "pixman-0.46.2.tar.gz"
+sha256 = "3e0de5ba6e356916946a3d958192f15505dcab85134771bfeab4ce4e29bbd733"
+status = "imported"
+local_path = "third_party/pixman"
+retained_paths = [
+  "generic C implementation",
+  "public and private headers",
+  "generated blue-noise table",
+]
+license_paths = ["LICENSES/pixman/COPYING"]
+patches = []
+importer = "tools/import-xorg.sh"
 
 [[source]]
 name = "xtrans"
@@ -56,4 +99,3 @@ name = "osmesa"
 revision = "986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c"
 url = "https://github.com/starseeker/osmesa"
 status = "candidate"
-

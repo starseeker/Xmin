@@ -40,6 +40,29 @@ configure_file(
   "${PROJECT_BINARY_DIR}/generated/xmin/config.h"
   @ONLY
 )
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/dix-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/dix-config.h"
+  @ONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/third_party/xorgproto/include/X11/Xpoll.h.in"
+  "${PROJECT_BINARY_DIR}/generated/X11/Xpoll.h"
+  @ONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/pixman-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/pixman/pixman-config.h"
+  @ONLY
+)
+set(PIXMAN_VERSION_MAJOR 0)
+set(PIXMAN_VERSION_MINOR 46)
+set(PIXMAN_VERSION_MICRO 2)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/third_party/pixman/pixman/pixman-version.h.in"
+  "${PROJECT_BINARY_DIR}/generated/pixman/pixman-version.h"
+  @ONLY
+)
 
 add_subdirectory(third_party)
 add_subdirectory(data)

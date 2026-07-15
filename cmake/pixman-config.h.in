@@ -1,0 +1,19 @@
+#ifndef XMIN_PIXMAN_CONFIG_H
+#define XMIN_PIXMAN_CONFIG_H
+
+#define PACKAGE "Xmin"
+#define SIZEOF_LONG @SIZEOF_LONG@
+#cmakedefine WORDS_BIGENDIAN 1
+#cmakedefine HAVE_PTHREADS 1
+#cmakedefine HAVE_ALARM 1
+#cmakedefine HAVE_GETPAGESIZE 1
+#cmakedefine HAVE_GETTIMEOFDAY 1
+#cmakedefine HAVE_MMAP 1
+#cmakedefine HAVE_MPROTECT 1
+#cmakedefine HAVE_POSIX_MEMALIGN 1
+#cmakedefine HAVE_SIGACTION 1
+#cmakedefine HAVE_SYS_MMAN_H 1
+#cmakedefine HAVE_UNISTD_H 1
+#cmakedefine HAVE_BUILTIN_CLZ 1
+
+#endif
