@@ -1188,8 +1188,11 @@ Connection::handle_map_window(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.set_window_mapped(*window, true);
-    return Result<void>::success();
+    const auto delivered = server_.set_window_mapped(*window, true);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
@@ -1205,8 +1208,11 @@ Connection::handle_map_subwindows(const RequestContext &context)
     if (server_.window(*id) == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.set_subwindows_mapped(*id, true);
-    return Result<void>::success();
+    const auto delivered = server_.set_subwindows_mapped(*id, true);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
@@ -1223,8 +1229,11 @@ Connection::handle_unmap_window(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.set_window_mapped(*window, false);
-    return Result<void>::success();
+    const auto delivered = server_.set_window_mapped(*window, false);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
@@ -1240,8 +1249,11 @@ Connection::handle_unmap_subwindows(const RequestContext &context)
     if (server_.window(*id) == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.set_subwindows_mapped(*id, false);
-    return Result<void>::success();
+    const auto delivered = server_.set_subwindows_mapped(*id, false);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>

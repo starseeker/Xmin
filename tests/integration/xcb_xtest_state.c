@@ -455,6 +455,98 @@ main(void)
     }
     free(event);
 
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, child,
+                     XCB_CURRENT_TIME),
+                 "focus child for lifecycle transition")) {
+        goto cleanup;
+    }
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    if (!checked(connection, xcb_unmap_window_checked(connection, child),
+                 "unmap focused pointer child")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "unmap lifecycle FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "unmap lifecycle FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child || leave_event->child != XCB_NONE ||
+        leave_event->event_x != 7 || leave_event->event_y != 9 ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        leave_event->same_screen_focus != 3) {
+        fprintf(stderr, "unmap lifecycle LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != screen->root || enter_event->child != XCB_NONE ||
+        enter_event->root_x != 17 || enter_event->root_y != 19 ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        enter_event->same_screen_focus != 3) {
+        fprintf(stderr, "unmap lifecycle EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection, xcb_map_window_checked(connection, child),
+                 "remap pointer child")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != screen->root || leave_event->child != XCB_NONE ||
+        leave_event->root_x != 17 || leave_event->root_y != 19 ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        leave_event->same_screen_focus != 3) {
+        fprintf(stderr, "map lifecycle LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child || enter_event->child != XCB_NONE ||
+        enter_event->event_x != 7 || enter_event->event_y != 9 ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        enter_event->same_screen_focus != 3) {
+        fprintf(stderr, "map lifecycle EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
     xcb_test_compare_cursor_reply_t *cursor = xcb_test_compare_cursor_reply(
         connection,
         xcb_test_compare_cursor(

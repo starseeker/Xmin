@@ -227,8 +227,8 @@ test_shared_server_state()
 
     auto *stored_parent = server.window(first_owner);
     auto *stored_child = server.window(second_owner);
-    server.set_window_mapped(*stored_parent, true);
-    server.set_window_mapped(*stored_child, true);
+    static_cast<void>(server.set_window_mapped(*stored_parent, true));
+    static_cast<void>(server.set_window_mapped(*stored_child, true));
     server.advance_time();
     if (!expect(server.set_input_focus(
                     xmin::next::FocusKind::window, second_owner, 2, 0) ==
@@ -240,14 +240,14 @@ test_shared_server_state()
                 "stale focus timestamp was accepted")) {
         return false;
     }
-    server.set_window_mapped(*stored_child, false);
+    static_cast<void>(server.set_window_mapped(*stored_child, false));
     if (!expect(server.input().focus.kind == xmin::next::FocusKind::window &&
                     server.input().focus.window == first_owner &&
                     server.input().focus.revert_to == 0,
                 "parent focus reversion failed")) {
         return false;
     }
-    server.set_window_mapped(*stored_child, true);
+    static_cast<void>(server.set_window_mapped(*stored_child, true));
     if (!expect(server.set_input_focus(
                     xmin::next::FocusKind::window, second_owner, 1, 0) ==
                     xmin::next::FocusUpdate::updated,
@@ -468,8 +468,8 @@ test_input_routing()
     }
     auto *stored_parent = server.window(parent_id);
     auto *stored_child = server.window(child_id);
-    server.set_window_mapped(*stored_parent, true);
-    server.set_window_mapped(*stored_child, true);
+    static_cast<void>(server.set_window_mapped(*stored_parent, true));
+    static_cast<void>(server.set_window_mapped(*stored_child, true));
     stored_parent->event_masks.emplace(
         second_owner, key_press_mask | key_release_mask);
     if (!expect(server.inject_input(6, 0, 18, 17) ==
@@ -657,7 +657,7 @@ test_crossing_events()
         if (!server.add_window(std::move(window), owner))
             return false;
         auto *stored = server.window(id);
-        server.set_window_mapped(*stored, true);
+        static_cast<void>(server.set_window_mapped(*stored, true));
         stored->event_masks.emplace(owner, crossing_mask);
         return true;
     };
@@ -797,8 +797,8 @@ test_automatic_pointer_grab()
     }
     auto *stored_parent = server.window(parent);
     auto *stored_child = server.window(child);
-    server.set_window_mapped(*stored_parent, true);
-    server.set_window_mapped(*stored_child, true);
+    static_cast<void>(server.set_window_mapped(*stored_parent, true));
+    static_cast<void>(server.set_window_mapped(*stored_child, true));
     if (!expect(server.inject_input(6, 0, 18, 18) ==
                     xmin::next::EventDelivery::no_recipient,
                 "automatic-grab pointer setup delivered an event")) {
@@ -926,7 +926,7 @@ test_focus_events()
         window.height = height;
         if (!server.add_window(std::move(window), owner))
             return false;
-        server.set_window_mapped(*server.window(id), true);
+        static_cast<void>(server.set_window_mapped(*server.window(id), true));
         return true;
     };
     if (!expect(add_window(parent, xmin::next::root_window_id,
@@ -1044,6 +1044,165 @@ test_focus_events()
     return expect(
         queued_count + 1 == xmin::next::maximum_pending_events_per_client,
         "focus queue failure changed the preexisting event count");
+}
+
+bool
+test_mapping_lifecycle_events()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t sibling = owner | 3U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "lifecycle client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 97);
+    const auto add_window = [&](std::uint32_t id, std::uint32_t parent_id,
+                                std::int16_t x, std::int16_t y,
+                                std::uint16_t width,
+                                std::uint16_t height) {
+        xmin::next::WindowRecord candidate;
+        candidate.id = id;
+        candidate.parent = parent_id;
+        candidate.x = x;
+        candidate.y = y;
+        candidate.width = width;
+        candidate.height = height;
+        if (!server.add_window(std::move(candidate), owner))
+            return false;
+        return server.set_window_mapped(*server.window(id), true) !=
+            xmin::next::EventDelivery::queue_full;
+    };
+    if (!expect(add_window(parent, xmin::next::root_window_id,
+                           5, 5, 50, 50) &&
+                    add_window(child, parent, 5, 5, 20, 20) &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window, child, 2, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "lifecycle window setup failed")) {
+        return false;
+    }
+    server.window(parent)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+    server.window(child)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == 0 && value->sequence == 97;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint32_t event,
+                              std::int16_t event_x,
+                              std::int16_t event_y) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->child == 0 && value->event_x == event_x &&
+            value->event_y == event_y && value->mode == 0 &&
+            value->same_screen && value->focus && value->sequence == 97;
+        server.pop_event(owner);
+        return matches;
+    };
+    if (!expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.window(child)->mapped &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::window &&
+                    server.input().focus.window == parent &&
+                    server.input().focus.revert_to == 0 &&
+                    focus(10, 0, child) && focus(9, 2, parent) &&
+                    crossing(8, 0, child, 5, 5) &&
+                    crossing(7, 2, parent, 10, 10) &&
+                    !server.has_pending_event(owner),
+                "unmap lifecycle transition is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_window_mapped(*server.window(child), true) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.window(child)->mapped &&
+                    server.input().focus.window == parent &&
+                    crossing(8, 2, parent, 10, 10) &&
+                    crossing(7, 0, child, 5, 5) &&
+                    !server.has_pending_event(owner),
+                "map lifecycle transition is wrong")) {
+        return false;
+    }
+
+    xmin::next::WindowRecord sibling_window;
+    sibling_window.id = sibling;
+    sibling_window.parent = parent;
+    sibling_window.x = 30;
+    sibling_window.y = 30;
+    sibling_window.width = 10;
+    sibling_window.height = 10;
+    if (!expect(server.add_window(std::move(sibling_window), owner) &&
+                    server.set_window_mapped(
+                        *server.window(sibling), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window, child, 2, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "atomic lifecycle failure setup failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count + 3 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        child, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "lifecycle queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.set_subwindows_mapped(parent, false) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    server.window(child)->mapped &&
+                    server.window(sibling)->mapped &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::window &&
+                    server.input().focus.window == child &&
+                    server.input().focus.revert_to == 2,
+                "mapping transaction escaped an atomic queue failure")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "mapping failure left a partial lifecycle event")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 3 == xmin::next::maximum_pending_events_per_client,
+        "mapping failure changed the preexisting event count");
 }
 
 bool
@@ -1245,13 +1404,15 @@ test_scene_composition()
         return false;
     }
 
-    server.set_window_mapped(*server.window(owner), false);
+    static_cast<void>(
+        server.set_window_mapped(*server.window(owner), false));
     composed = server.readable_surface(xmin::next::root_window_id);
     if (!expect(composed->pixel(3, 2) == 0x000000ffU,
                 "unmapped window remained in the scene")) {
         return false;
     }
-    server.set_window_mapped(*server.window(owner), true);
+    static_cast<void>(
+        server.set_window_mapped(*server.window(owner), true));
     composed = server.readable_surface(xmin::next::root_window_id);
     return expect(composed->pixel(3, 2) == 0x0000ff00U,
                   "remapped window did not return to the scene");
@@ -1275,12 +1436,12 @@ test_window_tree_mutations()
                 "tree child insertion failed")) {
         return false;
     }
-    server.set_subwindows_mapped(owner, false);
+    static_cast<void>(server.set_subwindows_mapped(owner, false));
     if (!expect(!server.window(owner + 1)->mapped,
                 "UnmapSubwindows state transition failed")) {
         return false;
     }
-    server.set_subwindows_mapped(owner, true);
+    static_cast<void>(server.set_subwindows_mapped(owner, true));
     if (!expect(!server.reparent_window(owner, owner + 1, 0, 0),
                 "window cycle was accepted") ||
         !expect(server.reparent_window(
@@ -1354,6 +1515,7 @@ main()
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
             test_focus_events() &&
+            test_mapping_lifecycle_events() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

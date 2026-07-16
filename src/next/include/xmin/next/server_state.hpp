@@ -285,7 +285,8 @@ public:
     [[nodiscard]] Surface *readable_surface(std::uint32_t id);
     [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
     void invalidate_scene() noexcept { scene_dirty_ = true; }
-    void set_window_mapped(WindowRecord &window, bool mapped) noexcept;
+    [[nodiscard]] EventDelivery set_window_mapped(
+        WindowRecord &window, bool mapped);
     void advance_time() noexcept;
     [[nodiscard]] std::uint32_t current_time() const noexcept
     {
@@ -318,7 +319,8 @@ public:
     [[nodiscard]] bool reparent_window(std::uint32_t id,
                                        std::uint32_t new_parent,
                                        std::int16_t x, std::int16_t y);
-    void set_subwindows_mapped(std::uint32_t id, bool mapped);
+    [[nodiscard]] EventDelivery set_subwindows_mapped(
+        std::uint32_t id, bool mapped);
     void grab_server(std::uint32_t owner) noexcept
     {
         if (server_grab_owner_ == 0 || server_grab_owner_ == owner)
@@ -395,11 +397,15 @@ private:
         std::uint32_t from, std::uint32_t to,
         std::int32_t root_x, std::int32_t root_y,
         std::uint16_t state, std::uint8_t mode,
-        const ActiveGrab *grab,
+        const ActiveGrab *grab, const FocusState &focus,
         std::vector<PlannedEvent> &events) const;
     [[nodiscard]] EventDelivery append_focus_events(
         const FocusState &from, const FocusState &to,
         std::uint8_t mode, std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] EventDelivery update_window_mappings(
+        const std::uint32_t *windows, std::size_t count, bool mapped);
+    [[nodiscard]] FocusState reverted_focus_state(
+        std::uint32_t unavailable = 0) const noexcept;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;

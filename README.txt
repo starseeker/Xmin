@@ -139,8 +139,11 @@ the protocol's automatic pointer grab, retains it across button chords, and gene
 typed grab/ungrab crossings on first press and final release.  Explicit focus changes
 atomically plan typed ancestor, descendant, nonlinear, `PointerRoot`, and `None`
 notifications, including `NotifyPointer` runs along the current pointer path.  Delayed
-scheduling, lifecycle focus/crossing events, and repeat timers remain later vertical
-slices.
+mapping mutations now plan stationary-pointer crossings and focus reversion as one
+atomic event/state transaction for `MapWindow`, `UnmapWindow`, `MapSubwindows`, and
+`UnmapSubwindows`, including rollback when any recipient queue lacks capacity.  Delayed
+scheduling, destroy/reparent lifecycle events, active-grab invalidation on view loss,
+and repeat timers remain later vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with
