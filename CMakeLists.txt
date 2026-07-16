@@ -96,6 +96,10 @@ configure_file(
   "${PROJECT_BINARY_DIR}/generated/libxcb/config.h"
   @ONLY
 )
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/libxkbcommon-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/libxkbcommon/config.h"
+)
 set(PIXMAN_VERSION_MAJOR 0)
 set(PIXMAN_VERSION_MINOR 46)
 set(PIXMAN_VERSION_MICRO 2)
@@ -131,6 +135,7 @@ endif()
 
 message(STATUS "Xmin ${PROJECT_VERSION} configuration")
 message(STATUS "  OpenGL/GLX components: ${XMIN_BUILD_GLX}")
+message(STATUS "  Qt X11 client SDK:     ${XMIN_BUILD_QT_CLIENT}")
 message(STATUS "  MIT-SHM support:       ${XMIN_HAVE_MITSHM}")
 message(STATUS "  TCP transport:         ${XMIN_ENABLE_TCP}")
 message(STATUS "  Integrated launcher:   ${XMIN_BUILD_LAUNCHER}")

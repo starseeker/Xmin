@@ -14,6 +14,7 @@ target_compile_definitions(xmin_glx_client_api PRIVATE
   # _glthread_Mutex, so it must match the PTHREADS setting used by the OSMesa
   # objects linked into the same DSO.
   PTHREADS
+  XMIN_HAVE_QT_XCB=$<BOOL:$<TARGET_EXISTS:Xmin::QtX11>>
 )
 target_include_directories(xmin_glx_client_api PRIVATE
   "${xmin_client_gl_include}"
@@ -26,6 +27,9 @@ target_include_directories(xmin_glx_client_api SYSTEM PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/glapi"
 )
 target_link_libraries(xmin_glx_client_api PRIVATE Threads::Threads)
+if(TARGET Xmin::QtX11)
+  target_link_libraries(xmin_glx_client_api PRIVATE Xmin::QtX11)
+endif()
 xmin_enable_warnings(xmin_glx_client_api)
 
 # A complete libGL ABI must export ordinary gl* symbols. The server's OSMesa
@@ -57,6 +61,7 @@ target_include_directories(xmin_gl_client
   PUBLIC
     "$<BUILD_INTERFACE:${xmin_client_gl_include}>"
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third_party/osmesa/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/main"
@@ -71,6 +76,10 @@ target_include_directories(xmin_gl_client
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/fxaa"
 )
 target_link_libraries(xmin_gl_client PRIVATE Threads::Threads ${XMIN_M_LIBRARY})
+if(TARGET Xmin::QtX11)
+  target_link_libraries(xmin_gl_client PRIVATE Xmin::QtX11)
+endif()
+set_target_properties(xmin_gl_client PROPERTIES EXPORT_NAME GL)
 if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
   target_compile_definitions(xmin_gl_client PRIVATE UTIL_ARCH_LITTLE_ENDIAN=1)
 else()
@@ -105,24 +114,45 @@ if(APPLE)
 endif()
 
 if(XMIN_ENABLE_INSTALL)
-  install(TARGETS xmin_gl_client
-    LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/xmin"
-    RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
-    COMPONENT Runtime
-  )
+  set(xmin_gl_development_component Development)
+  if(TARGET Xmin::QtX11)
+    set(xmin_gl_development_component QtClientDevelopment)
+  endif()
+  if(TARGET Xmin::QtX11)
+    install(TARGETS xmin_gl_client
+      EXPORT XminTargets
+      LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}"
+        COMPONENT QtClientRuntime NAMELINK_COMPONENT QtClientDevelopment
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+        COMPONENT QtClientRuntime
+    )
+  else()
+    install(TARGETS xmin_gl_client
+      LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/xmin"
+      RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
+      COMPONENT Runtime
+    )
+  endif()
   install(FILES
     "${xmin_client_gl_include}/GL/gl.h"
     "${xmin_client_gl_include}/GL/glext.h"
     "${xmin_client_gl_include}/GL/glx.h"
     "${xmin_client_gl_include}/GL/glxext.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/GL"
-    COMPONENT Development
+    COMPONENT ${xmin_gl_development_component}
   )
+  if(TARGET Xmin::QtX11)
+    install(FILES
+      "${xmin_client_gl_include}/Xmin/GLXxcb.h"
+      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/Xmin"
+      COMPONENT QtClientDevelopment
+    )
+  endif()
   install(FILES
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/include/OSMesa/gl.h"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/include/OSMesa/glext.h"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/include/OSMesa/osmesa.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/OSMesa"
-    COMPONENT Development
+    COMPONENT ${xmin_gl_development_component}
   )
 endif()

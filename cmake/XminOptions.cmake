@@ -13,6 +13,8 @@ endfunction()
 
 option(XMIN_BUILD_GLX
   "Build embedded OSMesa, indirect server GLX, and bundled client libGL" ON)
+option(XMIN_BUILD_QT_CLIENT
+  "Build and install the self-contained XCB/xkbcommon client for Qt" ON)
 option(XMIN_ENABLE_TCP
   "Enable the TCP transport (the normal build is local-socket only)" OFF)
 option(XMIN_BUILD_LAUNCHER

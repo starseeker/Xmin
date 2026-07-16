@@ -113,8 +113,17 @@ contexts.  Window presentation remains valid across a resize without re-creating
 re-binding the context, and single-buffered drawables present on `glFlush`.  The
 OSMesa color format is selected as BGRA on little-endian hosts and ARGB on big-endian
 hosts so its bytes represent the same native X pixel value.  The client DSO has no
-host X11 dependency of its own: it uses weak Xlib entry points
-already supplied by a GLX application's X client library and currently presents
-through core `XPutImage`.  Qt/GTK and target-application acceptance, MIT-SHM upload
-optimization, and additional GLX compatibility entry points remain release-hardening
-work.
+host X11 dependency of its own: the general GLX ABI may use weak Xlib entry points
+already supplied by an application, while the Qt client profile uses an explicit XCB
+adapter and core `xcb_put_image`.  GTK and target-application acceptance, MIT-SHM GL
+upload optimization, and additional GLX compatibility entry points remain
+release-hardening work.
+
+The Qt-specific client profile is now implemented as an explicit option rather than
+a server dependency.  `XMIN_BUILD_QT_CLIENT=ON` builds the audited XCB, xcb-util,
+libxkbcommon-x11, and libXau closure as `libXminClient.so`/`Xmin::QtX11`.  The managed
+Qt 6.11.1 patch selects this target for qxcb and supplies an XCB-native software GL
+integration backed by Xmin's package-relative `libGL.so.1`.  Raster Qt, OpenGL 2.0
+with GLSL, and `QOpenGLWidget` have been built and run in sanitized environments with
+no host X or graphics library and no hardware acceleration.  The precise profile,
+patch workflow, tests, dependency audit, and remaining scope are in `qt_building.txt`.

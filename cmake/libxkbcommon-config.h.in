@@ -1,0 +1,31 @@
+#ifndef XMIN_LIBXKBCOMMON_CONFIG_H
+#define XMIN_LIBXKBCOMMON_CONFIG_H
+
+#define _GNU_SOURCE 1
+#define EXIT_INVALID_USAGE 2
+#define LIBXKBCOMMON_VERSION "1.13.2"
+#define LIBXKBCOMMON_TOOL_PATH ""
+
+/* qxcb constructs its keymap from Xmin's XKB replies with
+ * XKB_CONTEXT_NO_DEFAULT_INCLUDES. These paths are deliberately inert. */
+#define DFLT_XKB_LEGACY_ROOT ""
+#define DFLT_XKB_CONFIG_ROOT ""
+#define DFLT_XKB_CONFIG_EXTRA_PATH ""
+#define XLOCALEDIR ""
+
+#define DEFAULT_XKB_RULES "evdev"
+#define DEFAULT_XKB_MODEL "pc105"
+#define DEFAULT_XKB_LAYOUT "us"
+#define DEFAULT_XKB_VARIANT NULL
+#define DEFAULT_XKB_OPTIONS NULL
+
+#cmakedefine01 HAVE_UNISTD_H
+#cmakedefine01 HAVE_STRNDUP
+#cmakedefine01 HAVE_VASPRINTF
+#cmakedefine01 HAVE_MMAP
+
+#if defined(__GNUC__) || defined(__clang__)
+# define HAVE___BUILTIN_EXPECT 1
+#endif
+
+#endif

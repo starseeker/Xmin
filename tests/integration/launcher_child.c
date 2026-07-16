@@ -176,6 +176,7 @@ main(void)
     uint16_t endian_probe = 1;
     FILE *authority_file;
     Xauth *authority;
+    unsigned char wrong_cookie[16];
     int result = 1;
 
     little_endian = *(unsigned char *) &endian_probe == 1;
@@ -202,6 +203,13 @@ main(void)
 
     if (handshake(display, NULL, 0, NULL, 0, 0) != 0) {
         fprintf(stderr, "Xmin accepted an unauthenticated launcher client\n");
+        goto cleanup;
+    }
+    memcpy(wrong_cookie, authority->data, sizeof(wrong_cookie));
+    wrong_cookie[0] ^= 0xff;
+    if (handshake(display, authority->name, authority->name_length,
+                  wrong_cookie, sizeof(wrong_cookie), 0) != 0) {
+        fprintf(stderr, "Xmin accepted an invalid launcher cookie\n");
         goto cleanup;
     }
     if (handshake(display, authority->name, authority->name_length,

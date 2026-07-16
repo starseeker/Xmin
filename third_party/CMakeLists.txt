@@ -107,6 +107,10 @@ xmin_add_component(xau
   PUBLIC_LIBRARIES Xmin::xorgproto
 )
 
+if(XMIN_BUILD_QT_CLIENT)
+  include("${CMAKE_CURRENT_SOURCE_DIR}/qt-client.cmake")
+endif()
+
 # A private, static XCB subset for Xmin's own automation client.  Connection
 # setup is intentionally supplied by project code, so generic TCP/display
 # parsing and libXau lookup do not enter this component.

@@ -12,12 +12,12 @@ sha256 = "599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55"
 status = "partial"
 local_path = "third_party/libxcb"
 retained_paths = [
-  "xcb.h, xcbext.h, and the six connection/request core sources needed by xcb_connect_to_fd",
-  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
+  "xcb.h, xcbext.h, the complete eight-source libxcb connection/request core, and the normal MIT-MAGIC-COOKIE-1 authentication path",
+  "generated core, BIG-REQUESTS, XC-MISC, RENDER, RANDR, SHAPE, MIT-SHM, SYNC, XFIXES, XKB, DAMAGE, COMPOSITE, and XTEST C bindings",
 ]
 license_paths = ["LICENSES/libxcb/COPYING"]
 patches = []
-importer = "tools/import-libxcb.sh"
+importer = "tools/import-qt-client.sh (invokes tools/import-libxcb.sh)"
 generator = "libxcb 1.17.0 c_client.py with xcb-proto 1.17.0"
 
 [[source]]
@@ -29,12 +29,123 @@ sha256 = "2c1bacd2110f4799f74de6ebb714b94cf6f80fb112316b1219480fd22562148c"
 status = "generation-only"
 local_path = "third_party/libxcb/include/xcb"
 retained_paths = [
-  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
+  "generated core, BIG-REQUESTS, XC-MISC, RENDER, RANDR, SHAPE, MIT-SHM, SYNC, XFIXES, XKB, DAMAGE, COMPOSITE, and XTEST C bindings",
 ]
 license_paths = ["LICENSES/xcb-proto/COPYING"]
 patches = []
-importer = "tools/import-libxcb.sh"
+importer = "tools/import-qt-client.sh (invokes tools/import-libxcb.sh)"
 generator = "libxcb 1.17.0 c_client.py"
+
+[[source]]
+name = "xcb-util"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-0.4.1.tar.xz"
+sha256 = "5abe3bbbd8e54f0fa3ec945291b7e8fa8cfd3cccc43718f8758430f94126e512"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["atoms.c, event.c, xcb_aux.c, and their public headers"]
+license_paths = ["LICENSES/xcb-util/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+
+[[source]]
+name = "xcb-util-image"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-image-0.4.1.tar.xz"
+sha256 = "ccad8ee5dadb1271fd4727ad14d9bd77a64e505608766c4e98267d9aede40d3d"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["xcb_image.c and xcb_image.h, xcb_pixel.h, xcb_bitops.h"]
+license_paths = ["LICENSES/xcb-util-image/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+
+[[source]]
+name = "xcb-util-keysyms"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-keysyms-0.4.1.tar.xz"
+sha256 = "7c260a5294412aed429df1da2f8afd3bd07b7cba3fec772fba15a613a6d5c638"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["keysyms.c and xcb_keysyms.h"]
+license_paths = ["LICENSES/xcb-util-keysyms/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+
+[[source]]
+name = "xcb-util-renderutil"
+revision = "0.3.10"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-renderutil-0.3.10.tar.xz"
+sha256 = "3e15d4f0e22d8ddbfbb9f5d77db43eacd7a304029bf25a6166cc63caa96d04ba"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["cache.c, util.c, glyph.c, and xcb_renderutil.h"]
+license_paths = ["LICENSES/xcb-util-renderutil/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+
+[[source]]
+name = "xcb-util-cursor"
+revision = "0.1.5"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-cursor-0.1.5.tar.xz"
+sha256 = "0caf99b0d60970f81ce41c7ba694e5eaaf833227bb2cbcdb2f6dc9666a663c57"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["cursor.c, generated shape_to_id.c, load_cursor.c, parse_cursor_file.c, cursor.h, and xcb_cursor.h"]
+license_paths = ["LICENSES/xcb-util-cursor/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+generator = "upstream release-generated shape_to_id.c (no build-time gperf)"
+
+[[source]]
+name = "xcb-util-wm"
+revision = "0.4.2"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-wm-0.4.2.tar.xz"
+sha256 = "62c34e21d06264687faea7edbf63632c9f04d55e72114aa4a57bb95e4f888a0b"
+status = "partial"
+local_path = "third_party/xcb-util"
+retained_paths = ["ICCCM implementation and public header; EWMH omitted"]
+license_paths = ["LICENSES/xcb-util-wm/COPYING"]
+patches = []
+importer = "tools/import-qt-client.sh"
+
+[[source]]
+name = "libxkbcommon"
+revision = "1.13.2"
+url = "https://github.com/xkbcommon/libxkbcommon/archive/refs/tags/"
+archive = "xkbcommon-1.13.2.tar.gz"
+sha256 = "acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528"
+status = "partial"
+local_path = "third_party/libxkbcommon"
+retained_paths = [
+  "complete upstream libxkbcommon 1.13.2 core and Compose source lists",
+  "complete upstream libxkbcommon-x11 source list",
+  "public xkbcommon and xkbcommon-x11 headers",
+  "registry, tools, tests, documentation, XML support, and data files omitted",
+]
+license_paths = ["LICENSES/libxkbcommon/LICENSE"]
+patches = []
+importer = "tools/import-qt-client.sh"
+generator = "Bison >=3.6 via tools/import-qt-client.sh; generated parser.c/parser.h are committed"
+
+[[source]]
+name = "DejaVu Sans"
+revision = "2.37"
+url = "https://dejavu-fonts.github.io/"
+archive = "DejaVuSans.ttf (from Qt 6.11.1 src/3rdparty/wasm)"
+sha256 = "7da195a74c55bef988d0d48f9508bd5d849425c1770dba5d7bfc6ce9ed848954"
+status = "partial"
+local_path = "data/qt-fonts"
+retained_paths = ["DejaVuSans.ttf; all other family faces omitted"]
+license_paths = ["LICENSES/dejavu/DEJAVU-LICENSE"]
+patches = []
+importer = "tools/import-qt-font.sh"
 
 [[source]]
 name = "xorg-server"
@@ -179,16 +290,18 @@ sha256 = "74d0e4dfa3d39ad8939e99bda37f5967aba528211076828464d2777d477fc0fb"
 signature_key = "2F7DBCAD5B30E668BBD516C1CFDF148828C642A7"
 signature_verified = false
 signature_note = "Detached signature present; release public key was unavailable in the import environment."
-status = "imported"
+status = "partial"
 local_path = "third_party/libXau"
 retained_paths = [
   "AuRead.c",
   "AuDispose.c",
+  "AuFileName.c",
+  "AuGetBest.c",
   "include/X11/Xauth.h",
 ]
 license_paths = ["LICENSES/libXau/COPYING"]
 patches = []
-importer = "tools/import-xorg.sh"
+importer = "tools/import-xorg.sh and tools/import-qt-client.sh"
 
 [[source]]
 name = "libxkbfile"

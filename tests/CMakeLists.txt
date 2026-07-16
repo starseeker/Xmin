@@ -28,6 +28,20 @@ add_test(NAME xmin.server-stale-lock
 set_tests_properties(xmin.server-stale-lock PROPERTIES TIMEOUT 20)
 
 if(TARGET Xmin::run)
+  if(TARGET Xmin::QtX11)
+    add_executable(xmin_qt_client integration/qt_client.c)
+    target_compile_features(xmin_qt_client PRIVATE c_std_11)
+    target_link_libraries(xmin_qt_client PRIVATE Xmin::QtX11)
+    xmin_enable_warnings(xmin_qt_client)
+    add_test(NAME xmin.qt-client
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 320x240x24
+        -- $<TARGET_FILE:xmin_qt_client>
+    )
+    set_tests_properties(xmin.qt-client PROPERTIES TIMEOUT 30)
+  endif()
+
   add_executable(xmin_launcher_child integration/launcher_child.c)
   target_compile_features(xmin_launcher_child PRIVATE c_std_11)
   target_link_libraries(xmin_launcher_child PRIVATE Xmin::xau)

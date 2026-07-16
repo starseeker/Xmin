@@ -4,6 +4,7 @@
 /*_build*
 /*-build*
 /out
+/.work/
 
 # Temporary files
 *~
@@ -36,5 +37,4 @@ CMakeLists.txt.user
 
 # Misc
 .clang-format
-
 

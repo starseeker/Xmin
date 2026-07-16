@@ -6,7 +6,7 @@ Status and conclusion
 
 This plan is based on the BRL-CAD Qt tree at:
 
-  /usr/home/starseeker/bext/qt/qt
+  ~/bext/qt/qt
 
 as inspected on 2026-07-16.  That tree identifies itself as Qt 6.11.1.  Its
 top-level commit is 692cacdb1d6eea560daac0339ca8c45a89ae7c37 and its qtbase
@@ -269,7 +269,7 @@ patch.
 Qt patch plan
 -------------
 
-Manage the patch in this repository, not in /usr/home/starseeker/bext.  Use:
+Manage the patch in this repository, not in ~/bext.  Use:
 
   patches/qt/qt_xmin.patch
 
@@ -344,7 +344,7 @@ Phase 0: freeze inputs and establish isolation
       build/qt-xmin-raster
       build/qt-xmin-raster-install
 
-  * Copy from /usr/home/starseeker/bext/qt/qt; never edit that source.
+  * Copy from ~/bext/qt/qt; never edit that source.
   * Define a clean-build environment or container which has a compiler,
     CMake/Ninja, and Qt's ordinary build tools but no X11 development
     packages.  In local testing also clear PKG_CONFIG_PATH/PKG_CONFIG_LIBDIR
@@ -591,3 +591,297 @@ graphics development/runtime package.
 The BRL-CAD target is successful when the same is true for a representative
 BRL-CAD Qt program, with the additional software-OpenGL milestone completed if
 that program requires Qt OpenGL.
+
+
+Implementation outcome (2026-07-16)
+===================================
+
+Result
+------
+
+Phases 0 through 7 of this experiment are implemented and pass on FreeBSD with
+Qt 6.11.1.  The result is stronger than the initial raster target: both raster
+Qt and a desktop OpenGL 2.0/QOpenGLWidget profile run against Xmin without a
+host X client library, host GL stack, or graphics device.
+
+Phase 8 was deliberately not performed.  Nothing under
+~/bext was modified, and no BRL-CAD build recipe was changed.
+A representative BRL-CAD program remains the next integration gate rather than
+an unverified claim of application completeness.
+
+Implemented artifacts
+---------------------
+
+The repository now contains:
+
+  * XMIN_BUILD_QT_CLIENT, default OFF, so the new client SDK remains separate
+    from the Xmin server's normal dependency graph;
+  * Xmin::QtX11 / libXminClient.so.0, containing selected complete upstream
+    translation units from libxcb 1.17.0, xcb-util, xcb-util-image,
+    xcb-util-keysyms, xcb-util-renderutil, xcb-util-cursor, xcb-util-wm,
+    libxkbcommon 1.13.2 (core, Compose, and X11), and libXau 1.0.12;
+  * installed conventional xcb and xkbcommon public headers, but no misleading
+    libxcb.so or libxkbcommon.so SONAMEs;
+  * XminConfig.cmake and XminTargets.cmake exporting Xmin::QtX11;
+  * Xmin::GL when the Qt client and GLX options are both enabled.  In this
+    profile the software renderer is installed as package-relative libGL.so.1
+    and exported through the same Xmin package;
+  * Xmin/GLXxcb.h, a two-function adapter which creates/destroys an opaque GLX
+    Display token around Qt's existing xcb_connection_t;
+  * an XCB presentation path in the software GL bridge.  It obtains drawable
+    geometry with xcb_get_geometry and presents OSMesa pixels with
+    xcb_put_image, so Qt needs neither Xlib nor xcb-glx;
+  * a licensed DejaVu Sans face and the QtFontData install component for the
+    no-Fontconfig runtime;
+  * maintenance importers, checksums, retained-path records, and license files
+    for every imported client source and font;
+  * standalone downstream raster and OpenGL Qt package projects; and
+  * tools/audit-qt-bundle.sh, which audits an installed prefix plus optional
+    application ELFs in either raster or OpenGL mode.
+
+The client library retains upstream API names because qxcb includes and calls
+those APIs directly.  Its currently supported ABI scope is the Xmin-built Qt
+and its selected plugins.  It is not advertised as a drop-in general-purpose
+libxcb/libxkbcommon replacement, and loading a second implementation of those
+symbols in an arbitrary third-party plugin remains unsupported.
+
+Qt patch actually implemented
+-----------------------------
+
+patches/qt/qt_xmin.patch is the only managed Qt change.  It is tied to the
+version and tree IDs at the top of this file and does the following:
+
+  * adds the explicit -xmin-x11 command-line option;
+  * finds Xmin::QtX11 and compile/links a representative xcb/RENDER/XKB probe;
+  * suppresses conventional X/GL discovery in Xmin mode;
+  * selects Xmin::QtX11 for QtGui, XcbQpaPrivate, and the optional Compose
+    plugin while leaving all ordinary branches intact;
+  * accepts Xmin::GL as Qt's desktop OpenGL implementation;
+  * adds the xcb_xmin GL-integration plugin; and
+  * makes qxcb prefer xcb_xmin automatically when that plugin is compiled.
+
+The new GL plugin reuses Qt's QXcbWindow and connection.  It creates an Xmin
+software GL context, makes native XCB window IDs current, swaps through Xmin's
+libGL, and reports threaded OpenGL as unsupported.  It supplies no native
+pbuffer: Qt's existing hidden-window fallback is sufficient for the tested
+QOpenGLWidget path.
+
+The regenerated patch is 600 lines/21,736 bytes, with 384 added and 25 removed
+source lines.  A forward dry run on the pristine copy, an actual application
+to a fresh copy, a reverse dry run, and a byte comparison with the build-tested
+tree all pass.  A non-Xmin configure retains the same feature decisions as the
+pristine source; an Xmin configure without the SDK fails at the explicit
+Xmin::QtX11/test condition rather than falling back to host libraries.
+
+The original bext source was rechecked after the experiment.  It is clean and
+still reports:
+
+  top-level: 692cacdb1d6eea560daac0339ca8c45a89ae7c37
+  qtbase:    eaedabb16aee6fc1d71441c9be92bc7dd5055a50
+
+Reproducing the builds
+----------------------
+
+The tested Xmin software-GL SDK was configured as:
+
+  cmake -S . -B build/qt-gl-sdk -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release \
+    -DXMIN_BUILD_QT_CLIENT=ON \
+    -DXMIN_BUILD_GLX=ON \
+    -DXMIN_BUILD_TESTS=OFF
+
+  cmake --build build/qt-gl-sdk -j4
+
+Install QtClientRuntime, QtClientDevelopment, QtFontData, and Runtime into the
+desired final prefix.  Runtime supplies Xmin, xmin-run, xminctl, and the capture
+helper.  QtClientRuntime/Development supply libXminClient, libGL, headers, and
+the Xmin CMake package.
+
+The source used for Qt was copied, never moved or linked, and patched locally:
+
+  cp -a ~/bext/qt/qt/qtbase .work/Qt6_BLD/qtbase
+  patch -d .work/Qt6_BLD/qtbase -p1 < patches/qt/qt_xmin.patch
+
+The tested software OpenGL configuration was equivalent to:
+
+  .work/Qt6_BLD/qtbase/configure \
+    -prefix /absolute/path/to/build/qt-xmin-gl-install \
+    -release -shared \
+    -qpa xcb -default-qpa xcb -xcb -xmin-x11 \
+    -no-xcb-xlib -no-feature-xlib -no-sm \
+    -opengl desktop -no-egl -no-eglfs -no-vulkan \
+    -no-feature-gbm -no-feature-kms \
+    -no-feature-wayland -no-feature-wayland-client \
+    -no-feature-wayland-server \
+    -no-fontconfig -qt-freetype -qt-harfbuzz \
+    -qt-zlib -qt-libpng -qt-libjpeg \
+    -no-dbus -no-glib -no-feature-inotify \
+    -nomake examples -nomake tests \
+    -- \
+    -DCMAKE_PREFIX_PATH=/absolute/path/to/build/qt-gl-sdk-install \
+    -DCMAKE_DISABLE_FIND_PACKAGE_Libudev=ON \
+    -DQT_BUILD_TOOLS_BY_DEFAULT=OFF
+
+The raster configuration is the same except for -no-opengl.  Clearing
+PKG_CONFIG_PATH and package-registry inputs is useful as an additional
+diagnostic, but correctness does not rely on their absence: -xmin-x11 prevents
+the relevant host X/GL discovery branches from running.
+
+The OpenGL proof built these Qt targets rather than the whole qtbase default:
+
+  Gui Widgets OpenGL OpenGLWidgets XcbQpaPrivate
+  QXcbIntegrationPlugin QXcbXminIntegrationPlugin
+
+For an installed downstream CMake SDK it also built and installed Qt's required
+host tools (syncqt, moc, rcc, tracepointgen, tracegen, cmake_automoc_parser,
+qlalr, qtpaths, qmake, qvkgen, uic, and the generated deployment helpers).
+The Qt libraries and plugins were installed through their install/local targets.
+The root package metadata can be installed without recursively installing every
+configured qtbase directory by running its cmake_install.cmake with both:
+
+  CMAKE_INSTALL_LOCAL_ONLY=TRUE, CMAKE_INSTALL_COMPONENT=Devel
+  CMAKE_INSTALL_LOCAL_ONLY=TRUE, CMAKE_INSTALL_COMPONENT=Unspecified
+
+This detail matters for a deliberately partial Qt build.  A normal recursive
+cmake --install advertises and visits all configured qtbase pieces; in this
+snapshot that also encounters a missing generated qt_ext_libjpeg.pri after only
+the selected targets were built.  Qt's generated Gui plugin list similarly
+names configured dynamic plugins that were deliberately not installed.  The
+downstream examples set QT_SKIP_AUTO_PLUGIN_INCLUSION=ON before find_package;
+dynamic qxcb and xcb_xmin discovery at runtime is unaffected.  A production bext
+integration can instead configure out more unused plugins or perform a full
+qtbase build/install.
+
+Feature and dependency evidence
+-------------------------------
+
+The software-GL Qt cache records:
+
+  QT_FEATURE_gui=ON                 QT_FEATURE_widgets=ON
+  QT_FEATURE_opengl=ON              QT_FEATURE_opengl_desktop=ON
+  QT_FEATURE_xmin_x11=ON            QT_FEATURE_xmin_opengl=ON
+  QT_FEATURE_xcb=ON                 QT_FEATURE_xlib=OFF
+  QT_FEATURE_xcb_xlib=OFF           QT_FEATURE_xcb_glx_plugin=OFF
+  QT_FEATURE_xcb_glx=OFF            QT_FEATURE_egl=OFF
+  QT_FEATURE_eglfs=OFF              QT_FEATURE_vulkan=OFF
+  QT_FEATURE_fontconfig=OFF         QT_FEATURE_dbus=OFF
+  QT_FEATURE_glib=OFF
+
+The selected Qt link rules name only the Xmin SDK's absolute libXminClient and
+libGL paths for the X stack; they contain no host X11/XCB/xkbcommon/GL static or
+shared library.  Recursive NEEDED audits pass for both installed profiles.
+The OpenGL prefix/application closure contains libGL.so.1 from that prefix,
+libXminClient.so.0, the selected Qt libraries, and ordinary OS/Qt non-graphics
+runtime libraries.  It contains none of:
+
+  libX11, libX11-xcb, libXau, libXdmcp, libXext, libXrender,
+  libxcb or libxcb-*, libxkbcommon, libSM, libICE, libfontconfig,
+  libEGL, libGLX, libOpenGL, libdrm, libgbm, libvulkan,
+  libwayland, libglib-2.0, or libdbus-1.
+
+The raster mode additionally rejects any libGL.so dependency.  The OpenGL mode
+allows libGL.so.1 only when PREFIX/lib/libGL.so.1 exists, and separately checks
+that DSO for forbidden graphics/X dependencies.
+
+The final raster packaging check used a newly created install prefix, not the
+earlier exploratory prefix.  Auditing its 442 installed files reports only
+Qt6Core, Qt6Gui, Qt6XcbQpa, libXminClient, and ordinary FreeBSD/ICU/PCRE/Zstd
+NEEDED names.  Adding the four downstream acceptance executables to the same
+audit raises the input count to 446 without changing that dependency closure.
+In particular, the fresh prefix contains no residue from configured but unused
+Qt SQL/database plugins and no libGL.
+
+Runtime acceptance performed
+----------------------------
+
+The repository's Xmin build and protocol regression suite passes 39/39,
+including authenticated Xmin::QtX11 connection/XKB setup and the existing
+software-direct GLSL and window-presentation tests.
+
+The installed raster Qt was built again through tests/package/qt_raster, not
+against a system Qt.  The final downstream configure and build used only the
+fresh installed Qt/Xmin prefix through CMAKE_PREFIX_PATH.  In sanitized env -i
+launches from that prefix it passed:
+
+  * qxcb selection, mapped/exposed windows, backing-store paint/capture,
+    resize, screen geometry/DPI, standard and uploaded bitmap cursors;
+  * package-font discovery and captured DejaVu Sans text;
+  * same-process and two-process clipboard/selection transfer;
+  * pointer click/drag, Ctrl modifier, and printable US-key input driven by the
+    installed xminctl/XTEST path;
+  * two simultaneous Qt connections;
+  * the normal MIT-SHM server profile and a separately built
+    XMIN_ENABLE_MITSHM=OFF server, where qxcb falls back successfully; and
+  * empty/invalid display and invalid authority failures without acquiring a
+    host fallback.
+
+Xmin's protocol tests separately cover the RANDR, XFIXES, SHAPE, SYNC, XKB lock,
+XI2, and conditional MIT-SHM semantics which qxcb negotiates.  Autorepeat timing
+and a large INCR clipboard payload are not yet dedicated Qt-level tests; they
+are sensible application-hardening additions, not missing build dependencies.
+
+The installed software-GL Qt was built through tests/package/qt_opengl and run
+through the installed xmin-run/Xmin pair with an empty HOME and explicit bundled
+font/plugin paths.  Both tests passed without setting QT_XCB_GL_INTEGRATION:
+
+  * xmin_qt6_opengl creates a desktop 2.0 context, compiles GLSL 1.10, renders a
+    triangle, verifies glReadPixels, swaps, and verifies the presented X window
+    through QScreen capture; and
+  * xmin_qt6_opengl_widget initializes QOpenGLWidget, paints, and verifies
+    grabFramebuffer.
+
+The plugin log confirms that qxcb tries xcb_xmin first and initializes
+"Xmin software-direct xcb GL integration".  No graphics device is opened.
+The old pinned OSMesa GLSL compiler prints verbose "Adapt args" diagnostics;
+these are harmless existing renderer messages and both checks return zero.
+
+Measurements and OpenGL route decision
+--------------------------------------
+
+The first measurements were intentionally taken before fine-grained symbol or
+translation-unit pruning:
+
+  artifact                                  release bytes  stripped bytes  relocations
+  libXminClient.so.0                         1,069,368        879,128       1,312
+  Xmin libGL.so.1                            3,350,064      3,087,120       5,051
+  Qt libqxcb.so                                 18,568         10,184          47
+  Qt libqxcb-xmin-integration.so                32,128         19,152         122
+
+The retained Qt-client import tree is approximately 4.80 MB across 146 files.
+This is the complete selected upstream-module baseline, including Compose and
+cursor parsing, not a generated set of request stubs.  An end-to-end installed
+OpenGL triangle launch measured approximately 0.06 seconds real time and 58,188
+KiB maximum resident set size on this host.  That timing/RSS includes process
+launch and Xmin service activity and is a baseline, not a benchmark claim.
+
+The two OpenGL routes were prototyped far enough to make the choice concrete:
+
+  Route A: Qt's stock xcb_glx integration is 48,701 source bytes before adding
+  any client library.  It includes Xlib.h, Xutil.h, and Xlibint.h, calls Xlib
+  window/colormap/error/event operations, and forces qxcb's connection through
+  XOpenDisplay/XGetXCBConnection.  Therefore its lower bound is not merely the
+  eight weak presentation calls in Xmin libGL; it requires a coherent
+  libX11/libX11-xcb ABI and the XCB GLX binding.  Importing only enough symbols
+  to pass the link would be a fragile protocol/display stub, contrary to this
+  project's source-retention policy.
+
+  Route B: the complete new xcb_xmin plugin is 7,540 source bytes and its Xmin
+  API consists of two lifetime functions plus direct geometry/presentation.
+  It reuses the already-tested XCB connection and avoids every Route A library.
+  It passed both OpenGL gates, so Route B is selected.
+
+No further client source was removed after this comparison.  The current
+upstream allowlist is small enough to keep complete parsers and generated
+bindings, and the measured stripped library is under 0.9 MB.  Future pruning
+must be justified by link maps plus the same Qt/protocol acceptance suite.
+
+Remaining boundary
+------------------
+
+This proves that Qt's X platform and software desktop OpenGL can be supplied by
+a self-contained Xmin bundle.  It does not yet prove every BRL-CAD Qt module or
+third-party plugin, broad ABI coexistence with system libxcb, OpenGL versions
+beyond the pinned OSMesa implementation, or hardware acceleration.  The next
+authorized step is Phase 8: consume this SDK and patch from bext without editing
+the upstream Qt checkout in place, then run the smallest representative BRL-CAD
+Qt/OpenGL viewer under the same sanitized audit.

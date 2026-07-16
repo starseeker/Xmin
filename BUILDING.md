@@ -62,7 +62,17 @@ compile/link, drawable-owned pbuffer color storage across shared-context switche
 different-sized draw/read pbuffer bindings, context-state copying, modern GLX
 windows, resize without rebinding, GLXPixmap presentation, double-buffered swap, and single-buffered
 flush/readback. Both GLX paths select BGRA or ARGB OSMesa storage to match the host X
-image byte order. Broader toolkit and application acceptance remains.
+image byte order. The optional Qt client profile now exposes an XCB-native adapter
+for this software-direct bridge, so Qt does not need the weak Xlib presentation path.
+
+The optional `XMIN_BUILD_QT_CLIENT` SDK packages pinned libxcb protocol code,
+the required xcb-util modules, libxkbcommon/x11, and libXau as one
+`libXminClient.so` exported as `Xmin::QtX11`. A Qt 6.11.1 patch and an
+Xmin-specific qxcb OpenGL integration provide working raster Qt, desktop OpenGL
+2.0/GLSL, and `QOpenGLWidget` without host X11, XCB, xkbcommon, GL/EGL, DRM, GBM,
+Vulkan, graphics hardware, or runtime XKB/cursor-theme data. The bundled DejaVu
+Sans file supplies an explicit no-Fontconfig application font. Detailed evidence
+and the exact experiment are recorded in `qt_building.txt`.
 
 The installed `xminctl` client completes the baseline headless automation path. It
 uses a private static subset of libxcb, opens Xmin's local socket with the launcher's
@@ -111,6 +121,57 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 cmake --install build --prefix ./install
 ```
+
+## Minimal Qt 6 client SDK
+
+Build and install the complete Xmin client profile with software OpenGL as follows:
+
+```sh
+cmake -S . -B build/qt-sdk -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DXMIN_BUILD_QT_CLIENT=ON \
+  -DXMIN_BUILD_GLX=ON \
+  -DXMIN_BUILD_TESTS=OFF
+cmake --build build/qt-sdk -j4
+cmake --install build/qt-sdk --prefix build/qt-sdk-install \
+  --component QtClientRuntime
+cmake --install build/qt-sdk --prefix build/qt-sdk-install \
+  --component QtClientDevelopment
+cmake --install build/qt-sdk --prefix build/qt-sdk-install \
+  --component QtFontData
+cmake --install build/qt-sdk --prefix build/qt-sdk-install \
+  --component Runtime
+```
+
+`QtClientDevelopment` installs `Xmin::QtX11` and `Xmin::GL`; raster-only Qt
+uses only the former. Apply [the Qt patch](patches/qt/README.md) to a local Qt
+6.11.1 `qtbase` copy. The tested common Qt configure switches are:
+
+```text
+-release -shared -qpa xcb -default-qpa xcb -xcb -xmin-x11
+-no-xcb-xlib -no-feature-xlib -no-sm
+-no-egl -no-eglfs -no-vulkan -no-feature-gbm -no-feature-kms
+-no-feature-wayland -no-feature-wayland-client -no-feature-wayland-server
+-no-fontconfig -qt-freetype -qt-harfbuzz
+-qt-zlib -qt-libpng -qt-libjpeg -no-dbus -no-glib
+-no-feature-inotify -nomake examples -nomake tests
+```
+
+Use `-no-opengl` for raster Qt or `-opengl desktop` for the Xmin software GL
+profile, and pass `-DCMAKE_PREFIX_PATH=/absolute/path/to/build/qt-sdk-install`
+after Qt configure's `--` separator. The installed dynamic-only deployment
+sets `QT_SKIP_AUTO_PLUGIN_INCLUSION=ON` before downstream `find_package(Qt6)`;
+the package projects under `tests/package` demonstrate this.
+
+Run the dependency gate on the final Qt prefix and any application binaries:
+
+```sh
+./tools/audit-qt-bundle.sh /path/to/qt-install raster ./your-raster-test
+./tools/audit-qt-bundle.sh /path/to/qt-install opengl ./your-opengl-test
+```
+
+The complete targeted build/install commands, sanitized runtime commands, and
+the partial-Qt-install metadata caveat are in `qt_building.txt`.
 
 To run a command on a private authenticated display:
 
@@ -185,6 +246,7 @@ transport is absent unless explicitly enabled at configure time.
 | Option | Default | Purpose |
 | --- | --- | --- |
 | `XMIN_BUILD_GLX` | `ON` | Embed OSMesa, build the non-DRI indirect GLX server provider, and ship the software-direct `libGL.so.1` client bridge. |
+| `XMIN_BUILD_QT_CLIENT` | `OFF` | Build/install the monolithic XCB/xkbcommon Qt client SDK as `Xmin::QtX11`; with GLX enabled also export `Xmin::GL` for the XCB-native Qt OpenGL integration. |
 | `XMIN_ENABLE_MITSHM` | `AUTO` | Enable MIT-SHM only when SysV shared memory is detected; also accepts `ON` or `OFF`. |
 | `XMIN_ENABLE_TCP` | `OFF` | Compile and listen on xtrans TCP sockets. This is explicit opt-in; local sockets are the normal path and authentication is required outside isolated test systems. |
 | `XMIN_PIXMAN_SIMD` | `AUTO` | Control future optional pixman SIMD implementations. |
@@ -215,6 +277,7 @@ src/
   support/              Xmin-owned adapters, launcher, and portability code
   server/               thin executable wrapper around the DIX server lifecycle
 data/fonts/             generated embedded core fonts
+data/qt-fonts/          licensed application font for no-Fontconfig Qt
 data/xkb/               generated embedded keyboard map
 third_party/            isolated imports and stable dependency targets
 tools/                  maintenance-time generators and import helpers
@@ -265,6 +328,20 @@ sh tools/import-xorg.sh \
 sh tools/import-libxcb.sh \
   /path/to/libxcb-1.17.0 \
   /path/to/xcb-proto-1.17.0
+
+sh tools/import-qt-client.sh \
+  /path/to/libxcb-1.17.0 \
+  /path/to/xcb-proto-1.17.0 \
+  /path/to/xcb-util-0.4.1 \
+  /path/to/xcb-util-image-0.4.1 \
+  /path/to/xcb-util-keysyms-0.4.1 \
+  /path/to/xcb-util-renderutil-0.3.10 \
+  /path/to/xcb-util-cursor-0.1.5 \
+  /path/to/xcb-util-wm-0.4.2 \
+  /path/to/libxkbcommon-1.13.2 \
+  /path/to/libXau-1.0.12
+
+sh tools/import-qt-font.sh /path/to/dejavu-fonts-ttf-2.37
 ```
 
 The script copies an explicit allowlist for protocol and C sources. Private X server
