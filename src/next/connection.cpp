@@ -23,8 +23,14 @@ namespace {
 
 constexpr std::uint16_t protocol_major = 11;
 constexpr std::uint16_t protocol_minor = 0;
-constexpr std::size_t maximum_request_bytes = 65535U * 4U;
-constexpr std::size_t maximum_buffered_input = maximum_request_bytes + 16384U;
+constexpr std::size_t maximum_core_request_units = 65535U;
+constexpr std::size_t maximum_extended_request_units = 262144U;
+constexpr std::size_t maximum_core_request_bytes =
+    maximum_core_request_units * 4U;
+constexpr std::size_t maximum_extended_request_bytes =
+    maximum_extended_request_units * 4U;
+constexpr std::size_t maximum_buffered_input =
+    maximum_extended_request_bytes + 16384U;
 constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
 constexpr std::uint32_t all_event_masks = 0x01ffffffU;
@@ -483,7 +489,8 @@ Connection::send_setup_success(ByteOrder order)
     payload.u32(client_resource_mask);
     payload.u32(0);          // motion buffer
     payload.u16(static_cast<std::uint16_t>(vendor.size()));
-    payload.u16(65535); // maximum request length in four-byte units
+    // Core framing remains available before BIG-REQUESTS is enabled.
+    payload.u16(static_cast<std::uint16_t>(maximum_core_request_units));
     payload.u8(1);      // roots
     payload.u8(4);      // pixmap formats
     const auto image_order = host_byte_order() == ByteOrder::little ? 0U : 1U;
@@ -4733,8 +4740,8 @@ Connection::handle_query_extension(const RequestContext &context)
     reply.u32(0);
     reply.u8(extension == nullptr ? 0 : 1);
     reply.u8(extension == nullptr ? 0 : extension->major_opcode);
-    reply.u8(0);
-    reply.u8(0);
+    reply.u8(extension == nullptr ? 0 : extension->first_event);
+    reply.u8(extension == nullptr ? 0 : extension->first_error);
     reply.pad(20);
     return queue(reply.data());
 }
@@ -4763,6 +4770,116 @@ Connection::handle_list_extensions(const RequestContext &context)
         reply.bytes(extension.name);
     }
     reply.pad(*padded_size - payload_size);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_big_requests(const RequestContext &context)
+{
+    if (context.data != 0) {
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+    if (context.request.size() != 4) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(static_cast<std::uint32_t>(maximum_extended_request_units));
+    reply.pad(20);
+    auto queued = queue(reply.data());
+    if (queued)
+        big_requests_enabled_ = true;
+    return queued;
+}
+
+Result<void>
+Connection::handle_xc_misc(const RequestContext &context)
+{
+    switch (context.data) {
+    case 0: { // GetVersion
+        if (context.request.size() != 8) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        if (!reader.u16() || !reader.u16())
+            return malformed("truncated XC-MISC GetVersion request");
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u16(xc_misc_extension.major_version);
+        reply.u16(xc_misc_extension.minor_version);
+        reply.pad(20);
+        return queue(reply.data());
+    }
+    case 1: { // GetXIDRange
+        if (context.request.size() != 4) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u32(0); // setup already exposes the complete client XID range
+        reply.u32(0);
+        reply.pad(16);
+        return queue(reply.data());
+    }
+    case 2: { // GetXIDList
+        if (context.request.size() != 8) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        if (!reader.u32())
+            return malformed("truncated XC-MISC GetXIDList request");
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u32(0); // no server-side supplemental XID pool
+        reply.pad(20);
+        return queue(reply.data());
+    }
+    default:
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+}
+
+Result<void>
+Connection::handle_generic_event(const RequestContext &context)
+{
+    if (context.data != 0) {
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+    if (context.request.size() != 8) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    if (!reader.u16() || !reader.u16())
+        return malformed("truncated Generic Event QueryVersion request");
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u16(generic_event_extension.major_version);
+    reply.u16(generic_event_extension.minor_version);
+    reply.pad(20);
     return queue(reply.data());
 }
 
@@ -4906,8 +5023,18 @@ Connection::handle_no_operation(const RequestContext &)
 Result<void>
 Connection::dispatch(const RequestContext &context)
 {
-    if (context.opcode == xtest_extension.major_opcode)
-        return handle_xtest(context);
+    if (const auto *extension = extension_by_opcode(context.opcode)) {
+        switch (extension->kind) {
+        case ExtensionKind::big_requests:
+            return handle_big_requests(context);
+        case ExtensionKind::xc_misc:
+            return handle_xc_misc(context);
+        case ExtensionKind::generic_event:
+            return handle_generic_event(context);
+        case ExtensionKind::xtest:
+            return handle_xtest(context);
+        }
+    }
     static const std::array<RequestHandler, 128> handlers = [] {
         std::array<RequestHandler, 128> table{};
         table[opcode_index(CoreOpcode::CreateWindow)] =
@@ -5122,19 +5249,48 @@ Connection::process_request()
 
     ++sequence_;
     server_.note_client_sequence(config_.resource_base, sequence_);
+    std::size_t wire_header_size = header_size;
+    std::size_t request_size = 0;
     if (*length_units == 0) {
-        consume_input(header_size);
-        auto sent = send_error(*order_, bad_length, *opcode, sequence_);
-        if (!sent)
+        if (!big_requests_enabled_) {
+            consume_input(header_size);
+            auto sent = send_error(*order_, bad_length, *opcode, sequence_);
+            if (!sent) {
+                return Result<bool>::failure(
+                    sent.error().code, sent.error().message);
+            }
+            return Result<bool>::success(true);
+        }
+        constexpr std::size_t extended_header_size = 8;
+        if (input_.size() < extended_header_size) {
+            --sequence_;
+            server_.note_client_sequence(config_.resource_base, sequence_);
+            return Result<bool>::success(false);
+        }
+        WireReader extended_header(
+            input_.data() + header_size, header_size, *order_);
+        const auto extended_length_units = extended_header.u32();
+        if (!extended_length_units) {
             return Result<bool>::failure(
-                sent.error().code, sent.error().message);
-        return Result<bool>::success(true);
+                ErrorCode::malformed, "truncated extended request header");
+        }
+        const auto extended_size = checked_multiply(
+            static_cast<std::size_t>(*extended_length_units),
+            std::size_t{4});
+        if (extended_size)
+            request_size = *extended_size;
+        wire_header_size = extended_header_size;
     }
-
-    const auto request_size = checked_multiply(
-        static_cast<std::size_t>(*length_units), std::size_t{4});
-    if (!request_size || *request_size < header_size ||
-        *request_size > maximum_request_bytes) {
+    else {
+        const auto core_size = checked_multiply(
+            static_cast<std::size_t>(*length_units), std::size_t{4});
+        if (core_size)
+            request_size = *core_size;
+    }
+    const std::size_t maximum_size = *length_units == 0
+        ? maximum_extended_request_bytes
+        : maximum_core_request_bytes;
+    if (request_size < wire_header_size || request_size > maximum_size) {
         auto sent = send_error(*order_, bad_length, *opcode, sequence_);
         if (!sent)
             return Result<bool>::failure(
@@ -5143,16 +5299,28 @@ Connection::process_request()
         close_after_output();
         return Result<bool>::success(true);
     }
-    if (input_.size() < *request_size) {
+    if (input_.size() < request_size) {
         --sequence_;
         server_.note_client_sequence(config_.resource_base, sequence_);
         return Result<bool>::success(false);
     }
 
-    std::vector<std::uint8_t> request(
-        input_.begin(),
-        input_.begin() + static_cast<std::ptrdiff_t>(*request_size));
-    consume_input(*request_size);
+    std::vector<std::uint8_t> request;
+    if (wire_header_size == header_size) {
+        request.assign(
+            input_.begin(),
+            input_.begin() + static_cast<std::ptrdiff_t>(request_size));
+    }
+    else {
+        request.reserve(request_size - header_size);
+        request.insert(request.end(), input_.begin(),
+                       input_.begin() + static_cast<std::ptrdiff_t>(header_size));
+        request.insert(
+            request.end(),
+            input_.begin() + static_cast<std::ptrdiff_t>(wire_header_size),
+            input_.begin() + static_cast<std::ptrdiff_t>(request_size));
+    }
+    consume_input(request_size);
     const RequestContext context{
         *order_, *opcode, *data, sequence_, request};
     server_.advance_time();

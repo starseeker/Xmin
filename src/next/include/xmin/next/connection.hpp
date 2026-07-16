@@ -171,6 +171,9 @@ private:
     Result<void> handle_query_keymap(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
+    Result<void> handle_big_requests(const RequestContext &context);
+    Result<void> handle_xc_misc(const RequestContext &context);
+    Result<void> handle_generic_event(const RequestContext &context);
     Result<void> handle_xtest(const RequestContext &context);
     Result<void> handle_no_operation(const RequestContext &context);
     Result<void> send_error(ByteOrder order, std::uint8_t code,
@@ -191,6 +194,7 @@ private:
     std::size_t setup_data_size_ = 0;
     std::size_t setup_padded_name_size_ = 0;
     std::uint16_t sequence_ = 0;
+    bool big_requests_enabled_ = false;
     bool prepared_ = false;
     bool close_after_output_ = false;
     bool finished_ = false;

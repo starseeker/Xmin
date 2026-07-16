@@ -7,16 +7,37 @@
 
 namespace xmin::next {
 
+enum class ExtensionKind : std::uint8_t {
+    big_requests,
+    xc_misc,
+    generic_event,
+    xtest,
+};
+
 struct ExtensionInfo {
     std::string_view name;
     std::uint8_t major_opcode;
+    std::uint8_t first_event;
+    std::uint8_t first_error;
     std::uint8_t major_version;
     std::uint16_t minor_version;
+    ExtensionKind kind;
 };
 
-inline constexpr ExtensionInfo xtest_extension{"XTEST", 128, 2, 2};
+inline constexpr ExtensionInfo big_requests_extension{
+    "BIG-REQUESTS", 128, 0, 0, 0, 0, ExtensionKind::big_requests};
+inline constexpr ExtensionInfo xc_misc_extension{
+    "XC-MISC", 129, 0, 0, 1, 1, ExtensionKind::xc_misc};
+inline constexpr ExtensionInfo generic_event_extension{
+    "Generic Event Extension", 130, 0, 0, 1, 0,
+    ExtensionKind::generic_event};
+inline constexpr ExtensionInfo xtest_extension{
+    "XTEST", 131, 0, 0, 2, 2, ExtensionKind::xtest};
 
-inline constexpr std::array<ExtensionInfo, 1> extension_registry{{
+inline constexpr std::array<ExtensionInfo, 4> extension_registry{{
+    big_requests_extension,
+    xc_misc_extension,
+    generic_event_extension,
     xtest_extension,
 }};
 

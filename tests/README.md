@@ -63,6 +63,9 @@ generated core keysyms plus mutable keysym/modifier/repeat/button mappings and f
 controls, including both-endian dynamic-width keymap updates, atomic invalid-update
 rejection, mapping-busy replies, per-client `MappingNotify` sequencing, and silent bell
 validation,
+stable BIG-REQUESTS, XC-MISC 1.1, and Generic Event 1.0 discovery and versioning,
+exact manifest listing, pre-enable extended-length rejection, and post-enable fragmented
+extended-header handling with a genuinely oversized request in both byte orders,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

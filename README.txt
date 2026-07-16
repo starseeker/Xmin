@@ -129,8 +129,13 @@ validate their signed percentage while remaining deliberately silent.  Typed foc
 distinguishes the protocol's `PointerRoot` sentinel from the server-owned root XID,
 honors request timestamps,
 and applies parent/none/pointer-root reversion when windows become unavailable.
-The first constexpr extension-registry entry advertises XTEST 2.2 at a stable opcode.
-Its typed request path negotiates versions, validates cursor/grab-control requests, and
+The constexpr extension registry is the single source of stable opcodes, versions,
+event bases, error bases, and typed handler identities.  Its first implemented slice
+advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, and XTEST 2.2.
+BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
+the framing layer normalizes the extended header before normal typed dispatch.
+XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
+The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate
 rules, routes typed core events through normal selections or active/passive grabs, stamps

@@ -1,3 +1,5 @@
+#include <algorithm>
+#include <array>
 #include <cerrno>
 #include <csignal>
 #include <cstdint>
@@ -256,6 +258,157 @@ read_variable_reply(int descriptor, bool little,
         return false;
     std::memcpy(reply.data() + original_size, tail.data(), tail.size());
     return true;
+}
+
+std::vector<std::uint8_t>
+extension_list_payload()
+{
+    constexpr std::array<std::string_view, 4> extensions{{
+        "BIG-REQUESTS",
+        "XC-MISC",
+        "Generic Event Extension",
+        "XTEST",
+    }};
+    std::vector<std::uint8_t> payload;
+    for (const auto name : extensions) {
+        payload.push_back(static_cast<std::uint8_t>(name.size()));
+        payload.insert(payload.end(), name.begin(), name.end());
+    }
+    while ((payload.size() & 3U) != 0)
+        payload.push_back(0);
+    return payload;
+}
+
+bool
+check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
+                     std::uint16_t sequence)
+{
+    const auto expected = extension_list_payload();
+    return reply.size() == 32 + expected.size() && reply[0] == 1 &&
+        reply[1] == 4 && get16(reply, 2, little) == sequence &&
+        get32(reply, 4, little) == expected.size() / 4 &&
+        std::equal(expected.begin(), expected.end(), reply.begin() + 32);
+}
+
+bool
+query_extension(int descriptor, bool little, std::string_view name,
+                std::uint16_t sequence, std::uint8_t expected_opcode,
+                std::vector<std::uint8_t> &reply)
+{
+    std::vector<std::uint8_t> request(
+        8 + ((name.size() + 3) & ~std::size_t{3}), 0);
+    request[0] = 98; // QueryExtension
+    put16(request, 2, static_cast<std::uint16_t>(request.size() / 4), little);
+    put16(request, 4, static_cast<std::uint16_t>(name.size()), little);
+    std::memcpy(request.data() + 8, name.data(), name.size());
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == sequence &&
+        reply[8] == 1 && reply[9] == expected_opcode &&
+        reply[10] == 0 && reply[11] == 0;
+}
+
+bool
+check_foundation_extensions(int descriptor, bool little)
+{
+    constexpr std::uint8_t big_requests_opcode = 128;
+    constexpr std::uint8_t xc_misc_opcode = 129;
+    constexpr std::uint8_t generic_event_opcode = 130;
+    std::vector<std::uint8_t> request(4, 0);
+    std::vector<std::uint8_t> reply;
+
+    request[0] = 127; // extended framing is invalid before Enable
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 16 ||
+        get16(reply, 2, little) != 1 || reply[10] != 127) {
+        return false;
+    }
+    if (!query_extension(descriptor, little, "BIG-REQUESTS", 2,
+                         big_requests_opcode, reply)) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = big_requests_opcode; // Enable
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get32(reply, 8, little) != 262144U) {
+        return false;
+    }
+    if (!query_extension(descriptor, little, "XC-MISC", 4,
+                         xc_misc_opcode, reply)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xc_misc_opcode; // GetVersion
+    put16(request, 2, 2, little);
+    put16(request, 4, 1, little);
+    put16(request, 6, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 5 ||
+        get16(reply, 8, little) != 1 || get16(reply, 10, little) != 1) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = xc_misc_opcode; // GetXIDRange: setup range is exhaustive
+    request[1] = 1;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 6 ||
+        get32(reply, 8, little) != 0 || get32(reply, 12, little) != 0) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xc_misc_opcode; // GetXIDList: no supplemental pool
+    request[1] = 2;
+    put16(request, 2, 2, little);
+    put32(request, 4, 4, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 32 || reply[0] != 1 ||
+        get16(reply, 2, little) != 7 || get32(reply, 8, little) != 0) {
+        return false;
+    }
+    if (!query_extension(descriptor, little, "Generic Event Extension", 8,
+                         generic_event_opcode, reply)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = generic_event_opcode; // QueryVersion
+    put16(request, 2, 2, little);
+    put16(request, 4, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 9 ||
+        get16(reply, 8, little) != 1 || get16(reply, 10, little) != 0) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = 99; // ListExtensions is the exact implemented manifest
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        !check_extension_list(reply, little, 10)) {
+        return false;
+    }
+
+    constexpr std::uint32_t oversized_units = 65536;
+    request.assign(static_cast<std::size_t>(oversized_units) * 4, 0);
+    request[0] = 127; // extended-length NoOperation
+    put32(request, 4, oversized_units, little);
+    if (!write_fragmented(descriptor, request, 6))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = 43; // synchronize after the no-reply oversized request
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 12 &&
+        get32(reply, 8, little) == pointer_root;
 }
 
 bool
@@ -1695,10 +1848,7 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
-        reply.size() != 40 || reply[0] != 1 ||
-        get16(reply, 2, little) != 3 || reply[1] != 1 ||
-        reply[32] != 5 ||
-        std::memcmp(reply.data() + 33, "XTEST", 5) != 0) {
+        !check_extension_list(reply, little, 3)) {
         return false;
     }
 
@@ -1738,6 +1888,7 @@ bool
 check_xtest(int descriptor, bool little, std::uint32_t resource_base)
 {
     constexpr std::string_view extension = "XTEST";
+    constexpr std::uint8_t xtest_opcode = 131;
     constexpr std::uint32_t crossing_motion_mask =
         (1U << 4) | (1U << 5) | (1U << 6);
     const std::uint32_t child = resource_base;
@@ -1750,12 +1901,12 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
     std::vector<std::uint8_t> reply;
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 1 || get16(reply, 2, little) != 1 ||
-        reply[8] != 1 || reply[9] != 128) {
+        reply[8] != 1 || reply[9] != xtest_opcode) {
         return false;
     }
 
     request.assign(8, 0);
-    request[0] = 128; // XTEST GetVersion
+    request[0] = xtest_opcode; // XTEST GetVersion
     put16(request, 2, 2, little);
     request[4] = 2;
     put16(request, 6, 2, little);
@@ -1801,7 +1952,7 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
                                      std::int16_t x = 0,
                                      std::int16_t y = 0) {
         std::vector<std::uint8_t> fake(36, 0);
-        fake[0] = 128;
+        fake[0] = xtest_opcode;
         fake[1] = 2;
         put16(fake, 2, 9, little);
         fake[4] = type;
@@ -1828,7 +1979,7 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 2 ||
         get16(reply, 2, little) != 8 || get16(reply, 8, little) != 2 ||
-        reply[10] != 128) {
+        reply[10] != xtest_opcode) {
         return false;
     }
 
@@ -1931,7 +2082,7 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
     }
 
     request.assign(8, 0);
-    request[0] = 128; // XTEST GrabControl rejects non-boolean values
+    request[0] = xtest_opcode; // XTEST GrabControl rejects non-boolean values
     request[1] = 3;
     put16(request, 2, 2, little);
     request[4] = 2;
@@ -1945,7 +2096,7 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
         return false;
 
     request.assign(12, 0);
-    request[0] = 128; // XTEST CompareCursor(Current)
+    request[0] = xtest_opcode; // XTEST CompareCursor(Current)
     request[1] = 1;
     put16(request, 2, 3, little);
     put32(request, 4, root_window, little);
@@ -1986,6 +2137,22 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
         read_reply(descriptor, reply) && reply[0] == 9 && reply[1] == 0 &&
         get16(reply, 2, little) == 24 &&
         get32(reply, 4, little) == child && reply[8] == 0;
+}
+
+bool
+run_foundation_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_foundation_extensions(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
 }
 
 bool
@@ -2072,6 +2239,11 @@ main(int argc, char **argv)
     }
     if (!run_success_case(argv[1], !native, false)) {
         std::cerr << "opposite-order setup/request case failed\n";
+        return 1;
+    }
+    if (!run_foundation_case(argv[1], native) ||
+        !run_foundation_case(argv[1], !native)) {
+        std::cerr << "foundation extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||
