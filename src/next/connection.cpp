@@ -37,6 +37,7 @@ enum : std::uint8_t {
     bad_drawable = 9,
     bad_alloc = 11,
     bad_colormap = 12,
+    bad_graphics_context = 13,
     bad_id_choice = 14,
     bad_length = 16,
 };
@@ -166,6 +167,9 @@ Connection::prepare()
     if (!socket_)
         return Result<void>::failure(ErrorCode::invalid_argument,
                                      "invalid client socket");
+    if (!server_.valid())
+        return Result<void>::failure(ErrorCode::invalid_argument,
+                                     "screen surface exceeds its size limit");
 
     const int status_flags = ::fcntl(socket_.get(), F_GETFL);
     if (status_flags < 0)
@@ -555,6 +559,11 @@ Connection::handle_create_window(const RequestContext &context)
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence);
         }
+        window.surface = Surface::create(window.width, window.height,
+                                         window.depth);
+        if (!window.surface)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
     }
 
     WireReader values(context.request.data() + 32,
@@ -654,10 +663,9 @@ Connection::handle_create_window(const RequestContext &context)
         }
     }
 
-    if (!server_.add_window(std::move(window), config_.resource_base)) {
-        return send_error(context.order, bad_id_choice, context.opcode,
-                          context.sequence, *id);
-    }
+    if (!server_.add_window(std::move(window), config_.resource_base))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
     return Result<void>::success();
 }
 
@@ -850,6 +858,11 @@ Connection::handle_configure_window(const RequestContext &context)
     if (window->parent == 0)
         return Result<void>::success();
 
+    if ((window->width != width || window->height != height) &&
+        !server_.resize_window_surface(*window, width, height)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
     window->x = x;
     window->y = y;
     window->width = width;
@@ -885,21 +898,32 @@ Connection::handle_get_geometry(const RequestContext &context)
     if (!drawable)
         return malformed("truncated GetGeometry request");
     const auto *window = server_.window(*drawable);
-    if (window == nullptr)
+    const auto *pixmap = server_.pixmap(*drawable);
+    if (window == nullptr && pixmap == nullptr)
         return send_error(context.order, bad_drawable, context.opcode,
                           context.sequence, *drawable);
 
+    const std::uint8_t depth = window == nullptr ? pixmap->surface.depth()
+                                                 : window->depth;
+    const std::int16_t x = window == nullptr ? 0 : window->x;
+    const std::int16_t y = window == nullptr ? 0 : window->y;
+    const std::uint16_t width = window == nullptr ? pixmap->surface.width()
+                                                  : window->width;
+    const std::uint16_t height = window == nullptr ? pixmap->surface.height()
+                                                   : window->height;
+    const std::uint16_t border = window == nullptr ? 0 : window->border_width;
+
     WireWriter reply(context.order);
     reply.u8(1);
-    reply.u8(window->depth);
+    reply.u8(depth);
     reply.u16(context.sequence);
     reply.u32(0);
     reply.u32(root_window_id);
-    reply.i16(window->x);
-    reply.i16(window->y);
-    reply.u16(window->width);
-    reply.u16(window->height);
-    reply.u16(window->border_width);
+    reply.i16(x);
+    reply.i16(y);
+    reply.u16(width);
+    reply.u16(height);
+    reply.u16(border);
     reply.pad(10);
     return queue(reply.data());
 }
@@ -1294,6 +1318,289 @@ Connection::handle_translate_coordinates(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_create_pixmap(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto id = reader.u32();
+    const auto drawable = reader.u32();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    if (!id || !drawable || !width || !height)
+        return malformed("truncated CreatePixmap request");
+    if (server_.drawable_surface(*drawable) == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable);
+    if (!server_.valid_client_resource(*id, config_.resource_base))
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    if (server_.resource_limit_reached(config_.resource_base))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    if (*width == 0 || *height == 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence);
+    if (context.data != 1 && context.data != 8 && context.data != 24 &&
+        context.data != 32) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    }
+    auto surface = Surface::create(*width, *height, context.data);
+    if (!surface)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    if (!server_.add_pixmap(PixmapRecord{*id, std::move(*surface)},
+                            config_.resource_base)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_free_pixmap(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated FreePixmap request");
+    if (!server_.erase_pixmap(*id))
+        return send_error(context.order, bad_pixmap, context.opcode,
+                          context.sequence, *id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_create_graphics_context(const RequestContext &context)
+{
+    if (context.request.size() < 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto id = reader.u32();
+    const auto drawable = reader.u32();
+    const auto value_mask = reader.u32();
+    if (!id || !drawable || !value_mask)
+        return malformed("truncated CreateGC request");
+    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    if ((*value_mask & ~supported_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *value_mask);
+    const auto value_bytes = checked_multiply(
+        std::bitset<32>(*value_mask).count(), std::size_t{4});
+    const auto expected_size = value_bytes
+        ? checked_add(std::size_t{16}, *value_bytes)
+        : std::optional<std::size_t>{};
+    if (!expected_size || context.request.size() != *expected_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const std::uint8_t depth = server_.drawable_depth(*drawable);
+    if (depth == 0)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable);
+    if (!server_.valid_client_resource(*id, config_.resource_base))
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    if (server_.resource_limit_reached(config_.resource_base))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+
+    GraphicsContextRecord graphics{*id, depth};
+    WireReader values(context.request.data() + 16,
+                      context.request.size() - 16, context.order);
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
+            continue;
+        const auto value = values.u32();
+        if (!value)
+            return malformed("truncated CreateGC value list");
+        switch (bit) {
+        case 0:
+            if (*value > 15)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.function = static_cast<std::uint8_t>(*value);
+            break;
+        case 1:
+            graphics.plane_mask = *value;
+            break;
+        case 2:
+            graphics.foreground = *value;
+            break;
+        case 3:
+            graphics.background = *value;
+            break;
+        }
+    }
+    if (!server_.add_graphics_context(std::move(graphics),
+                                      config_.resource_base)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_free_graphics_context(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated FreeGC request");
+    if (!server_.erase_graphics_context(*id))
+        return send_error(context.order, bad_graphics_context, context.opcode,
+                          context.sequence, *id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_copy_area(const RequestContext &context)
+{
+    if (context.request.size() != 28)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 24, context.order);
+    const auto source_id = reader.u32();
+    const auto destination_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    const auto source_x = reader.u16();
+    const auto source_y = reader.u16();
+    const auto destination_x = reader.u16();
+    const auto destination_y = reader.u16();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    if (!source_id || !destination_id || !graphics_id || !source_x ||
+        !source_y || !destination_x || !destination_y || !width || !height) {
+        return malformed("truncated CopyArea request");
+    }
+    const auto *source = server_.drawable_surface(*source_id);
+    if (source == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *source_id);
+    auto *destination = server_.drawable_surface(*destination_id);
+    if (destination == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *destination_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context, context.opcode,
+                          context.sequence, *graphics_id);
+    if (source->depth() != destination->depth() ||
+        graphics->depth != destination->depth()) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    destination->copy_from(*source, signed_word(*source_x),
+                           signed_word(*source_y),
+                           signed_word(*destination_x),
+                           signed_word(*destination_y), *width, *height,
+                           graphics->function, graphics->plane_mask);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_fill_rectangles(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 7U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    if (!drawable_id || !graphics_id)
+        return malformed("truncated PolyFillRectangle request");
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context, context.opcode,
+                          context.sequence, *graphics_id);
+    if (graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    while (reader.remaining() != 0) {
+        const auto x = reader.u16();
+        const auto y = reader.u16();
+        const auto width = reader.u16();
+        const auto height = reader.u16();
+        if (!x || !y || !width || !height)
+            return malformed("truncated PolyFillRectangle list");
+        surface->fill(Rectangle{signed_word(*x), signed_word(*y), *width,
+                                *height},
+                      graphics->foreground, graphics->function,
+                      graphics->plane_mask);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_get_image(const RequestContext &context)
+{
+    if (context.request.size() != 20)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 16, context.order);
+    const auto drawable_id = reader.u32();
+    const auto x = reader.u16();
+    const auto y = reader.u16();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    const auto plane_mask = reader.u32();
+    if (!drawable_id || !x || !y || !width || !height || !plane_mask)
+        return malformed("truncated GetImage request");
+    const auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    if (context.data != 2)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if (surface->depth() != 24 && surface->depth() != 32)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    const std::int32_t image_x = signed_word(*x);
+    const std::int32_t image_y = signed_word(*y);
+    if (*width == 0 || *height == 0 || image_x < 0 || image_y < 0 ||
+        image_x + *width > surface->width() ||
+        image_y + *height > surface->height()) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+
+    WireWriter image(host_byte_order());
+    for (std::uint32_t row = 0; row < *height; ++row) {
+        for (std::uint32_t column = 0; column < *width; ++column) {
+            image.u32(surface->pixel(
+                static_cast<std::uint16_t>(image_x + column),
+                static_cast<std::uint16_t>(image_y + row)) & *plane_mask);
+        }
+    }
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(surface->depth());
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(image.size() / 4));
+    reply.u32(server_.window(*drawable_id) == nullptr ? 0 : root_visual_id);
+    reply.pad(20);
+    reply.bytes(image.data());
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_input_focus(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -1394,6 +1701,20 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_list_properties;
         table[opcode_index(CoreOpcode::TranslateCoordinates)] =
             &Connection::handle_translate_coordinates;
+        table[opcode_index(CoreOpcode::CreatePixmap)] =
+            &Connection::handle_create_pixmap;
+        table[opcode_index(CoreOpcode::FreePixmap)] =
+            &Connection::handle_free_pixmap;
+        table[opcode_index(CoreOpcode::CreateGC)] =
+            &Connection::handle_create_graphics_context;
+        table[opcode_index(CoreOpcode::FreeGC)] =
+            &Connection::handle_free_graphics_context;
+        table[opcode_index(CoreOpcode::CopyArea)] =
+            &Connection::handle_copy_area;
+        table[opcode_index(CoreOpcode::PolyFillRectangle)] =
+            &Connection::handle_fill_rectangles;
+        table[opcode_index(CoreOpcode::GetImage)] =
+            &Connection::handle_get_image;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryExtension)] =

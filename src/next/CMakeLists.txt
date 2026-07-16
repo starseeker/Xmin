@@ -4,6 +4,7 @@ add_library(xmin_next_core STATIC
   display_socket.cpp
   server.cpp
   server_state.cpp
+  surface.cpp
   wire.cpp
   xauthority.cpp
 )

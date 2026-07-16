@@ -3,6 +3,7 @@
 
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/resource_registry.hpp"
+#include "xmin/next/surface.hpp"
 
 #include <cstddef>
 #include <cstdint>
@@ -38,6 +39,7 @@ struct WindowRecord {
     std::vector<std::uint32_t> children;
     std::unordered_map<std::uint32_t, std::uint32_t> event_masks;
     std::unordered_map<AtomId, PropertyValue> properties;
+    std::optional<Surface> surface;
     std::int16_t x = 0;
     std::int16_t y = 0;
     std::uint16_t width = 0;
@@ -60,12 +62,27 @@ struct WindowRecord {
     bool mapped = false;
 };
 
+struct PixmapRecord {
+    std::uint32_t id = 0;
+    Surface surface;
+};
+
+struct GraphicsContextRecord {
+    std::uint32_t id = 0;
+    std::uint8_t depth = 0;
+    std::uint8_t function = 3;
+    std::uint32_t plane_mask = 0xffffffffU;
+    std::uint32_t foreground = 0;
+    std::uint32_t background = 1;
+};
+
 class ServerState {
 public:
     ServerState(std::uint16_t width, std::uint16_t height);
 
     [[nodiscard]] std::uint16_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint16_t height() const noexcept { return height_; }
+    [[nodiscard]] bool valid() const noexcept;
 
     [[nodiscard]] AtomTable &atoms() noexcept { return atoms_; }
     [[nodiscard]] const AtomTable &atoms() const noexcept { return atoms_; }
@@ -77,6 +94,22 @@ public:
                                              std::uint32_t base) const;
     [[nodiscard]] bool resource_limit_reached(std::uint32_t owner) const;
     [[nodiscard]] bool add_window(WindowRecord window, std::uint32_t owner);
+    [[nodiscard]] bool resize_window_surface(WindowRecord &window,
+                                             std::uint16_t width,
+                                             std::uint16_t height);
+    [[nodiscard]] PixmapRecord *pixmap(std::uint32_t id);
+    [[nodiscard]] const PixmapRecord *pixmap(std::uint32_t id) const;
+    [[nodiscard]] bool add_pixmap(PixmapRecord pixmap, std::uint32_t owner);
+    [[nodiscard]] bool erase_pixmap(std::uint32_t id);
+    [[nodiscard]] GraphicsContextRecord *graphics_context(std::uint32_t id);
+    [[nodiscard]] const GraphicsContextRecord *
+    graphics_context(std::uint32_t id) const;
+    [[nodiscard]] bool add_graphics_context(GraphicsContextRecord context,
+                                            std::uint32_t owner);
+    [[nodiscard]] bool erase_graphics_context(std::uint32_t id);
+    [[nodiscard]] Surface *drawable_surface(std::uint32_t id);
+    [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
+    [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
     [[nodiscard]] bool set_property(WindowRecord &window, AtomId property,
                                     PropertyValue value);
     void delete_property(WindowRecord &window, AtomId property);
@@ -91,9 +124,13 @@ private:
     AtomTable atoms_;
     ResourceRegistry resources_;
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
+    std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
+    std::unordered_map<std::uint32_t, GraphicsContextRecord>
+        graphics_contexts_;
     std::uint16_t width_;
     std::uint16_t height_;
     std::size_t property_bytes_ = 0;
+    std::size_t surface_bytes_ = 0;
 };
 
 } // namespace xmin::next

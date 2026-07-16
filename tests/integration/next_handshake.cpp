@@ -495,10 +495,89 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 8, atom, little);
     put32(request, 12, 19, little);
     put32(request, 20, 1, little);
-    return write_all(descriptor, request) &&
-        read_variable_reply(descriptor, little, reply) && reply.size() == 32 &&
-        reply[0] == 1 && reply[1] == 0 &&
-        get16(reply, 2, little) == 29 && get32(reply, 8, little) == 0;
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 32 ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 29 || get32(reply, 8, little) != 0) {
+        return false;
+    }
+
+    const std::uint32_t pixmap = resource_base + 1;
+    const std::uint32_t graphics = resource_base + 2;
+    request.assign(16, 0);
+    request[0] = 53; // CreatePixmap
+    request[1] = 24;
+    put16(request, 2, 4, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 4, little);
+    put16(request, 14, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 55; // CreateGC
+    put16(request, 2, 5, little);
+    put32(request, 4, graphics, little);
+    put32(request, 8, pixmap, little);
+    put32(request, 12, 1U << 2, little); // GCForeground
+    put32(request, 16, 0x0000ff00U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 70; // PolyFillRectangle
+    put16(request, 2, 5, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, graphics, little);
+    put16(request, 16, 4, little);
+    put16(request, 18, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(28, 0);
+    request[0] = 62; // CopyArea
+    put16(request, 2, 7, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, root_window, little);
+    put32(request, 12, graphics, little);
+    put16(request, 24, 4, little);
+    put16(request, 26, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73; // GetImage
+    request[1] = 2;  // ZPixmap
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 0xffffffffU, little);
+    const bool image_little = host_is_little_endian();
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, little) != 34 ||
+        get32(reply, 32, image_little) != 0x0000ff00U) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 60; // FreeGC
+    put16(request, 2, 2, little);
+    put32(request, 4, graphics, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 54; // FreePixmap
+    put32(request, 4, pixmap, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 43; // synchronize teardown requests
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 37;
 }
 
 bool

@@ -109,8 +109,11 @@ map/unmap, destroy, attributes, geometry, hierarchy, interning, and reverse look
 including cross-client visibility and disconnect teardown.  Window configuration and
 border-aware coordinate translation now match the legacy oracle, while bounded
 properties support replace/prepend/append, partial reads, listing, deletion, and
-canonical 8/16/32-bit storage across clients of opposite byte order.  Its deliberately
-small request implementation is still a migration target;
+canonical 8/16/32-bit storage across clients of opposite byte order.  A bounded
+four-format `Surface` value now backs windows and typed pixmap records; the first GC
+path applies all 16 core raster functions and plane masks to clipped rectangle fills,
+overlap-safe copies, and host-image-order ZPixmap readback.  Its deliberately small
+request implementation is still a migration target;
 the Xorg-backed `Xmin` remains the feature-complete server and differential oracle.
 
 With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "63be3c9e54f9424d298d5af923cd073a4cf8e7be99fcebe1a3a87f33639a7abb",
+    "policy_sha256": "1e909dbbe3611b3b283663fd2dfd75ca1f052355fc934e4cd1dba3ccf9759719",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -503,21 +503,21 @@
       "name": "CreatePixmap",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 54,
       "name": "FreePixmap",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 55,
       "name": "CreateGC",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 56,
@@ -552,7 +552,7 @@
       "name": "FreeGC",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 61,
@@ -566,7 +566,7 @@
       "name": "CopyArea",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 63,
@@ -622,7 +622,7 @@
       "name": "PolyFillRectangle",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 71,
@@ -643,7 +643,7 @@
       "name": "GetImage",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 74,

@@ -178,6 +178,11 @@ Server::Server(DisplaySocket listener, ServerConfig config,
 Result<void>
 Server::run()
 {
+    if (!state_.valid()) {
+        return Result<void>::failure(
+            ErrorCode::invalid_argument,
+            "screen surface exceeds its size limit");
+    }
     if (maximum_clients_ == 0 || maximum_clients_ > 127) {
         return Result<void>::failure(
             ErrorCode::invalid_argument,

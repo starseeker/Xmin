@@ -4,6 +4,7 @@
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/result.hpp"
 #include "xmin/next/server_state.hpp"
+#include "xmin/next/surface.hpp"
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
@@ -176,6 +177,37 @@ test_shared_server_state()
 }
 
 bool
+test_surface_raster_and_overlap()
+{
+    if (!expect(!xmin::next::Surface::create(65535, 65535, 24),
+                "oversized surface was accepted")) {
+        return false;
+    }
+    auto surface = xmin::next::Surface::create(4, 2, 24);
+    if (!expect(surface.has_value(), "bounded surface creation failed"))
+        return false;
+    surface->fill(xmin::next::Rectangle{0, 0, 4, 2}, 0x00112233U, 3,
+                  0xffffffffU);
+    surface->fill(xmin::next::Rectangle{1, 0, 1, 1}, 0x00aabbccU, 3,
+                  0x0000ff00U);
+    if (!expect(surface->pixel(1, 0) == 0x0011bb33U,
+                "surface plane mask was not applied")) {
+        return false;
+    }
+
+    for (std::int16_t x = 0; x < 4; ++x) {
+        surface->fill(xmin::next::Rectangle{x, 1, 1, 1},
+                      static_cast<std::uint32_t>(x + 1), 3, 0xffffffffU);
+    }
+    surface->copy_from(*surface, 0, 1, 1, 1, 3, 1, 3, 0xffffffffU);
+    return expect(surface->pixel(0, 1) == 1 &&
+                      surface->pixel(1, 1) == 1 &&
+                      surface->pixel(2, 1) == 2 &&
+                      surface->pixel(3, 1) == 3,
+                  "overlapping surface copy did not use a snapshot");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -195,7 +227,8 @@ main()
             test_wire_order(xmin::next::ByteOrder::little) &&
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
-            test_shared_server_state() && test_result()
+            test_shared_server_state() && test_surface_raster_and_overlap() &&
+            test_result()
         ? 0
         : 1;
 }

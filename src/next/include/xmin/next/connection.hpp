@@ -83,6 +83,14 @@ private:
     Result<void> handle_get_property(const RequestContext &context);
     Result<void> handle_list_properties(const RequestContext &context);
     Result<void> handle_translate_coordinates(const RequestContext &context);
+    Result<void> handle_create_pixmap(const RequestContext &context);
+    Result<void> handle_free_pixmap(const RequestContext &context);
+    Result<void> handle_create_graphics_context(
+        const RequestContext &context);
+    Result<void> handle_free_graphics_context(const RequestContext &context);
+    Result<void> handle_copy_area(const RequestContext &context);
+    Result<void> handle_fill_rectangles(const RequestContext &context);
+    Result<void> handle_get_image(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
