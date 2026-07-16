@@ -80,6 +80,15 @@ struct GraphicsContextRecord {
     std::uint32_t plane_mask = 0xffffffffU;
     std::uint32_t foreground = 0;
     std::uint32_t background = 1;
+    std::int32_t clip_x_origin = 0;
+    std::int32_t clip_y_origin = 0;
+    std::optional<Region> clip_region;
+
+    [[nodiscard]] ClipView clip() const noexcept
+    {
+        return ClipView{clip_region ? &*clip_region : nullptr,
+                        clip_x_origin, clip_y_origin};
+    }
 };
 
 struct SelectionRecord {

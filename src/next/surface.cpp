@@ -232,30 +232,56 @@ Surface::resize(std::uint16_t width, std::uint16_t height)
 
 void
 Surface::fill(const Rectangle &rectangle, std::uint32_t source,
-              std::uint8_t function, std::uint32_t plane_mask)
+              std::uint8_t function, std::uint32_t plane_mask, ClipView clip)
 {
-    const std::int64_t left = std::max<std::int64_t>(0, rectangle.x);
-    const std::int64_t top = std::max<std::int64_t>(0, rectangle.y);
-    const std::int64_t right = std::min<std::int64_t>(
-        width_, static_cast<std::int64_t>(rectangle.x) + rectangle.width);
-    const std::int64_t bottom = std::min<std::int64_t>(
-        height_, static_cast<std::int64_t>(rectangle.y) + rectangle.height);
-    for (std::int64_t y = top; y < bottom; ++y) {
-        for (std::int64_t x = left; x < right; ++x) {
-            store(static_cast<std::size_t>(y) * width_ +
-                      static_cast<std::size_t>(x),
-                  source, function, plane_mask);
+    const std::int64_t target_left = rectangle.x;
+    const std::int64_t target_top = rectangle.y;
+    const std::int64_t target_right = target_left + rectangle.width;
+    const std::int64_t target_bottom = target_top + rectangle.height;
+    const auto fill_intersection = [&](std::int64_t clip_left,
+                                       std::int64_t clip_top,
+                                       std::int64_t clip_right,
+                                       std::int64_t clip_bottom) {
+        const std::int64_t left = std::max<std::int64_t>(
+            {0, target_left, clip_left});
+        const std::int64_t top = std::max<std::int64_t>(
+            {0, target_top, clip_top});
+        const std::int64_t right = std::min<std::int64_t>(
+            {width_, target_right, clip_right});
+        const std::int64_t bottom = std::min<std::int64_t>(
+            {height_, target_bottom, clip_bottom});
+        for (std::int64_t y = top; y < bottom; ++y) {
+            for (std::int64_t x = left; x < right; ++x) {
+                store(static_cast<std::size_t>(y) * width_ +
+                          static_cast<std::size_t>(x),
+                      source, function, plane_mask);
+            }
         }
+    };
+
+    if (clip.unrestricted()) {
+        fill_intersection(0, 0, width_, height_);
+        return;
+    }
+    for (const auto &clip_rectangle : clip.region->rectangles()) {
+        const std::int64_t left =
+            static_cast<std::int64_t>(clip_rectangle.x) + clip.x_origin;
+        const std::int64_t top =
+            static_cast<std::int64_t>(clip_rectangle.y) + clip.y_origin;
+        fill_intersection(left, top, left + clip_rectangle.width,
+                          top + clip_rectangle.height);
     }
 }
 
 void
 Surface::draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
                     std::uint8_t function,
-                    std::uint32_t plane_mask) noexcept
+                    std::uint32_t plane_mask, ClipView clip) noexcept
 {
-    if (x < 0 || y < 0 || x >= width_ || y >= height_)
+    if (x < 0 || y < 0 || x >= width_ || y >= height_ ||
+        !clip.contains(x, y)) {
         return;
+    }
     store(static_cast<std::size_t>(y) * width_ +
               static_cast<std::size_t>(x),
           source, function, plane_mask);
@@ -265,7 +291,7 @@ void
 Surface::draw_line(std::int32_t start_x, std::int32_t start_y,
                    std::int32_t end_x, std::int32_t end_y,
                    std::uint32_t source, std::uint8_t function,
-                   std::uint32_t plane_mask) noexcept
+                   std::uint32_t plane_mask, ClipView clip) noexcept
 {
     std::int64_t x0 = start_x;
     std::int64_t y0 = start_y;
@@ -282,7 +308,7 @@ Surface::draw_line(std::int32_t start_x, std::int32_t start_y,
     while (true) {
         draw_pixel(static_cast<std::int32_t>(x0),
                    static_cast<std::int32_t>(y0), source, function,
-                   plane_mask);
+                   plane_mask, clip);
         if (x0 == x1 && y0 == y1)
             break;
         const std::int64_t twice_error = error * 2;
@@ -302,7 +328,7 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
                    std::int32_t source_y, std::int32_t destination_x,
                    std::int32_t destination_y, std::uint32_t width,
                    std::uint32_t height, std::uint8_t function,
-                   std::uint32_t plane_mask)
+                   std::uint32_t plane_mask, ClipView clip)
 {
     const std::int64_t first_x = std::max<std::int64_t>(
         {0, -static_cast<std::int64_t>(source_x),
@@ -344,6 +370,10 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
             const auto sy = static_cast<std::size_t>(source_y + row);
             const auto dx = static_cast<std::size_t>(destination_x + column);
             const auto dy = static_cast<std::size_t>(destination_y + row);
+            if (!clip.contains(static_cast<std::int64_t>(dx),
+                               static_cast<std::int64_t>(dy))) {
+                continue;
+            }
             const std::uint32_t source_pixel =
                 source.pixels_[sy * source.width_ + sx];
             store(dy * width_ + dx, source_pixel, function, plane_mask);
@@ -358,7 +388,8 @@ Surface::copy_plane_from(const Surface &source, std::int32_t source_x,
                          std::int32_t destination_y, std::uint32_t width,
                          std::uint32_t height, std::uint32_t bit_plane,
                          std::uint32_t foreground, std::uint32_t background,
-                         std::uint8_t function, std::uint32_t plane_mask)
+                         std::uint8_t function, std::uint32_t plane_mask,
+                         ClipView clip)
 {
     const std::int64_t first_x = std::max<std::int64_t>(
         {0, -static_cast<std::int64_t>(source_x),
@@ -400,6 +431,10 @@ Surface::copy_plane_from(const Surface &source, std::int32_t source_x,
             const auto sy = static_cast<std::size_t>(source_y + row);
             const auto dx = static_cast<std::size_t>(destination_x + column);
             const auto dy = static_cast<std::size_t>(destination_y + row);
+            if (!clip.contains(static_cast<std::int64_t>(dx),
+                               static_cast<std::int64_t>(dy))) {
+                continue;
+            }
             const std::uint32_t source_pixel =
                 source.pixels_[sy * source.width_ + sx];
             store(dy * width_ + dx,

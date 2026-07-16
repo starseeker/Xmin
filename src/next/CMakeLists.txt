@@ -3,6 +3,7 @@ add_library(xmin_next_core STATIC
   color.cpp
   connection.cpp
   display_socket.cpp
+  region.cpp
   server.cpp
   server_state.cpp
   surface.cpp
@@ -18,6 +19,7 @@ target_include_directories(xmin_next_core
     "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
 )
 xmin_enable_warnings(xmin_next_core)
+target_link_libraries(xmin_next_core PUBLIC Xmin::pixman)
 
 add_executable(xmin_next main.cpp)
 add_executable(Xmin::next_server ALIAS xmin_next)

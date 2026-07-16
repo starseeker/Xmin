@@ -1182,11 +1182,78 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    const std::uint32_t clip_graphics = resource_base + 6;
+    request.assign(20, 0);
+    request[0] = 55; // CreateGC for clipped drawing
+    put16(request, 2, 5, little);
+    put32(request, 4, clip_graphics, little);
+    put32(request, 8, root_window, little);
+    put32(request, 12, 1U << 2, little); // GCForeground
+    put32(request, 16, 0x00abcdefU, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(28, 0);
+    request[0] = 59; // SetClipRectangles with an overlapping union
+    put16(request, 2, 7, little);
+    put32(request, 4, clip_graphics, little);
+    put16(request, 8, 1, little); // clip x origin
+    put16(request, 12, 0, little);
+    put16(request, 14, 20, little);
+    put16(request, 16, 3, little);
+    put16(request, 18, 1, little);
+    put16(request, 20, 2, little);
+    put16(request, 22, 20, little);
+    put16(request, 24, 3, little);
+    put16(request, 26, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 70; // PolyFillRectangle through the clip union
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, clip_graphics, little);
+    put16(request, 14, 20, little);
+    put16(request, 16, 8, little);
+    put16(request, 18, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73; // GetImage verifies the canonical clip
+    request[1] = 2;
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 10, 20, little);
+    put16(request, 12, 8, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 0xffffffffU, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 64 ||
+        reply[0] != 1 || get16(reply, 2, little) != 97) {
+        return false;
+    }
+    for (std::size_t x = 0; x < 8; ++x) {
+        const std::uint32_t expected = x >= 1 && x < 6
+            ? 0x00abcdefU
+            : 0;
+        if (get32(reply, 32 + x * 4, image_little) != expected)
+            return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 60; // FreeGC
+    put16(request, 2, 2, little);
+    put32(request, 4, clip_graphics, little);
+    if (!write_all(descriptor, request))
+        return false;
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 94;
+        reply[0] == 1 && get16(reply, 2, little) == 99;
 }
 
 bool

@@ -103,6 +103,7 @@ private:
     Result<void> handle_change_graphics_context(
         const RequestContext &context);
     Result<void> handle_copy_graphics_context(const RequestContext &context);
+    Result<void> handle_set_clip_rectangles(const RequestContext &context);
     Result<void> handle_free_graphics_context(const RequestContext &context);
     Result<void> handle_clear_area(const RequestContext &context);
     Result<void> handle_copy_area(const RequestContext &context);

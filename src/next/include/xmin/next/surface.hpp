@@ -1,6 +1,8 @@
 #ifndef XMIN_NEXT_SURFACE_HPP
 #define XMIN_NEXT_SURFACE_HPP
 
+#include "xmin/next/region.hpp"
+
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -10,13 +12,6 @@ namespace xmin::next {
 
 constexpr std::size_t maximum_surface_bytes = 64U * 1024U * 1024U;
 constexpr std::size_t maximum_server_surface_bytes = 256U * 1024U * 1024U;
-
-struct Rectangle {
-    std::int32_t x = 0;
-    std::int32_t y = 0;
-    std::uint32_t width = 0;
-    std::uint32_t height = 0;
-};
 
 class Surface {
 public:
@@ -33,26 +28,28 @@ public:
 
     bool resize(std::uint16_t width, std::uint16_t height);
     void fill(const Rectangle &rectangle, std::uint32_t source,
-              std::uint8_t function, std::uint32_t plane_mask);
+              std::uint8_t function, std::uint32_t plane_mask,
+              ClipView clip = {});
     void draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
                     std::uint8_t function,
-                    std::uint32_t plane_mask) noexcept;
+                    std::uint32_t plane_mask, ClipView clip = {}) noexcept;
     void draw_line(std::int32_t start_x, std::int32_t start_y,
                    std::int32_t end_x, std::int32_t end_y,
                    std::uint32_t source, std::uint8_t function,
-                   std::uint32_t plane_mask) noexcept;
+                   std::uint32_t plane_mask, ClipView clip = {}) noexcept;
     void copy_from(const Surface &source, std::int32_t source_x,
                    std::int32_t source_y, std::int32_t destination_x,
                    std::int32_t destination_y, std::uint32_t width,
                    std::uint32_t height, std::uint8_t function,
-                   std::uint32_t plane_mask);
+                   std::uint32_t plane_mask, ClipView clip = {});
     void copy_plane_from(const Surface &source, std::int32_t source_x,
                          std::int32_t source_y,
                          std::int32_t destination_x,
                          std::int32_t destination_y, std::uint32_t width,
                          std::uint32_t height, std::uint32_t bit_plane,
                          std::uint32_t foreground, std::uint32_t background,
-                         std::uint8_t function, std::uint32_t plane_mask);
+                         std::uint8_t function, std::uint32_t plane_mask,
+                         ClipView clip = {});
     [[nodiscard]] std::uint32_t pixel(std::uint16_t x,
                                       std::uint16_t y) const noexcept;
 

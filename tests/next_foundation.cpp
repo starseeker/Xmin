@@ -16,6 +16,7 @@
 #include <limits>
 #include <string>
 #include <variant>
+#include <vector>
 #include <unistd.h>
 
 namespace {
@@ -332,6 +333,48 @@ test_surface_raster_and_overlap()
 }
 
 bool
+test_region_clipping()
+{
+    xmin::next::Region region;
+    const std::vector<xmin::next::Rectangle> overlapping = {
+        {0, 0, 3, 2}, {2, 0, 3, 2}};
+    if (!expect(xmin::next::Region::canonicalize(overlapping, region),
+                "region canonicalization failed") ||
+        !expect(region.contains(0, 0) && region.contains(4, 1) &&
+                    !region.contains(5, 1),
+                "canonical region bounds are wrong")) {
+        return false;
+    }
+
+    auto surface = xmin::next::Surface::create(8, 2, 24);
+    if (!expect(surface.has_value(), "clip-test surface creation failed"))
+        return false;
+    surface->fill({0, 0, 8, 2}, 0x00ff0000U, 3, 0xffffffffU);
+    surface->fill({0, 0, 8, 2}, 0x00ffffffU, 6, 0xffffffffU,
+                  xmin::next::ClipView{&region, 1, 0});
+    if (!expect(surface->pixel(0, 0) == 0x00ff0000U &&
+                    surface->pixel(1, 0) == 0x0000ffffU &&
+                    surface->pixel(3, 0) == 0x0000ffffU &&
+                    surface->pixel(5, 1) == 0x0000ffffU &&
+                    surface->pixel(6, 1) == 0x00ff0000U,
+                "canonical clip was not applied as a disjoint union")) {
+        return false;
+    }
+
+    xmin::next::Region empty;
+    const std::vector<xmin::next::Rectangle> no_rectangles;
+    if (!expect(xmin::next::Region::canonicalize(no_rectangles, empty),
+                "empty region canonicalization failed")) {
+        return false;
+    }
+    surface->fill({0, 0, 8, 2}, 0x0000ff00U, 3, 0xffffffffU,
+                  xmin::next::ClipView{&empty, 0, 0});
+    return expect(surface->pixel(0, 0) == 0x00ff0000U &&
+                      surface->pixel(1, 0) == 0x0000ffffU,
+                  "empty clip region did not suppress drawing");
+}
+
+bool
 test_scene_composition()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -496,7 +539,8 @@ main()
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_true_color() &&
-            test_surface_raster_and_overlap() && test_scene_composition() &&
+            test_surface_raster_and_overlap() && test_region_clipping() &&
+            test_scene_composition() &&
             test_window_tree_mutations() && test_colormap_state() &&
             test_result()
         ? 0

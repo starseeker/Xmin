@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "54ec543f64081a71dda687b4ebb4940de3164e9211050dda7a34679250288030",
+    "policy_sha256": "2b8831c9efbc6ab272ded5073d02e07f942c97447e3b9ecc40876073bcd16196",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -545,7 +545,7 @@
       "name": "SetClipRectangles",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 60,

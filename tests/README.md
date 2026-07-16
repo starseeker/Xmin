@@ -64,7 +64,8 @@ cannot escape the 128-slot core table, and proves that one client's window is vi
 to another while a 32-bit property remains correctly encoded for the opposite-endian
 client after disconnect teardown.
 The next-server graphics vertical slice independently covers surface allocation caps,
-plane masks, overlap-safe self-copy, clipped point/line/segment/rectangle drawing, and
+plane masks, overlap-safe self-copy, canonical GC clip-region unions and origins,
+clipped point/line/segment/rectangle drawing, and
 pixmap-to-window fill/copy/readback plus cross-depth `CopyPlane` foreground/background
 mapping in native and opposite client byte orders while
 respecting the setup image byte order. Raw uploads

@@ -32,6 +32,9 @@ constexpr std::uint32_t exclusive_event_masks =
     (1U << 2) | (1U << 18) | (1U << 20); // ButtonPress/redirect masks
 constexpr std::uint32_t input_only_attribute_masks =
     (1U << 5) | (1U << 9) | (1U << 11) | (1U << 12) | (1U << 14);
+constexpr std::uint32_t basic_graphics_context_mask = 0x0000000fU;
+constexpr std::uint32_t graphics_context_clip_origins =
+    (1U << 17) | (1U << 18);
 
 enum : std::uint8_t {
     bad_request = 1,
@@ -65,6 +68,47 @@ signed_word(std::uint16_t value) noexcept
         widened <= std::numeric_limits<std::int16_t>::max()
             ? widened
             : widened - 65536);
+}
+
+std::int32_t
+signed_dword(std::uint32_t value) noexcept
+{
+    const std::int64_t widened = value;
+    return static_cast<std::int32_t>(
+        widened <= std::numeric_limits<std::int32_t>::max()
+            ? widened
+            : widened - (std::int64_t{1} << 32));
+}
+
+bool
+valid_clip_order(const std::vector<Rectangle> &rectangles,
+                 std::uint8_t ordering) noexcept
+{
+    for (std::size_t index = 1; index < rectangles.size(); ++index) {
+        const auto &previous = rectangles[index - 1];
+        const auto &current = rectangles[index];
+        if (ordering == 1 && current.y < previous.y)
+            return false;
+        if (ordering == 2 &&
+            (current.y < previous.y ||
+             (current.y == previous.y && current.x < previous.x))) {
+            return false;
+        }
+        if (ordering == 3) {
+            if (current.y != previous.y &&
+                current.y < static_cast<std::int64_t>(previous.y) +
+                        previous.height) {
+                return false;
+            }
+            if (current.y == previous.y &&
+                (current.height != previous.height ||
+                 current.x < static_cast<std::int64_t>(previous.x) +
+                         previous.width)) {
+                return false;
+            }
+        }
+    }
+    return true;
 }
 
 std::optional<std::vector<std::uint8_t>>
@@ -1927,7 +1971,8 @@ Connection::handle_create_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!id || !drawable || !value_mask)
         return malformed("truncated CreateGC request");
-    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
+        graphics_context_clip_origins;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -1950,10 +1995,12 @@ Connection::handle_create_graphics_context(const RequestContext &context)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
 
-    GraphicsContextRecord graphics{*id, depth};
+    GraphicsContextRecord graphics;
+    graphics.id = *id;
+    graphics.depth = depth;
     WireReader values(context.request.data() + 16,
                       context.request.size() - 16, context.order);
-    for (unsigned bit = 0; bit < 4; ++bit) {
+    for (unsigned bit = 0; bit <= 18; ++bit) {
         if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
             continue;
         const auto value = values.u32();
@@ -1974,6 +2021,12 @@ Connection::handle_create_graphics_context(const RequestContext &context)
             break;
         case 3:
             graphics.background = *value;
+            break;
+        case 17:
+            graphics.clip_x_origin = signed_dword(*value);
+            break;
+        case 18:
+            graphics.clip_y_origin = signed_dword(*value);
             break;
         }
     }
@@ -1997,7 +2050,8 @@ Connection::handle_change_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!id || !value_mask)
         return malformed("truncated ChangeGC request");
-    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
+        graphics_context_clip_origins;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -2014,8 +2068,15 @@ Connection::handle_change_graphics_context(const RequestContext &context)
         return send_error(context.order, bad_graphics_context,
                           context.opcode, context.sequence, *id);
 
-    GraphicsContextRecord updated = *graphics;
-    for (unsigned bit = 0; bit < 4; ++bit) {
+    std::optional<GraphicsContextRecord> updated;
+    try {
+        updated.emplace(*graphics);
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    for (unsigned bit = 0; bit <= 18; ++bit) {
         if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
             continue;
         const auto value = reader.u32();
@@ -2026,20 +2087,26 @@ Connection::handle_change_graphics_context(const RequestContext &context)
             if (*value > 15)
                 return send_error(context.order, bad_value, context.opcode,
                                   context.sequence, *value);
-            updated.function = static_cast<std::uint8_t>(*value);
+            updated->function = static_cast<std::uint8_t>(*value);
             break;
         case 1:
-            updated.plane_mask = *value;
+            updated->plane_mask = *value;
             break;
         case 2:
-            updated.foreground = *value;
+            updated->foreground = *value;
             break;
         case 3:
-            updated.background = *value;
+            updated->background = *value;
+            break;
+        case 17:
+            updated->clip_x_origin = signed_dword(*value);
+            break;
+        case 18:
+            updated->clip_y_origin = signed_dword(*value);
             break;
         }
     }
-    *graphics = updated;
+    *graphics = std::move(*updated);
     return Result<void>::success();
 }
 
@@ -2055,7 +2122,8 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!source_id || !destination_id || !value_mask)
         return malformed("truncated CopyGC request");
-    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
+        graphics_context_clip_origins | (1U << 19);
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -2067,14 +2135,90 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
     if (destination == nullptr)
         return send_error(context.order, bad_graphics_context,
                           context.opcode, context.sequence, *destination_id);
-    if ((*value_mask & (1U << 0)) != 0)
-        destination->function = source->function;
-    if ((*value_mask & (1U << 1)) != 0)
-        destination->plane_mask = source->plane_mask;
-    if ((*value_mask & (1U << 2)) != 0)
-        destination->foreground = source->foreground;
-    if ((*value_mask & (1U << 3)) != 0)
-        destination->background = source->background;
+    std::optional<GraphicsContextRecord> updated;
+    try {
+        updated.emplace(*destination);
+        if ((*value_mask & (1U << 0)) != 0)
+            updated->function = source->function;
+        if ((*value_mask & (1U << 1)) != 0)
+            updated->plane_mask = source->plane_mask;
+        if ((*value_mask & (1U << 2)) != 0)
+            updated->foreground = source->foreground;
+        if ((*value_mask & (1U << 3)) != 0)
+            updated->background = source->background;
+        if ((*value_mask & (1U << 17)) != 0)
+            updated->clip_x_origin = source->clip_x_origin;
+        if ((*value_mask & (1U << 18)) != 0)
+            updated->clip_y_origin = source->clip_y_origin;
+        if ((*value_mask & (1U << 19)) != 0)
+            updated->clip_region = source->clip_region;
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    *destination = std::move(*updated);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_set_clip_rectangles(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 3)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto graphics_id = reader.u32();
+    const auto encoded_origin_x = reader.u16();
+    const auto encoded_origin_y = reader.u16();
+    if (!graphics_id || !encoded_origin_x || !encoded_origin_y)
+        return malformed("truncated SetClipRectangles request");
+    auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr) {
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    }
+    if (((context.request.size() - 12) & 7U) != 0)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    std::vector<Rectangle> rectangles;
+    try {
+        rectangles.reserve((context.request.size() - 12) / 8);
+        while (reader.remaining() != 0) {
+            const auto encoded_x = reader.u16();
+            const auto encoded_y = reader.u16();
+            const auto width = reader.u16();
+            const auto height = reader.u16();
+            if (!encoded_x || !encoded_y || !width || !height)
+                return malformed("truncated SetClipRectangles list");
+            rectangles.push_back(Rectangle{
+                signed_word(*encoded_x), signed_word(*encoded_y), *width,
+                *height});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    if (!valid_clip_order(rectangles, context.data)) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+
+    Region canonical;
+    if (!Region::canonicalize(rectangles, canonical)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    graphics->clip_x_origin = signed_word(*encoded_origin_x);
+    graphics->clip_y_origin = signed_word(*encoded_origin_y);
+    graphics->clip_region = std::move(canonical);
     return Result<void>::success();
 }
 
@@ -2176,7 +2320,8 @@ Connection::handle_copy_area(const RequestContext &context)
                            signed_word(*source_y),
                            signed_word(*destination_x),
                            signed_word(*destination_y), *width, *height,
-                           graphics->function, graphics->plane_mask);
+                           graphics->function, graphics->plane_mask,
+                           graphics->clip());
     server_.invalidate_scene();
     return Result<void>::success();
 }
@@ -2229,7 +2374,7 @@ Connection::handle_copy_plane(const RequestContext &context)
         *source, signed_word(*source_x), signed_word(*source_y),
         signed_word(*destination_x), signed_word(*destination_y), *width,
         *height, *bit_plane, graphics->foreground, graphics->background,
-        graphics->function, graphics->plane_mask);
+        graphics->function, graphics->plane_mask, graphics->clip());
     server_.invalidate_scene();
     return Result<void>::success();
 }
@@ -2283,7 +2428,8 @@ Connection::handle_poly_points(const RequestContext &context)
         }
         first = false;
         surface->draw_pixel(current_x, current_y, graphics->foreground,
-                            graphics->function, graphics->plane_mask);
+                            graphics->function, graphics->plane_mask,
+                            graphics->clip());
     }
     server_.invalidate_scene();
     return Result<void>::success();
@@ -2335,7 +2481,7 @@ Connection::handle_poly_lines(const RequestContext &context)
         if (!first) {
             surface->draw_line(previous_x, previous_y, current_x, current_y,
                                graphics->foreground, graphics->function,
-                               graphics->plane_mask);
+                               graphics->plane_mask, graphics->clip());
         }
         previous_x = current_x;
         previous_y = current_y;
@@ -2381,7 +2527,7 @@ Connection::handle_poly_segments(const RequestContext &context)
         surface->draw_line(signed_word(*start_x), signed_word(*start_y),
                            signed_word(*end_x), signed_word(*end_y),
                            graphics->foreground, graphics->function,
-                           graphics->plane_mask);
+                           graphics->plane_mask, graphics->clip());
     }
     server_.invalidate_scene();
     return Result<void>::success();
@@ -2425,19 +2571,21 @@ Connection::handle_poly_rectangles(const RequestContext &context)
         const std::int32_t right = x + *width;
         const std::int32_t bottom = y + *height;
         surface->draw_line(x, y, right, y, graphics->foreground,
-                           graphics->function, graphics->plane_mask);
+                           graphics->function, graphics->plane_mask,
+                           graphics->clip());
         if (*height == 0)
             continue;
         surface->draw_line(x, bottom, right, bottom, graphics->foreground,
-                           graphics->function, graphics->plane_mask);
+                           graphics->function, graphics->plane_mask,
+                           graphics->clip());
         if (*height > 1) {
             surface->draw_line(x, y + 1, x, bottom - 1,
                                graphics->foreground, graphics->function,
-                               graphics->plane_mask);
+                               graphics->plane_mask, graphics->clip());
             if (*width != 0) {
                 surface->draw_line(right, y + 1, right, bottom - 1,
                                    graphics->foreground, graphics->function,
-                                   graphics->plane_mask);
+                                   graphics->plane_mask, graphics->clip());
             }
         }
     }
@@ -2480,7 +2628,7 @@ Connection::handle_fill_rectangles(const RequestContext &context)
         surface->fill(Rectangle{signed_word(*x), signed_word(*y), *width,
                                 *height},
                       graphics->foreground, graphics->function,
-                      graphics->plane_mask);
+                      graphics->plane_mask, graphics->clip());
     }
     server_.invalidate_scene();
     return Result<void>::success();
@@ -2578,7 +2726,7 @@ Connection::handle_put_image(const RequestContext &context)
             surface->draw_pixel(target_x + static_cast<std::int32_t>(column),
                                 target_y + static_cast<std::int32_t>(row),
                                 pixel, graphics->function,
-                                graphics->plane_mask);
+                                graphics->plane_mask, graphics->clip());
         }
     }
     server_.invalidate_scene();
@@ -3300,6 +3448,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_change_graphics_context;
         table[opcode_index(CoreOpcode::CopyGC)] =
             &Connection::handle_copy_graphics_context;
+        table[opcode_index(CoreOpcode::SetClipRectangles)] =
+            &Connection::handle_set_clip_rectangles;
         table[opcode_index(CoreOpcode::FreeGC)] =
             &Connection::handle_free_graphics_context;
         table[opcode_index(CoreOpcode::ClearArea)] =

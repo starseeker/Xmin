@@ -606,6 +606,68 @@ main(void)
     if ((pixel & 0x00ffffffU) != 0x000000ffU)
         goto cleanup;
 
+    stage = "clipping raster operations to a rectangle union";
+    {
+        const uint32_t clip_values[] = { XCB_GX_XOR, 0x00ffffffU };
+        const xcb_rectangle_t clips[] = {
+            { 0, 7, 3, 2 }, { 2, 7, 3, 2 }
+        };
+        const xcb_rectangle_t unsorted[] = {
+            { 0, 8, 1, 1 }, { 0, 7, 1, 1 }
+        };
+        const xcb_rectangle_t fill = { 0, 7, 8, 2 };
+
+        if (!checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics,
+                         XCB_GC_FUNCTION | XCB_GC_FOREGROUND, clip_values),
+                     "ChangeGC for clipped raster") ||
+            !checked_error(
+                connection,
+                xcb_set_clip_rectangles_checked(
+                    connection, XCB_CLIP_ORDERING_Y_SORTED, graphics,
+                    0, 0, 2, unsorted),
+                XCB_MATCH, "SetClipRectangles ordering validation") ||
+            !checked(connection,
+                     xcb_set_clip_rectangles_checked(
+                         connection, XCB_CLIP_ORDERING_UNSORTED, graphics,
+                         1, 0, 2, clips),
+                     "SetClipRectangles") ||
+            !checked(connection,
+                     xcb_poly_fill_rectangle_checked(
+                         connection, child, graphics, 1, &fill),
+                     "PolyFillRectangle with clip")) {
+            goto cleanup;
+        }
+    }
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, child, 0, 7,
+                      8, 2, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 8 * 2 * 4)
+        goto cleanup;
+    {
+        unsigned y;
+
+        for (y = 0; y < 2; ++y) {
+            unsigned x;
+
+            for (x = 0; x < 8; ++x) {
+                const uint32_t expected = x >= 1 && x < 6
+                    ? 0x0000ffffU
+                    : 0x00ff0000U;
+                memcpy(&pixel,
+                       xcb_get_image_data(image) + (y * 8 + x) * 4,
+                       sizeof(pixel));
+                if ((pixel & 0x00ffffffU) != expected)
+                    goto cleanup;
+            }
+        }
+    }
+
     stage = "round-tripping selection ownership";
     if (!checked(connection,
                  xcb_set_selection_owner_checked(
