@@ -960,6 +960,8 @@ test_focus_events()
     if (!expect(server.set_input_focus(
                     xmin::next::FocusKind::window, child, 0, 0) ==
                     xmin::next::FocusUpdate::updated &&
+                    focus(10, 5, child) && focus(10, 5, parent) &&
+                    focus(10, 5, xmin::next::root_window_id) &&
                     focus(10, 6, xmin::next::root_window_id) &&
                     focus(9, 4, xmin::next::root_window_id) &&
                     focus(9, 4, parent) && focus(9, 3, child),
@@ -994,6 +996,7 @@ test_focus_events()
     if (!expect(server.set_input_focus(
                     xmin::next::FocusKind::none, 0, 0, 0) ==
                     xmin::next::FocusUpdate::updated &&
+                    focus(10, 5, child) && focus(10, 5, parent) &&
                     focus(10, 3, xmin::next::root_window_id) &&
                     focus(9, 7, xmin::next::root_window_id) &&
                     server.set_input_focus(
@@ -1001,6 +1004,8 @@ test_focus_events()
                         xmin::next::FocusUpdate::updated &&
                     focus(10, 7, xmin::next::root_window_id) &&
                     focus(9, 6, xmin::next::root_window_id) &&
+                    focus(9, 5, xmin::next::root_window_id) &&
+                    focus(9, 5, parent) && focus(9, 5, child) &&
                     !server.has_pending_event(owner),
                 "None/PointerRoot focus path is wrong")) {
         return false;

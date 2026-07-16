@@ -68,7 +68,7 @@ typed event encoding, with an independent XCB oracle for pre-transition event st
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and
 ancestor/descendant/nonlinear crossing paths with atomic queue-failure rollback and
 automatic-grab first-press/final-release transitions, plus both-endian explicit focus
-paths and atomic focus queue-failure rollback,
+paths, `PointerRoot`/`NotifyPointer` side-runs, and atomic focus queue-failure rollback,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

@@ -138,8 +138,9 @@ ancestor, descendant, and nonlinear window transitions.  Normal button delivery 
 the protocol's automatic pointer grab, retains it across button chords, and generates
 typed grab/ungrab crossings on first press and final release.  Explicit focus changes
 atomically plan typed ancestor, descendant, nonlinear, `PointerRoot`, and `None`
-notifications.  Delayed scheduling, `NotifyPointer` and lifecycle focus/crossing events,
-and repeat timers remain later vertical slices.
+notifications, including `NotifyPointer` runs along the current pointer path.  Delayed
+scheduling, lifecycle focus/crossing events, and repeat timers remain later vertical
+slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with
