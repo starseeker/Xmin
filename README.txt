@@ -133,7 +133,9 @@ feeds immediate core key, button, and absolute/relative motion injection into th
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate
 rules, routes typed core events through normal selections or active/passive grabs, stamps
 each recipient's sequence at enqueue time, and commits device state only after successful
-delivery.  Delayed scheduling, crossing/focus events, and repeat timers remain later
+delivery.  Motion and core pointer warps also share an atomic crossing-event planner for
+ancestor, descendant, and nonlinear window transitions.  Delayed scheduling, focus and
+lifecycle crossing events, automatic pointer grabs, and repeat timers remain later
 vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and

@@ -658,6 +658,49 @@ ServerState::queue_event(std::uint32_t client, ClientEvent event)
 }
 
 bool
+ServerState::queue_events_atomically(const std::vector<PlannedEvent> &events)
+{
+    if (events.size() > maximum_pending_events - pending_events_)
+        return false;
+    for (std::size_t index = 0; index < events.size(); ++index) {
+        const std::uint32_t recipient = events[index].first;
+        if (recipient == 0)
+            return false;
+        std::size_t additions = 1;
+        for (std::size_t previous = 0; previous < index; ++previous) {
+            if (events[previous].first == recipient)
+                ++additions;
+        }
+        const auto found = event_queues_.find(recipient);
+        const std::size_t queued = found == event_queues_.end()
+            ? 0
+            : found->second.size();
+        if (additions > maximum_pending_events_per_client - queued)
+            return false;
+    }
+
+    for (std::size_t index = 0; index < events.size(); ++index) {
+        if (queue_event(events[index].first, events[index].second))
+            continue;
+        const auto failed = event_queues_.find(events[index].first);
+        if (failed != event_queues_.end() && failed->second.empty())
+            event_queues_.erase(failed);
+        while (index > 0) {
+            --index;
+            const auto found = event_queues_.find(events[index].first);
+            if (found == event_queues_.end() || found->second.empty())
+                continue;
+            found->second.pop_back();
+            --pending_events_;
+            if (found->second.empty())
+                event_queues_.erase(found);
+        }
+        return false;
+    }
+    return true;
+}
+
+bool
 ServerState::broadcast_mapping_notify(std::uint8_t request,
                                       std::uint8_t first_keycode,
                                       std::uint8_t count)
@@ -826,10 +869,11 @@ ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
                                std::uint32_t source,
                                std::uint32_t propagation_stop,
                                std::uint32_t pointer_window,
-                               const ActiveGrab *grab)
+                               const ActiveGrab *grab,
+                               std::vector<PlannedEvent> &events) const
 {
     const auto deliver = [&](std::uint32_t destination,
-                             const std::vector<std::uint32_t> &recipients,
+                             const auto &recipients,
                              CoreInputEvent routed) {
         const auto origin = absolute_position(destination);
         routed.event = destination;
@@ -849,36 +893,13 @@ ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
             }
             child = candidate->parent;
         }
-        if (pending_events_ > maximum_pending_events - recipients.size())
-            return EventDelivery::queue_full;
-        for (const auto recipient : recipients) {
-            if (!can_queue_event(recipient))
-                return EventDelivery::queue_full;
-        }
-        std::vector<std::uint32_t> queued;
+        const std::size_t initial_size = events.size();
         try {
-            queued.reserve(recipients.size());
+            for (const auto recipient : recipients)
+                events.emplace_back(recipient, routed);
         }
         catch (const std::bad_alloc &) {
-            return EventDelivery::queue_full;
-        }
-        for (const auto recipient : recipients) {
-            if (queue_event(recipient, routed)) {
-                queued.push_back(recipient);
-                continue;
-            }
-            const auto failed = event_queues_.find(recipient);
-            if (failed != event_queues_.end() && failed->second.empty())
-                event_queues_.erase(failed);
-            for (const auto rollback : queued) {
-                const auto found = event_queues_.find(rollback);
-                if (found == event_queues_.end() || found->second.empty())
-                    continue;
-                found->second.pop_back();
-                --pending_events_;
-                if (found->second.empty())
-                    event_queues_.erase(found);
-            }
+            events.resize(initial_size);
             return EventDelivery::queue_full;
         }
         return EventDelivery::delivered;
@@ -887,7 +908,8 @@ ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
     const auto forced = [&]() {
         if (grab == nullptr || (grab->event_mask & mask) == 0)
             return EventDelivery::no_recipient;
-        return deliver(grab->window, {grab->owner}, event);
+        return deliver(grab->window,
+                       std::array<std::uint32_t, 1>{grab->owner}, event);
     };
     if (grab != nullptr && !grab->owner_events)
         return forced();
@@ -917,6 +939,168 @@ ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
         candidate = window(candidate->parent);
     }
     return forced();
+}
+
+EventDelivery
+ServerState::append_crossing_events(
+    std::uint32_t from, std::uint32_t to,
+    std::int32_t root_x, std::int32_t root_y, std::uint16_t state,
+    const ActiveGrab *grab, std::vector<PlannedEvent> &events) const
+{
+    if (from == to)
+        return EventDelivery::no_recipient;
+
+    bool delivered = false;
+    const auto append = [&](std::uint8_t type, std::uint8_t detail,
+                            std::uint32_t destination,
+                            std::uint32_t child) {
+        const auto *target = window(destination);
+        if (target == nullptr)
+            return EventDelivery::no_recipient;
+        CrossingEvent event;
+        event.type = type;
+        event.detail = detail;
+        event.time = current_time_;
+        event.root = root_window_id;
+        event.event = destination;
+        event.child = child;
+        event.root_x = wire_coordinate(root_x);
+        event.root_y = wire_coordinate(root_y);
+        const auto origin = absolute_position(destination);
+        event.event_x = wire_coordinate(root_x - origin.first);
+        event.event_y = wire_coordinate(root_y - origin.second);
+        event.state = state;
+        event.focus = input_.focus.kind == FocusKind::pointer_root ||
+            (input_.focus.kind == FocusKind::window &&
+             (destination == input_.focus.window ||
+              is_descendant(destination, input_.focus.window)));
+        const std::uint32_t mask = type == 7 ? 1U << 4 : 1U << 5;
+        const std::size_t initial_size = events.size();
+        try {
+            if (grab != nullptr) {
+                bool selected = destination == grab->window &&
+                    (grab->event_mask & mask) != 0;
+                if (grab->owner_events) {
+                    const auto selection = target->event_masks.find(
+                        grab->owner);
+                    selected = selected ||
+                        (selection != target->event_masks.end() &&
+                         (selection->second & mask) != 0);
+                }
+                if (selected)
+                    events.emplace_back(grab->owner, event);
+            }
+            else {
+                for (const auto &selection : target->event_masks) {
+                    if ((selection.second & mask) != 0)
+                        events.emplace_back(selection.first, event);
+                }
+            }
+        }
+        catch (const std::bad_alloc &) {
+            events.resize(initial_size);
+            return EventDelivery::queue_full;
+        }
+        return events.size() == initial_size
+            ? EventDelivery::no_recipient
+            : EventDelivery::delivered;
+    };
+    const auto add = [&](std::uint8_t type, std::uint8_t detail,
+                         std::uint32_t destination,
+                         std::uint32_t child) {
+        const EventDelivery result = append(type, detail, destination, child);
+        if (result == EventDelivery::delivered)
+            delivered = true;
+        return result != EventDelivery::queue_full;
+    };
+
+    if (is_descendant(to, from)) {
+        if (!add(8, 2, from, 0)) // LeaveNotify, NotifyInferior
+            return EventDelivery::queue_full;
+        std::vector<std::uint32_t> path;
+        try {
+            for (std::uint32_t current = to; current != from;) {
+                path.push_back(current);
+                const auto *candidate = window(current);
+                if (candidate == nullptr)
+                    return EventDelivery::queue_full;
+                current = candidate->parent;
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        std::reverse(path.begin(), path.end());
+        for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+            if (!add(7, 1, path[index], path[index + 1]))
+                return EventDelivery::queue_full;
+        }
+        if (!add(7, 0, to, 0)) // EnterNotify, NotifyAncestor
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    if (is_descendant(from, to)) {
+        if (!add(8, 0, from, 0)) // LeaveNotify, NotifyAncestor
+            return EventDelivery::queue_full;
+        std::uint32_t child = from;
+        for (const auto *candidate = window(from);
+             candidate != nullptr && candidate->parent != to;) {
+            candidate = window(candidate->parent);
+            if (candidate == nullptr)
+                return EventDelivery::queue_full;
+            if (!add(8, 1, candidate->id, child))
+                return EventDelivery::queue_full;
+            child = candidate->id;
+        }
+        if (!add(7, 2, to, 0)) // EnterNotify, NotifyInferior
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    std::uint32_t common = from;
+    while (common != 0 && common != to && !is_descendant(to, common)) {
+        const auto *candidate = window(common);
+        common = candidate == nullptr ? 0 : candidate->parent;
+    }
+    if (common == 0)
+        return EventDelivery::queue_full;
+    if (!add(8, 3, from, 0)) // LeaveNotify, NotifyNonlinear
+        return EventDelivery::queue_full;
+    std::uint32_t child = from;
+    for (const auto *candidate = window(from);
+         candidate != nullptr && candidate->parent != common;) {
+        candidate = window(candidate->parent);
+        if (candidate == nullptr)
+            return EventDelivery::queue_full;
+        if (!add(8, 4, candidate->id, child))
+            return EventDelivery::queue_full;
+        child = candidate->id;
+    }
+    std::vector<std::uint32_t> path;
+    try {
+        for (std::uint32_t current = to; current != common;) {
+            path.push_back(current);
+            const auto *candidate = window(current);
+            if (candidate == nullptr)
+                return EventDelivery::queue_full;
+            current = candidate->parent;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    std::reverse(path.begin(), path.end());
+    for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+        if (!add(7, 4, path[index], path[index + 1]))
+            return EventDelivery::queue_full;
+    }
+    if (!add(7, 3, to, 0)) // EnterNotify, NotifyNonlinear
+        return EventDelivery::queue_full;
+    return delivered ? EventDelivery::delivered
+                     : EventDelivery::no_recipient;
 }
 
 void
@@ -955,6 +1139,10 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     const std::int32_t event_y = motion_event ? root_y : input_.pointer_y;
     const std::uint32_t pointer_window = deepest_window_at(
         root_window_id, event_x, event_y);
+    const std::uint32_t previous_pointer_window = motion_event
+        ? deepest_window_at(root_window_id,
+                            input_.pointer_x, input_.pointer_y)
+        : pointer_window;
     std::uint32_t source = pointer_window;
     std::uint32_t propagation_stop = root_window_id;
     if (key_event) {
@@ -1022,13 +1210,29 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     event.root_x = wire_coordinate(event_x);
     event.root_y = wire_coordinate(event_y);
     event.state = state_before;
-    const EventDelivery delivered = source == 0 ||
+    std::vector<PlannedEvent> events;
+    EventDelivery crossing = EventDelivery::no_recipient;
+    if (motion_event && previous_pointer_window != pointer_window) {
+        crossing = append_crossing_events(
+            previous_pointer_window, pointer_window, event_x, event_y,
+            state_before, grab, events);
+        if (crossing == EventDelivery::queue_full)
+            return crossing;
+    }
+    const EventDelivery routed = source == 0 ||
             (button_event && wire_detail == 0)
         ? EventDelivery::no_recipient
         : route_input_event(event, mask, source, propagation_stop,
-                            pointer_window, grab);
-    if (delivered == EventDelivery::queue_full)
-        return delivered;
+                            pointer_window, grab, events);
+    if (routed == EventDelivery::queue_full)
+        return routed;
+    if (!queue_events_atomically(events))
+        return EventDelivery::queue_full;
+    const EventDelivery delivered =
+        crossing == EventDelivery::delivered ||
+        routed == EventDelivery::delivered
+        ? EventDelivery::delivered
+        : EventDelivery::no_recipient;
 
     if (key_event) {
         const std::uint8_t bit = static_cast<std::uint8_t>(

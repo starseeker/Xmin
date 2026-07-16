@@ -628,6 +628,139 @@ test_input_routing()
 }
 
 bool
+test_crossing_events()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t left = owner | 1U;
+    constexpr std::uint32_t left_child = owner | 2U;
+    constexpr std::uint32_t right = owner | 3U;
+    constexpr std::uint32_t right_child = owner | 4U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "crossing client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 71);
+
+    const auto add_window = [&](std::uint32_t id, std::uint32_t parent,
+                                std::int16_t x, std::int16_t y,
+                                std::uint16_t width,
+                                std::uint16_t height) {
+        xmin::next::WindowRecord window;
+        window.id = id;
+        window.parent = parent;
+        window.x = x;
+        window.y = y;
+        window.width = width;
+        window.height = height;
+        if (!server.add_window(std::move(window), owner))
+            return false;
+        auto *stored = server.window(id);
+        server.set_window_mapped(*stored, true);
+        stored->event_masks.emplace(owner, crossing_mask);
+        return true;
+    };
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, crossing_mask);
+    if (!expect(add_window(left, xmin::next::root_window_id,
+                           0, 0, 40, 40) &&
+                    add_window(left_child, left, 5, 5, 10, 10) &&
+                    add_window(right, xmin::next::root_window_id,
+                               50, 0, 40, 40) &&
+                    add_window(right_child, right, 5, 5, 10, 10),
+                "crossing window insertion failed")) {
+        return false;
+    }
+
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint32_t event, std::uint32_t child,
+                              std::int16_t event_x,
+                              std::int16_t event_y) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->root ==
+                xmin::next::root_window_id &&
+            value->event == event && value->child == child &&
+            value->event_x == event_x && value->event_y == event_y &&
+            value->mode == 0 && value->same_screen && value->focus &&
+            value->sequence == 71;
+        server.pop_event(owner);
+        return matches;
+    };
+
+    if (!expect(server.inject_input(6, 0, 7, 7) ==
+                    xmin::next::EventDelivery::delivered,
+                "descendant crossing was not delivered") ||
+        !expect(crossing(8, 2, xmin::next::root_window_id, 0, 7, 7) &&
+                    crossing(7, 1, left, left_child, 7, 7) &&
+                    crossing(7, 0, left_child, 0, 2, 2) &&
+                    !server.has_pending_event(owner),
+                "descendant crossing path is wrong")) {
+        return false;
+    }
+
+    if (!expect(server.inject_input(6, 0, 57, 7) ==
+                    xmin::next::EventDelivery::delivered,
+                "nonlinear crossing was not delivered") ||
+        !expect(crossing(8, 3, left_child, 0, 52, 2) &&
+                    crossing(8, 4, left, left_child, 57, 7) &&
+                    crossing(7, 4, right, right_child, 7, 7) &&
+                    crossing(7, 3, right_child, 0, 2, 2) &&
+                    !server.has_pending_event(owner),
+                "nonlinear crossing path is wrong")) {
+        return false;
+    }
+
+    if (!expect(server.inject_input(6, 0, 95, 70) ==
+                    xmin::next::EventDelivery::delivered,
+                "ancestor crossing was not delivered") ||
+        !expect(crossing(8, 0, right_child, 0, 40, 65) &&
+                    crossing(8, 1, right, right_child, 45, 70) &&
+                    crossing(7, 2, xmin::next::root_window_id, 0, 95, 70) &&
+                    !server.has_pending_event(owner),
+                "ancestor crossing path is wrong")) {
+        return false;
+    }
+
+    xmin::next::ClientMessageEvent message;
+    message.window = left;
+    for (std::size_t count = 0;
+         count + 1 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(left, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "crossing queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.inject_input(6, 0, 7, 7) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    server.input().pointer_x == 95 &&
+                    server.input().pointer_y == 70,
+                "partial crossing escaped an atomic queue failure")) {
+        return false;
+    }
+    std::size_t queued = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *event = server.next_event(owner);
+        if (!expect(event != nullptr &&
+                        std::holds_alternative<xmin::next::ClientMessageEvent>(
+                            *event),
+                    "queue failure left a partial crossing event")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued;
+    }
+    return expect(
+        queued + 1 == xmin::next::maximum_pending_events_per_client,
+        "queue failure changed the preexisting event count");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -932,6 +1065,7 @@ main()
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_passive_grabs() &&
             test_input_routing() &&
+            test_crossing_events() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

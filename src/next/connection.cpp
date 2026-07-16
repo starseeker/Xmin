@@ -390,21 +390,40 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
-    const auto &input = std::get<CoreInputEvent>(event);
-    writer.u8(input.type);
-    writer.u8(input.detail);
-    writer.u16(input.sequence);
-    writer.u32(input.time);
-    writer.u32(input.root);
-    writer.u32(input.event);
-    writer.u32(input.child);
-    writer.i16(input.root_x);
-    writer.i16(input.root_y);
-    writer.i16(input.event_x);
-    writer.i16(input.event_y);
-    writer.u16(input.state);
-    writer.u8(input.same_screen ? 1 : 0);
-    writer.u8(0);
+    if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
+        writer.u8(input->type);
+        writer.u8(input->detail);
+        writer.u16(input->sequence);
+        writer.u32(input->time);
+        writer.u32(input->root);
+        writer.u32(input->event);
+        writer.u32(input->child);
+        writer.i16(input->root_x);
+        writer.i16(input->root_y);
+        writer.i16(input->event_x);
+        writer.i16(input->event_y);
+        writer.u16(input->state);
+        writer.u8(input->same_screen ? 1 : 0);
+        writer.u8(0);
+        return writer.data();
+    }
+
+    const auto &crossing = std::get<CrossingEvent>(event);
+    writer.u8(crossing.type);
+    writer.u8(crossing.detail);
+    writer.u16(crossing.sequence);
+    writer.u32(crossing.time);
+    writer.u32(crossing.root);
+    writer.u32(crossing.event);
+    writer.u32(crossing.child);
+    writer.i16(crossing.root_x);
+    writer.i16(crossing.root_y);
+    writer.i16(crossing.event_x);
+    writer.i16(crossing.event_y);
+    writer.u16(crossing.state);
+    writer.u8(crossing.mode);
+    writer.u8((crossing.same_screen ? 1U : 0U) |
+              (crossing.focus ? 2U : 0U));
     return writer.data();
 }
 
@@ -2560,11 +2579,16 @@ Connection::handle_warp_pointer(const RequestContext &context)
     }
     x += signed_word(*destination_x);
     y += signed_word(*destination_y);
-    input.pointer_x = static_cast<std::int32_t>(std::clamp<std::int64_t>(
+    const auto pointer_x = static_cast<std::int32_t>(std::clamp<std::int64_t>(
         x, 0, static_cast<std::int64_t>(server_.width()) - 1));
-    input.pointer_y = static_cast<std::int32_t>(std::clamp<std::int64_t>(
+    const auto pointer_y = static_cast<std::int32_t>(std::clamp<std::int64_t>(
         y, 0, static_cast<std::int64_t>(server_.height()) - 1));
-    return Result<void>::success();
+    const auto delivered = server_.inject_input(
+        6, 0, pointer_x, pointer_y);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>

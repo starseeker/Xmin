@@ -1735,9 +1735,12 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
 }
 
 bool
-check_xtest(int descriptor, bool little)
+check_xtest(int descriptor, bool little, std::uint32_t resource_base)
 {
     constexpr std::string_view extension = "XTEST";
+    constexpr std::uint32_t crossing_motion_mask =
+        (1U << 4) | (1U << 5) | (1U << 6);
+    const std::uint32_t child = resource_base;
     std::vector<std::uint8_t> request(
         8 + ((extension.size() + 3) & ~std::size_t{3}), 0);
     request[0] = 98; // QueryExtension
@@ -1767,7 +1770,30 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 4, little);
     put32(request, 4, root_window, little);
     put32(request, 8, 1U << 11, little); // CWEventMask
-    put32(request, 12, 1U << 6, little); // PointerMotionMask
+    put32(request, 12, crossing_motion_mask, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(36, 0);
+    request[0] = 1;  // CreateWindow
+    request[1] = 24; // depth
+    put16(request, 2, 9, little);
+    put32(request, 4, child, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 10, little);
+    put16(request, 14, 10, little);
+    put16(request, 16, 30, little);
+    put16(request, 18, 30, little);
+    put16(request, 22, 1, little); // InputOutput
+    put32(request, 24, 3, little); // root visual
+    put32(request, 28, 1U << 11, little); // CWEventMask
+    put32(request, 32, crossing_motion_mask, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 8; // MapWindow
+    put16(request, 2, 2, little);
+    put32(request, 4, child, little);
     if (!write_all(descriptor, request))
         return false;
 
@@ -1793,7 +1819,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
-        reply.size() != 40 || get16(reply, 2, little) != 5 ||
+        reply.size() != 40 || get16(reply, 2, little) != 7 ||
         reply[20] != 1) {
         return false;
     }
@@ -1801,7 +1827,7 @@ check_xtest(int descriptor, bool little)
     request = fake_input(99, 0); // invalid event type
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 2 ||
-        get16(reply, 2, little) != 6 || get16(reply, 8, little) != 2 ||
+        get16(reply, 2, little) != 8 || get16(reply, 8, little) != 2 ||
         reply[10] != 128) {
         return false;
     }
@@ -1814,15 +1840,15 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
-        reply.size() != 40 || get16(reply, 2, little) != 8 ||
+        reply.size() != 40 || get16(reply, 2, little) != 10 ||
         reply[20] != 0) {
         return false;
     }
 
     request = fake_input(6, 0, 17, 19); // absolute MotionNotify
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 6 || reply[1] != 0 ||
-        get16(reply, 2, little) != 9 ||
+        reply[0] != 8 || reply[1] != 2 ||
+        get16(reply, 2, little) != 11 ||
         get32(reply, 8, little) != root_window ||
         get32(reply, 12, little) != root_window ||
         get32(reply, 16, little) != 0 ||
@@ -1830,6 +1856,20 @@ check_xtest(int descriptor, bool little)
         get16(reply, 22, little) != 19 ||
         get16(reply, 24, little) != 17 ||
         get16(reply, 26, little) != 19 ||
+        get16(reply, 28, little) != 0 || reply[30] != 0 ||
+        reply[31] != 3 ||
+        !read_reply(descriptor, reply) || reply[0] != 7 || reply[1] != 0 ||
+        get16(reply, 2, little) != 11 ||
+        get32(reply, 12, little) != child ||
+        get16(reply, 24, little) != 7 ||
+        get16(reply, 26, little) != 9 || reply[31] != 3 ||
+        !read_reply(descriptor, reply) || reply[0] != 6 || reply[1] != 0 ||
+        get16(reply, 2, little) != 11 ||
+        get32(reply, 12, little) != child ||
+        get16(reply, 20, little) != 17 ||
+        get16(reply, 22, little) != 19 ||
+        get16(reply, 24, little) != 7 ||
+        get16(reply, 26, little) != 9 ||
         get16(reply, 28, little) != 0 || reply[30] != 1) {
         return false;
     }
@@ -1838,7 +1878,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 10 || get16(reply, 16, little) != 17 ||
+        get16(reply, 2, little) != 12 || get16(reply, 16, little) != 17 ||
         get16(reply, 18, little) != 19) {
         return false;
     }
@@ -1851,7 +1891,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 12 ||
+        get16(reply, 2, little) != 14 ||
         get16(reply, 24, little) != 0x0100) {
         return false;
     }
@@ -1861,7 +1901,19 @@ check_xtest(int descriptor, bool little)
         return false;
     request = fake_input(6, 0, 160, 120); // restore pointer center
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 6 || get16(reply, 2, little) != 14 ||
+        reply[0] != 8 || reply[1] != 0 ||
+        get16(reply, 2, little) != 16 ||
+        get32(reply, 12, little) != child ||
+        get16(reply, 24, little) != 150 ||
+        get16(reply, 26, little) != 110 || reply[31] != 3 ||
+        !read_reply(descriptor, reply) || reply[0] != 7 ||
+        reply[1] != 2 || get16(reply, 2, little) != 16 ||
+        get32(reply, 12, little) != root_window ||
+        get16(reply, 24, little) != 160 ||
+        get16(reply, 26, little) != 120 || reply[31] != 3 ||
+        !read_reply(descriptor, reply) || reply[0] != 6 ||
+        get16(reply, 2, little) != 16 ||
+        get32(reply, 12, little) != root_window ||
         get16(reply, 20, little) != 160 ||
         get16(reply, 22, little) != 120) {
         return false;
@@ -1871,7 +1923,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 15 ||
+        get16(reply, 2, little) != 17 ||
         get16(reply, 16, little) != 160 ||
         get16(reply, 18, little) != 120 ||
         get16(reply, 24, little) != 0) {
@@ -1885,7 +1937,7 @@ check_xtest(int descriptor, bool little)
     request[4] = 2;
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 2 ||
-        get16(reply, 2, little) != 16 || get16(reply, 8, little) != 3) {
+        get16(reply, 2, little) != 18 || get16(reply, 8, little) != 3) {
         return false;
     }
     request[4] = 1;
@@ -1900,7 +1952,7 @@ check_xtest(int descriptor, bool little)
     put32(request, 8, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && reply[1] == 1 &&
-        get16(reply, 2, little) == 18;
+        get16(reply, 2, little) == 20;
 }
 
 bool
@@ -1912,7 +1964,7 @@ run_xtest_case(const char *server, bool little)
     std::uint32_t resource_base = 0;
     const bool passed = send_setup(child.socket, little, true, 11) &&
         check_setup_success(child.socket, little, resource_base) &&
-        check_xtest(child.socket, little);
+        check_xtest(child.socket, little, resource_base);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);

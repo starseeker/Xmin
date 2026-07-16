@@ -45,9 +45,27 @@ struct CoreInputEvent {
     std::uint16_t sequence = 0;
 };
 
+struct CrossingEvent {
+    std::uint8_t type = 0;
+    std::uint8_t detail = 0;
+    std::uint32_t time = 0;
+    std::uint32_t root = 0;
+    std::uint32_t event = 0;
+    std::uint32_t child = 0;
+    std::int16_t root_x = 0;
+    std::int16_t root_y = 0;
+    std::int16_t event_x = 0;
+    std::int16_t event_y = 0;
+    std::uint16_t state = 0;
+    std::uint8_t mode = 0;
+    bool same_screen = true;
+    bool focus = false;
+    std::uint16_t sequence = 0;
+};
+
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
-    CoreInputEvent>;
+    CoreInputEvent, CrossingEvent>;
 
 } // namespace xmin::next
 

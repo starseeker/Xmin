@@ -65,7 +65,8 @@ rejection, mapping-busy replies, per-client `MappingNotify` sequencing, and sile
 validation,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
-focus/ancestor propagation, do-not-propagate masks, and active/passive grab routing,
+focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and
+ancestor/descendant/nonlinear crossing paths with atomic queue-failure rollback,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

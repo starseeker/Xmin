@@ -352,6 +352,8 @@ public:
     absolute_position(std::uint32_t id) const;
 
 private:
+    using PlannedEvent = std::pair<std::uint32_t, ClientEvent>;
+
     AtomTable atoms_;
     ResourceRegistry resources_;
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
@@ -376,6 +378,8 @@ private:
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
+    [[nodiscard]] bool queue_events_atomically(
+        const std::vector<PlannedEvent> &events);
     [[nodiscard]] std::uint16_t client_sequence(
         std::uint32_t client) const noexcept;
     [[nodiscard]] std::uint32_t deepest_window_at(
@@ -383,7 +387,13 @@ private:
     [[nodiscard]] EventDelivery route_input_event(
         CoreInputEvent event, std::uint32_t mask,
         std::uint32_t source, std::uint32_t propagation_stop,
-        std::uint32_t pointer_window, const ActiveGrab *grab);
+        std::uint32_t pointer_window, const ActiveGrab *grab,
+        std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] EventDelivery append_crossing_events(
+        std::uint32_t from, std::uint32_t to,
+        std::int32_t root_x, std::int32_t root_y,
+        std::uint16_t state, const ActiveGrab *grab,
+        std::vector<PlannedEvent> &events) const;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;
