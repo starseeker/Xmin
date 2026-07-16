@@ -109,12 +109,17 @@ main(void)
     xcb_translate_coordinates_reply_t *translated = NULL;
     xcb_get_selection_owner_reply_t *owner = NULL;
     xcb_alloc_named_color_reply_t *named_color = NULL;
+    xcb_alloc_color_reply_t *allocated_color = NULL;
+    xcb_lookup_color_reply_t *looked_up_color = NULL;
+    xcb_list_installed_colormaps_reply_t *installed_colormaps = NULL;
     xcb_query_colors_reply_t *queried_color = NULL;
     xcb_get_image_reply_t *image = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
     xcb_gcontext_t graphics = XCB_NONE;
+    xcb_colormap_t colormap = XCB_NONE;
+    xcb_colormap_t copied_colormap = XCB_NONE;
     uint32_t pixel = 0;
     uint32_t event_mask = XCB_EVENT_MASK_STRUCTURE_NOTIFY |
         XCB_EVENT_MASK_PROPERTY_CHANGE;
@@ -432,6 +437,57 @@ main(void)
         xcb_query_colors_colors(queried_color)[0].red < 65000U)
         goto cleanup;
 
+    stage = "exercising fixed TrueColor colormaps";
+    colormap = xcb_generate_id(connection);
+    copied_colormap = xcb_generate_id(connection);
+    if (!checked(connection,
+                 xcb_create_colormap_checked(
+                     connection, XCB_COLORMAP_ALLOC_NONE, colormap,
+                     screen->root, screen->root_visual),
+                 "CreateColormap"))
+        goto cleanup;
+    allocated_color = xcb_alloc_color_reply(
+        connection,
+        xcb_alloc_color(connection, colormap, 0x1234U, 0x5678U, 0x9abcU),
+        &error);
+    looked_up_color = xcb_lookup_color_reply(
+        connection,
+        xcb_lookup_color(connection, colormap, sizeof(color_name) - 1,
+                         color_name),
+        &error);
+    if (error != NULL || allocated_color == NULL ||
+        allocated_color->pixel != 0x0012569aU ||
+        allocated_color->red != 0x1212U ||
+        allocated_color->green != 0x5656U ||
+        allocated_color->blue != 0x9a9aU || looked_up_color == NULL ||
+        looked_up_color->exact_red < 65000U ||
+        looked_up_color->visual_red < 65000U)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_free_colors_checked(connection, colormap, 0, 1,
+                                         &allocated_color->pixel),
+                 "FreeColors") ||
+        !checked(connection,
+                 xcb_copy_colormap_and_free_checked(
+                     connection, copied_colormap, colormap),
+                 "CopyColormapAndFree") ||
+        !checked(connection,
+                 xcb_install_colormap_checked(connection, copied_colormap),
+                 "InstallColormap"))
+        goto cleanup;
+    installed_colormaps = xcb_list_installed_colormaps_reply(
+        connection,
+        xcb_list_installed_colormaps(connection, screen->root), &error);
+    if (error != NULL || installed_colormaps == NULL ||
+        xcb_list_installed_colormaps_cmaps_length(installed_colormaps) != 1 ||
+        xcb_list_installed_colormaps_cmaps(installed_colormaps)[0] !=
+            copied_colormap)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_uninstall_colormap_checked(connection, copied_colormap),
+                 "UninstallColormap"))
+        goto cleanup;
+
     stage = "delivering a synthetic client message";
     {
         xcb_client_message_event_t message;
@@ -468,6 +524,10 @@ cleanup:
             xcb_free_gc(connection, graphics);
         if (pixmap != XCB_NONE)
             xcb_free_pixmap(connection, pixmap);
+        if (copied_colormap != XCB_NONE)
+            xcb_free_colormap(connection, copied_colormap);
+        if (colormap != XCB_NONE)
+            xcb_free_colormap(connection, colormap);
         if (parent != XCB_NONE)
             xcb_destroy_window(connection, parent);
         xcb_flush(connection);
@@ -475,6 +535,9 @@ cleanup:
     free(error);
     free(image);
     free(queried_color);
+    free(installed_colormaps);
+    free(looked_up_color);
+    free(allocated_color);
     free(named_color);
     free(owner);
     free(translated);

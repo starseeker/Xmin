@@ -131,6 +131,17 @@ public:
     [[nodiscard]] bool add_graphics_context(GraphicsContextRecord context,
                                             std::uint32_t owner);
     [[nodiscard]] bool erase_graphics_context(std::uint32_t id);
+    [[nodiscard]] bool colormap_exists(std::uint32_t id) const;
+    [[nodiscard]] bool add_colormap(std::uint32_t id, std::uint32_t owner);
+    [[nodiscard]] bool erase_colormap(std::uint32_t id);
+    void install_colormap(std::uint32_t id) noexcept
+    {
+        installed_colormap_ = id;
+    }
+    [[nodiscard]] std::uint32_t installed_colormap() const noexcept
+    {
+        return installed_colormap_;
+    }
     [[nodiscard]] Surface *drawable_surface(std::uint32_t id);
     [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
     [[nodiscard]] Surface *readable_surface(std::uint32_t id);
@@ -183,6 +194,7 @@ private:
     std::size_t surface_bytes_ = 0;
     std::size_t pending_events_ = 0;
     std::uint32_t current_time_ = 1;
+    std::uint32_t installed_colormap_ = default_colormap_id;
     bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;

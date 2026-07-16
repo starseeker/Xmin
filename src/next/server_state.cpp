@@ -207,6 +207,33 @@ ServerState::erase_graphics_context(std::uint32_t id)
     return true;
 }
 
+bool
+ServerState::colormap_exists(std::uint32_t id) const
+{
+    return resources_.is(id, ResourceKind::colormap);
+}
+
+bool
+ServerState::add_colormap(std::uint32_t id, std::uint32_t owner)
+{
+    return !resource_exists(id) &&
+        resources_.insert(id, ResourceKind::colormap, owner);
+}
+
+bool
+ServerState::erase_colormap(std::uint32_t id)
+{
+    if (id == default_colormap_id || !colormap_exists(id))
+        return false;
+    if (installed_colormap_ == id)
+        installed_colormap_ = default_colormap_id;
+    for (auto &entry : windows_) {
+        if (entry.second.colormap == id)
+            entry.second.colormap = default_colormap_id;
+    }
+    return resources_.erase(id);
+}
+
 Surface *
 ServerState::drawable_surface(std::uint32_t id)
 {
@@ -689,6 +716,9 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto pixmaps = resources_.owned_by(owner, ResourceKind::pixmap);
     for (const auto id : pixmaps)
         static_cast<void>(erase_pixmap(id));
+    const auto colormaps = resources_.owned_by(owner, ResourceKind::colormap);
+    for (const auto id : colormaps)
+        static_cast<void>(erase_colormap(id));
     const auto windows = resources_.owned_by(owner, ResourceKind::window);
     for (const auto id : windows)
         destroy_window(id);

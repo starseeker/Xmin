@@ -714,7 +714,7 @@ Connection::handle_create_window(const RequestContext &context)
         case 13:
             if (*value == 0)
                 window.colormap = parent->colormap;
-            else if (*value == default_colormap_id)
+            else if (server_.colormap_exists(*value))
                 window.colormap = *value;
             else
                 return send_error(context.order, bad_colormap, context.opcode,
@@ -870,7 +870,7 @@ Connection::handle_change_window_attributes(const RequestContext &context)
                 colormap = parent == nullptr ? default_colormap_id
                                              : parent->colormap;
             }
-            else if (*value == default_colormap_id)
+            else if (server_.colormap_exists(*value))
                 colormap = *value;
             else
                 return send_error(context.order, bad_colormap,
@@ -941,7 +941,7 @@ Connection::handle_get_window_attributes(const RequestContext &context)
     reply.u32(window->backing_planes);
     reply.u32(window->backing_pixel);
     reply.u8(window->save_under ? 1 : 0);
-    reply.u8(window->colormap == default_colormap_id ? 1 : 0);
+    reply.u8(window->colormap == server_.installed_colormap() ? 1 : 0);
     reply.u8(server_.map_state(*id));
     reply.u8(window->override_redirect ? 1 : 0);
     reply.u32(window->colormap);
@@ -2545,6 +2545,176 @@ Connection::handle_get_image(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_create_colormap(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto id = reader.u32();
+    const auto window_id = reader.u32();
+    const auto visual = reader.u32();
+    if (!id || !window_id || !visual)
+        return malformed("truncated CreateColormap request");
+    if (!server_.valid_client_resource(*id, config_.resource_base))
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    if (server_.resource_limit_reached(config_.resource_base))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    const auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (window->window_class != WindowClass::input_output ||
+        *visual != root_visual_id || context.data != 0) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    if (!server_.add_colormap(*id, config_.resource_base))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_free_colormap(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated FreeColormap request");
+    if (!server_.colormap_exists(*id))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *id);
+    if (*id != default_colormap_id)
+        static_cast<void>(server_.erase_colormap(*id));
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_copy_colormap(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto id = reader.u32();
+    const auto source = reader.u32();
+    if (!id || !source)
+        return malformed("truncated CopyColormapAndFree request");
+    if (!server_.valid_client_resource(*id, config_.resource_base))
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    if (!server_.colormap_exists(*source))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *source);
+    if (server_.resource_limit_reached(config_.resource_base) ||
+        !server_.add_colormap(*id, config_.resource_base)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_install_colormap(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated InstallColormap request");
+    if (!server_.colormap_exists(*id))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *id);
+    server_.install_colormap(*id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_uninstall_colormap(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated UninstallColormap request");
+    if (!server_.colormap_exists(*id))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *id);
+    if (server_.installed_colormap() == *id)
+        server_.install_colormap(default_colormap_id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_list_installed_colormaps(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto window_id = reader.u32();
+    if (!window_id)
+        return malformed("truncated ListInstalledColormaps request");
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(1);
+    reply.u16(1);
+    reply.pad(22);
+    reply.u32(server_.installed_colormap());
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_alloc_color(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto colormap = reader.u32();
+    const auto red = reader.u16();
+    const auto green = reader.u16();
+    const auto blue = reader.u16();
+    if (!colormap || !red || !green || !blue || !reader.skip(2))
+        return malformed("truncated AllocColor request");
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    const std::uint32_t pixel = true_color_pixel({*red, *green, *blue});
+    const RgbColor visual = true_color_rgb(pixel);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u16(visual.red);
+    reply.u16(visual.green);
+    reply.u16(visual.blue);
+    reply.pad(2);
+    reply.u32(pixel);
+    reply.pad(12);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_alloc_named_color(const RequestContext &context)
 {
     if (context.request.size() < 12)
@@ -2560,7 +2730,7 @@ Connection::handle_alloc_named_color(const RequestContext &context)
     if (!padded_name || context.request.size() != 12 + *padded_name)
         return send_error(context.order, bad_length, context.opcode,
                           context.sequence);
-    if (*colormap != default_colormap_id)
+    if (!server_.colormap_exists(*colormap))
         return send_error(context.order, bad_colormap, context.opcode,
                           context.sequence, *colormap);
 
@@ -2571,6 +2741,7 @@ Connection::handle_alloc_named_color(const RequestContext &context)
         return send_error(context.order, bad_name, context.opcode,
                           context.sequence);
     const std::uint32_t pixel = true_color_pixel(*color);
+    const RgbColor visual = true_color_rgb(pixel);
 
     WireWriter reply(context.order);
     reply.u8(1);
@@ -2581,11 +2752,145 @@ Connection::handle_alloc_named_color(const RequestContext &context)
     reply.u16(color->red);
     reply.u16(color->green);
     reply.u16(color->blue);
-    reply.u16(color->red);
-    reply.u16(color->green);
-    reply.u16(color->blue);
+    reply.u16(visual.red);
+    reply.u16(visual.green);
+    reply.u16(visual.blue);
     reply.pad(8);
     return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_alloc_color_cells(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto colormap = reader.u32();
+    const auto colors = reader.u16();
+    const auto planes = reader.u16();
+    if (!colormap || !colors || !planes)
+        return malformed("truncated AllocColorCells request");
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    return send_error(context.order, bad_match, context.opcode,
+                      context.sequence);
+}
+
+Result<void>
+Connection::handle_alloc_color_planes(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto colormap = reader.u32();
+    if (!colormap || !reader.skip(8))
+        return malformed("truncated AllocColorPlanes request");
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    return send_error(context.order, bad_match, context.opcode,
+                      context.sequence);
+}
+
+Result<void>
+Connection::handle_free_colors(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 3U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    if (!colormap || !reader.u32())
+        return malformed("truncated FreeColors request");
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    while (reader.remaining() != 0) {
+        const auto pixel = reader.u32();
+        if (!pixel)
+            return malformed("truncated FreeColors pixel list");
+        if ((*pixel & 0xff000000U) != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *pixel);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_store_colors(const RequestContext &context)
+{
+    if (context.request.size() < 8 ||
+        ((context.request.size() - 8) % 12U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    if (!colormap)
+        return malformed("truncated StoreColors request");
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    while (reader.remaining() != 0) {
+        const auto pixel = reader.u32();
+        if (!pixel || !reader.skip(6))
+            return malformed("truncated StoreColors item list");
+        const auto flags = reader.u8();
+        if (!flags || !reader.skip(1))
+            return malformed("truncated StoreColors flags");
+        if ((*flags & ~std::uint8_t{7}) != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *flags);
+    }
+    return context.request.size() == 8
+        ? Result<void>::success()
+        : send_error(context.order, bad_access, context.opcode,
+                     context.sequence);
+}
+
+Result<void>
+Connection::handle_store_named_color(const RequestContext &context)
+{
+    if (context.request.size() < 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if ((context.data & ~std::uint8_t{7}) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    const auto pixel = reader.u32();
+    const auto name_size = reader.u16();
+    if (!colormap || !pixel || !name_size || !reader.skip(2))
+        return malformed("truncated StoreNamedColor request");
+    const auto padded_name = padded_to_four(*name_size);
+    if (!padded_name || context.request.size() != 16 + *padded_name)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    const auto *name_data = reinterpret_cast<const char *>(
+        context.request.data() + 16);
+    if (!parse_color(std::string_view(name_data, *name_size)))
+        return send_error(context.order, bad_name, context.opcode,
+                          context.sequence);
+    return send_error(context.order, bad_access, context.opcode,
+                      context.sequence);
 }
 
 Result<void>
@@ -2601,7 +2906,7 @@ Connection::handle_query_colors(const RequestContext &context)
     const auto colormap = reader.u32();
     if (!colormap)
         return malformed("truncated QueryColors request");
-    if (*colormap != default_colormap_id)
+    if (!server_.colormap_exists(*colormap))
         return send_error(context.order, bad_colormap, context.opcode,
                           context.sequence, *colormap);
 
@@ -2630,6 +2935,47 @@ Connection::handle_query_colors(const RequestContext &context)
         reply.u16(color.blue);
         reply.pad(2);
     }
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_lookup_color(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    const auto name_size = reader.u16();
+    if (!colormap || !name_size || !reader.skip(2))
+        return malformed("truncated LookupColor request");
+    const auto padded_name = padded_to_four(*name_size);
+    if (!padded_name || context.request.size() != 12 + *padded_name)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (!server_.colormap_exists(*colormap))
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+    const auto *name_data = reinterpret_cast<const char *>(
+        context.request.data() + 12);
+    const auto color = parse_color(std::string_view(name_data, *name_size));
+    if (!color)
+        return send_error(context.order, bad_name, context.opcode,
+                          context.sequence);
+    const RgbColor visual = true_color_rgb(true_color_pixel(*color));
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u16(color->red);
+    reply.u16(color->green);
+    reply.u16(color->blue);
+    reply.u16(visual.red);
+    reply.u16(visual.green);
+    reply.u16(visual.blue);
+    reply.pad(12);
     return queue(reply.data());
 }
 
@@ -2780,10 +3126,36 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_put_image;
         table[opcode_index(CoreOpcode::GetImage)] =
             &Connection::handle_get_image;
+        table[opcode_index(CoreOpcode::CreateColormap)] =
+            &Connection::handle_create_colormap;
+        table[opcode_index(CoreOpcode::FreeColormap)] =
+            &Connection::handle_free_colormap;
+        table[opcode_index(CoreOpcode::CopyColormapAndFree)] =
+            &Connection::handle_copy_colormap;
+        table[opcode_index(CoreOpcode::InstallColormap)] =
+            &Connection::handle_install_colormap;
+        table[opcode_index(CoreOpcode::UninstallColormap)] =
+            &Connection::handle_uninstall_colormap;
+        table[opcode_index(CoreOpcode::ListInstalledColormaps)] =
+            &Connection::handle_list_installed_colormaps;
+        table[opcode_index(CoreOpcode::AllocColor)] =
+            &Connection::handle_alloc_color;
         table[opcode_index(CoreOpcode::AllocNamedColor)] =
             &Connection::handle_alloc_named_color;
+        table[opcode_index(CoreOpcode::AllocColorCells)] =
+            &Connection::handle_alloc_color_cells;
+        table[opcode_index(CoreOpcode::AllocColorPlanes)] =
+            &Connection::handle_alloc_color_planes;
+        table[opcode_index(CoreOpcode::FreeColors)] =
+            &Connection::handle_free_colors;
+        table[opcode_index(CoreOpcode::StoreColors)] =
+            &Connection::handle_store_colors;
+        table[opcode_index(CoreOpcode::StoreNamedColor)] =
+            &Connection::handle_store_named_color;
         table[opcode_index(CoreOpcode::QueryColors)] =
             &Connection::handle_query_colors;
+        table[opcode_index(CoreOpcode::LookupColor)] =
+            &Connection::handle_lookup_color;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryExtension)] =

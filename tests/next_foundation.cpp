@@ -430,6 +430,33 @@ test_window_tree_mutations()
 }
 
 bool
+test_colormap_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t colormap = owner + 1;
+    xmin::next::ServerState server(32, 24);
+    if (!expect(server.colormap_exists(xmin::next::default_colormap_id),
+                "default colormap is missing") ||
+        !expect(server.add_colormap(colormap, owner),
+                "client colormap insertion failed") ||
+        !expect(!server.add_colormap(colormap, owner),
+                "duplicate colormap insertion succeeded")) {
+        return false;
+    }
+    server.install_colormap(colormap);
+    if (!expect(server.installed_colormap() == colormap,
+                "client colormap was not installed")) {
+        return false;
+    }
+    server.disconnect_client(owner);
+    return expect(!server.colormap_exists(colormap),
+                  "disconnect retained a client colormap") &&
+        expect(server.installed_colormap() ==
+                   xmin::next::default_colormap_id,
+               "disconnect did not restore the default colormap");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -451,7 +478,8 @@ main()
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_true_color() &&
             test_surface_raster_and_overlap() && test_scene_composition() &&
-            test_window_tree_mutations() && test_result()
+            test_window_tree_mutations() && test_colormap_state() &&
+            test_result()
         ? 0
         : 1;
 }

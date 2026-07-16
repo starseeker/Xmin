@@ -49,14 +49,16 @@ attach, shared-memory upload, readback, and detach; the minimal profile verifies
 omission and client fallback discovery.
 The core XCB companion covers properties, window hierarchy/configuration,
 geometry/translation, mutable window/GC state, background clearing, pixmap
-copy/readback, selection ownership, named colors, and synthetic events. The raw
+copy/readback, selection ownership, fixed TrueColor colormap lifecycle and color
+queries, and synthetic events. The raw
 opposite-endian setup test also checks a malformed core
 request receives `BadLength` without terminating the connection. The `Xmin-next`
 variant additionally exercises the same semantic handlers in both byte orders for
 atoms, window lifecycle/configuration/reparenting/subwindow operations/coordinate
 translation, mutable attributes and GCs, background clearing, and property mutation,
 partial retrieval, listing, deletion, selection ownership, fixed TrueColor named-color
-queries, and synthetic client-message delivery. It checks an unadvertised opcode at 255
+queries and colormap install/copy/free semantics, and synthetic client-message
+delivery. It checks an unadvertised opcode at 255
 cannot escape the 128-slot core table, and proves that one client's window is visible
 to another while a 32-bit property remains correctly encoded for the opposite-endian
 client after disconnect teardown.

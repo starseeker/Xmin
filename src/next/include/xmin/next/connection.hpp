@@ -112,8 +112,22 @@ private:
     Result<void> handle_fill_rectangles(const RequestContext &context);
     Result<void> handle_put_image(const RequestContext &context);
     Result<void> handle_get_image(const RequestContext &context);
+    Result<void> handle_create_colormap(const RequestContext &context);
+    Result<void> handle_free_colormap(const RequestContext &context);
+    Result<void> handle_copy_colormap(const RequestContext &context);
+    Result<void> handle_install_colormap(const RequestContext &context);
+    Result<void> handle_uninstall_colormap(const RequestContext &context);
+    Result<void> handle_list_installed_colormaps(
+        const RequestContext &context);
+    Result<void> handle_alloc_color(const RequestContext &context);
     Result<void> handle_alloc_named_color(const RequestContext &context);
+    Result<void> handle_alloc_color_cells(const RequestContext &context);
+    Result<void> handle_alloc_color_planes(const RequestContext &context);
+    Result<void> handle_free_colors(const RequestContext &context);
+    Result<void> handle_store_colors(const RequestContext &context);
+    Result<void> handle_store_named_color(const RequestContext &context);
     Result<void> handle_query_colors(const RequestContext &context);
+    Result<void> handle_lookup_color(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
