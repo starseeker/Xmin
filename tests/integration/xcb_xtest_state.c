@@ -2,10 +2,12 @@
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/uio.h>
 
 #include <xcb/bigreq.h>
 #include <xcb/ge.h>
+#include <xcb/render.h>
 #include <xcb/shape.h>
 #include <xcb/sync.h>
 #include <xcb/xcb.h>
@@ -116,6 +118,214 @@ cleanup:
     free(error);
     free(extents);
     free(version);
+    return result;
+}
+
+static int
+render_formats(const xcb_render_query_pict_formats_reply_t *reply,
+               xcb_visualid_t visual, xcb_render_pictformat_t *visual_format,
+               xcb_render_pictformat_t *alpha_format)
+{
+    xcb_render_pictforminfo_iterator_t formats =
+        xcb_render_query_pict_formats_formats_iterator(reply);
+    while (formats.rem != 0) {
+        if (formats.data->type == XCB_RENDER_PICT_TYPE_DIRECT &&
+            formats.data->depth == 8 && formats.data->direct.red_mask == 0 &&
+            formats.data->direct.green_mask == 0 &&
+            formats.data->direct.blue_mask == 0 &&
+            formats.data->direct.alpha_shift == 0 &&
+            formats.data->direct.alpha_mask == 0xff) {
+            *alpha_format = formats.data->id;
+        }
+        xcb_render_pictforminfo_next(&formats);
+    }
+    xcb_render_pictscreen_iterator_t screens =
+        xcb_render_query_pict_formats_screens_iterator(reply);
+    while (screens.rem != 0) {
+        xcb_render_pictdepth_iterator_t depths =
+            xcb_render_pictscreen_depths_iterator(screens.data);
+        while (depths.rem != 0) {
+            xcb_render_pictvisual_iterator_t visuals =
+                xcb_render_pictdepth_visuals_iterator(depths.data);
+            while (visuals.rem != 0) {
+                if (visuals.data->visual == visual)
+                    *visual_format = visuals.data->format;
+                xcb_render_pictvisual_next(&visuals);
+            }
+            xcb_render_pictdepth_next(&depths);
+        }
+        xcb_render_pictscreen_next(&screens);
+    }
+    return *visual_format != XCB_NONE && *alpha_format != XCB_NONE;
+}
+
+static int
+render_pixel(xcb_connection_t *connection, xcb_drawable_t drawable,
+             int16_t x, int16_t y, uint32_t *pixel)
+{
+    xcb_generic_error_t *error = NULL;
+    xcb_get_image_reply_t *image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, drawable,
+                      x, y, 1, 1, UINT32_MAX),
+        &error);
+    int result = error == NULL && image != NULL &&
+        xcb_get_image_data_length(image) >= 4;
+    if (result)
+        memcpy(pixel, xcb_get_image_data(image), sizeof(*pixel));
+    free(error);
+    free(image);
+    return result;
+}
+
+static int
+test_render(xcb_connection_t *connection, xcb_screen_t *screen)
+{
+    xcb_generic_error_t *error = NULL;
+    xcb_render_query_version_reply_t *version =
+        xcb_render_query_version_reply(
+            connection, xcb_render_query_version(connection, 0, 11), &error);
+    xcb_render_query_pict_formats_reply_t *formats = NULL;
+    xcb_render_pictformat_t visual_format = XCB_NONE;
+    xcb_render_pictformat_t alpha_format = XCB_NONE;
+    xcb_window_t window = XCB_NONE;
+    xcb_render_picture_t destination = XCB_NONE;
+    xcb_render_picture_t blue = XCB_NONE;
+    xcb_render_picture_t half_red = XCB_NONE;
+    xcb_render_picture_t red = XCB_NONE;
+    xcb_render_glyphset_t glyph_set = XCB_NONE;
+    xcb_render_glyphset_t glyph_reference = XCB_NONE;
+    uint32_t pixel = 0;
+    const char *stage = "QueryVersion";
+    int result = 0;
+
+    if (error != NULL || version == NULL || version->major_version != 0 ||
+        version->minor_version < 11)
+        goto cleanup;
+    stage = "QueryPictFormats";
+    formats = xcb_render_query_pict_formats_reply(
+        connection, xcb_render_query_pict_formats(connection), &error);
+    if (error != NULL || formats == NULL ||
+        !render_formats(formats, screen->root_visual,
+                        &visual_format, &alpha_format))
+        goto cleanup;
+
+    stage = "CreatePicture";
+    window = xcb_generate_id(connection);
+    destination = xcb_generate_id(connection);
+    blue = xcb_generate_id(connection);
+    half_red = xcb_generate_id(connection);
+    red = xcb_generate_id(connection);
+    xcb_create_window(connection, screen->root_depth, window, screen->root,
+                      0, 0, 32, 24, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                      screen->root_visual, 0, NULL);
+    xcb_map_window(connection, window);
+    if (!checked(connection,
+                 xcb_render_create_picture_checked(
+                     connection, destination, window, visual_format, 0, NULL),
+                 "RENDER CreatePicture") ||
+        !checked(connection,
+                 xcb_render_create_solid_fill_checked(
+                     connection, blue,
+                     (xcb_render_color_t){0, 0, 0xffff, 0xffff}),
+                 "RENDER CreateSolidFill blue") ||
+        !checked(connection,
+                 xcb_render_create_solid_fill_checked(
+                     connection, half_red,
+                     (xcb_render_color_t){0x8000, 0, 0, 0x8000}),
+                 "RENDER CreateSolidFill half-red") ||
+        !checked(connection,
+                 xcb_render_create_solid_fill_checked(
+                     connection, red,
+                     (xcb_render_color_t){0xffff, 0, 0, 0xffff}),
+                 "RENDER CreateSolidFill red") ||
+        !checked(connection,
+                 xcb_render_composite_checked(
+                     connection, XCB_RENDER_PICT_OP_SRC, blue, XCB_NONE,
+                     destination, 0, 0, 0, 0, 0, 0, 32, 24),
+                 "RENDER Composite blue") ||
+        !checked(connection,
+                 xcb_render_composite_checked(
+                     connection, XCB_RENDER_PICT_OP_OVER, half_red, XCB_NONE,
+                     destination, 0, 0, 0, 0, 0, 0, 32, 24),
+                 "RENDER Composite alpha") ||
+        !render_pixel(connection, window, 16, 12, &pixel) ||
+        ((pixel >> 16) & 0xff) < 120 || ((pixel >> 16) & 0xff) > 136 ||
+        (pixel & 0xff) < 120 || (pixel & 0xff) > 136)
+        goto cleanup;
+
+    stage = "Trapezoids";
+    const xcb_render_trapezoid_t trapezoid = {
+        .top = 2 * 65536,
+        .bottom = 14 * 65536,
+        .left = {{4 * 65536, 2 * 65536}, {4 * 65536, 14 * 65536}},
+        .right = {{16 * 65536, 2 * 65536}, {16 * 65536, 14 * 65536}},
+    };
+    if (!checked(connection,
+                 xcb_render_trapezoids_checked(
+                     connection, XCB_RENDER_PICT_OP_OVER, blue, destination,
+                     alpha_format, 0, 0, 1, &trapezoid),
+                 "RENDER Trapezoids"))
+        goto cleanup;
+
+    stage = "glyphs";
+    const uint32_t glyph_id = 1;
+    const xcb_render_glyphinfo_t glyph_info = {8, 8, 0, 0, 8, 0};
+    uint8_t glyph_pixels[64];
+    uint8_t commands[12] = {0};
+    int16_t glyph_x = 20;
+    int16_t glyph_y = 8;
+    memset(glyph_pixels, 0xff, sizeof(glyph_pixels));
+    commands[0] = 1;
+    memcpy(commands + 4, &glyph_x, sizeof(glyph_x));
+    memcpy(commands + 6, &glyph_y, sizeof(glyph_y));
+    commands[8] = 1;
+    glyph_set = xcb_generate_id(connection);
+    glyph_reference = xcb_generate_id(connection);
+    if (!checked(connection,
+                 xcb_render_create_glyph_set_checked(
+                     connection, glyph_set, alpha_format),
+                 "RENDER CreateGlyphSet") ||
+        !checked(connection,
+                 xcb_render_add_glyphs_checked(
+                     connection, glyph_set, 1, &glyph_id, &glyph_info,
+                     sizeof(glyph_pixels), glyph_pixels),
+                 "RENDER AddGlyphs") ||
+        !checked(connection,
+                 xcb_render_reference_glyph_set_checked(
+                     connection, glyph_reference, glyph_set),
+                 "RENDER ReferenceGlyphSet") ||
+        !checked(connection,
+                 xcb_render_composite_glyphs_8_checked(
+                     connection, XCB_RENDER_PICT_OP_OVER, red, destination,
+                     alpha_format, glyph_reference, 0, 0,
+                     sizeof(commands), commands),
+                 "RENDER CompositeGlyphs8") ||
+        !render_pixel(connection, window, 22, 10, &pixel) ||
+        (pixel & 0x00ffffffU) != 0x00ff0000U)
+        goto cleanup;
+    result = 1;
+
+cleanup:
+    if (!result)
+        fprintf(stderr, "RENDER failed at %s (pixel=0x%08x)\n", stage, pixel);
+    if (glyph_reference != XCB_NONE)
+        xcb_render_free_glyph_set(connection, glyph_reference);
+    if (glyph_set != XCB_NONE)
+        xcb_render_free_glyph_set(connection, glyph_set);
+    if (red != XCB_NONE)
+        xcb_render_free_picture(connection, red);
+    if (half_red != XCB_NONE)
+        xcb_render_free_picture(connection, half_red);
+    if (blue != XCB_NONE)
+        xcb_render_free_picture(connection, blue);
+    if (destination != XCB_NONE)
+        xcb_render_free_picture(connection, destination);
+    if (window != XCB_NONE)
+        xcb_destroy_window(connection, window);
+    free(formats);
+    free(version);
+    free(error);
     return result;
 }
 
@@ -341,6 +551,11 @@ main(void)
     }
     if (!test_shape(connection, screen)) {
         fprintf(stderr, "SHAPE extension round trip failed\n");
+        xcb_disconnect(connection);
+        return 1;
+    }
+    if (!test_render(connection, screen)) {
+        fprintf(stderr, "RENDER extension round trip failed\n");
         xcb_disconnect(connection);
         return 1;
     }

@@ -132,7 +132,7 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
-SHAPE 1.1, and SYNC 3.1.
+SHAPE 1.1, SYNC 3.1, and RENDER 0.11.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -144,6 +144,17 @@ Await and AwaitFence suspend only the requesting client in the poll loop; anothe
 can release the wait, after which queued notifications precede requests that were already
 buffered behind it.  Alarm advancement uses bounded checked arithmetic rather than an
 unbounded repeated-delta loop.
+RENDER implements every non-reserved 0.11 request over four deliberate
+ARGB32, XRGB32, A8, and A1 formats.  Typed drawable, solid, linear, radial,
+and conical pictures carry transforms, filters, repeat, clips, alpha maps,
+and component-alpha state into scoped pixman images; all protocol operators,
+rectangle fills, trapezoids, triangles, strips, fans, and traps share that
+raster path.  Bounded glyph sets support native-order A1/A8/24/32 uploads,
+shared references, 8/16/32-bit composition streams, and atomic replacement.
+Core and RENDER cursors use shared image ownership across windows, grabs, and
+animation frames.  Pictures retain freed pixmaps and alpha-map pictures with
+budget-accounted ownership, while window destruction invalidates its pictures,
+matching X resource lifetime without dangling IDs.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate
@@ -178,7 +189,8 @@ removes the dead recipient, then emits both ungrab paths to surviving observers 
 destroying owned windows; saturated observers cannot retain dead-client state.  Passive
 key and button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`,
 with atomic wildcard subtraction, cross-client conflict checks, and lifecycle cleanup.  A
-bounded four-format `Surface` value now backs windows and typed pixmap records; the first GC
+bounded shared four-format `Surface` allocation now backs windows, typed pixmap
+records, and retained RENDER drawables; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and
 ARGB8888 in the setup-advertised image and bitmap order.  Every GC raster path is

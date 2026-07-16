@@ -53,6 +53,29 @@ struct PropertyValue {
     std::vector<std::uint8_t> data;
 };
 
+struct CursorImage {
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t x_hot = 0;
+    std::uint16_t y_hot = 0;
+    RenderColor foreground;
+    RenderColor background;
+    std::vector<std::uint32_t> pixels;
+    // 0 is transparent, 1 is the background, and 2 is the foreground.
+    // ARGB cursors leave this empty because RecolorCursor does not rewrite
+    // their literal pixels.
+    std::vector<std::uint8_t> pixel_roles;
+    std::vector<std::pair<std::shared_ptr<CursorImage>, std::uint32_t>> frames;
+
+    void recolor(RenderColor new_foreground,
+                 RenderColor new_background) noexcept;
+};
+
+struct CursorRecord {
+    std::uint32_t id = 0;
+    std::shared_ptr<CursorImage> image;
+};
+
 struct WindowRecord {
     std::uint32_t id = 0;
     std::uint32_t owner = 0;
@@ -62,7 +85,7 @@ struct WindowRecord {
     std::unordered_map<AtomId, PropertyValue> properties;
     std::array<std::optional<Region>, 3> shapes;
     std::vector<std::uint32_t> shape_event_clients;
-    std::optional<Surface> surface;
+    std::shared_ptr<Surface> surface;
     std::int16_t x = 0;
     std::int16_t y = 0;
     std::uint16_t width = 0;
@@ -73,6 +96,7 @@ struct WindowRecord {
     std::uint32_t colormap = default_colormap_id;
     std::uint32_t background_pixel = 0;
     std::uint32_t border_pixel = 0;
+    std::shared_ptr<CursorImage> cursor;
     std::uint32_t backing_planes = 0xffffffffU;
     std::uint32_t backing_pixel = 0;
     std::uint8_t depth = 24;
@@ -98,7 +122,7 @@ struct WindowRecord {
 
 struct PixmapRecord {
     std::uint32_t id = 0;
-    Surface surface;
+    std::shared_ptr<Surface> surface;
 };
 
 struct GraphicsContextRecord {
@@ -148,6 +172,21 @@ struct FocusState {
 };
 
 struct ActiveGrab {
+    ActiveGrab() = default;
+    ActiveGrab(std::uint32_t grab_owner, std::uint32_t grab_window,
+               std::uint32_t confinement, std::uint32_t time,
+               std::uint32_t mask, std::uint8_t pointer,
+               std::uint8_t keyboard, bool owner_receives,
+               bool from_passive = false, std::uint8_t detail = 0,
+               bool is_automatic = false,
+               std::shared_ptr<CursorImage> grab_cursor = {}) noexcept
+        : owner(grab_owner), window(grab_window), confine_to(confinement),
+          activated_at(time), event_mask(mask), pointer_mode(pointer),
+          keyboard_mode(keyboard), owner_events(owner_receives),
+          passive(from_passive), passive_detail(detail),
+          automatic(is_automatic), cursor(std::move(grab_cursor))
+    {}
+
     std::uint32_t owner = 0;
     std::uint32_t window = 0;
     std::uint32_t confine_to = 0;
@@ -159,6 +198,7 @@ struct ActiveGrab {
     bool passive = false;
     std::uint8_t passive_detail = 0;
     bool automatic = false;
+    std::shared_ptr<CursorImage> cursor;
 };
 
 enum class PassiveGrabKind : std::uint8_t {
@@ -179,6 +219,7 @@ struct PassiveGrab {
     std::uint8_t pointer_mode = 1;
     std::uint8_t keyboard_mode = 1;
     bool owner_events = false;
+    std::shared_ptr<CursorImage> cursor;
 };
 
 [[nodiscard]] PassiveGrabDomain passive_grab_details(
@@ -338,6 +379,7 @@ public:
                                              std::uint32_t base) const;
     [[nodiscard]] bool resource_limit_reached(std::uint32_t owner) const;
     [[nodiscard]] bool add_window(WindowRecord window, std::uint32_t owner);
+    [[nodiscard]] std::shared_ptr<Surface> adopt_surface(Surface surface);
     [[nodiscard]] bool resize_window_surface(WindowRecord &window,
                                              std::uint16_t width,
                                              std::uint16_t height);
@@ -366,6 +408,10 @@ public:
     [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
     [[nodiscard]] Surface *readable_surface(std::uint32_t id);
     [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
+    [[nodiscard]] std::uint32_t pointer_window() const noexcept;
+    [[nodiscard]] std::shared_ptr<CursorImage>
+    effective_cursor(std::uint32_t window) const noexcept;
+    [[nodiscard]] std::shared_ptr<CursorImage> current_cursor() const noexcept;
     void invalidate_scene() noexcept { scene_dirty_ = true; }
     [[nodiscard]] EventDelivery set_window_mapped(
         WindowRecord &window, bool mapped);
@@ -396,6 +442,8 @@ public:
         const WindowRecord &window, std::uint32_t client) const noexcept;
     [[nodiscard]] RenderPicture *render_picture(std::uint32_t id);
     [[nodiscard]] const RenderPicture *render_picture(std::uint32_t id) const;
+    [[nodiscard]] std::shared_ptr<RenderPicture>
+    render_picture_handle(std::uint32_t id) const;
     [[nodiscard]] bool add_render_picture(
         RenderPicture picture, std::uint32_t owner);
     [[nodiscard]] bool erase_render_picture(std::uint32_t id);
@@ -405,6 +453,13 @@ public:
     [[nodiscard]] bool add_render_glyph_set(
         RenderGlyphSet glyph_set, std::uint32_t owner);
     [[nodiscard]] bool erase_render_glyph_set(std::uint32_t id);
+    [[nodiscard]] bool render_glyph_storage_fits(
+        const RenderGlyphStorage &changed,
+        std::size_t changed_bytes) const noexcept;
+    [[nodiscard]] CursorRecord *cursor(std::uint32_t id);
+    [[nodiscard]] const CursorRecord *cursor(std::uint32_t id) const;
+    [[nodiscard]] bool add_cursor(CursorRecord cursor, std::uint32_t owner);
+    [[nodiscard]] bool erase_cursor(std::uint32_t id);
     [[nodiscard]] SyncCounterRecord *sync_counter(std::uint32_t id);
     [[nodiscard]] const SyncCounterRecord *sync_counter(
         std::uint32_t id) const;
@@ -494,6 +549,9 @@ public:
     absolute_position(std::uint32_t id) const;
 
 private:
+    struct SurfaceBudget;
+    struct ManagedSurface;
+
     using PlannedEvent = std::pair<std::uint32_t, ClientEvent>;
 
     struct KeyRepeat {
@@ -510,8 +568,10 @@ private:
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
     std::unordered_map<std::uint32_t, SyncFenceRecord> sync_fences_;
-    std::unordered_map<std::uint32_t, RenderPicture> render_pictures_;
+    std::unordered_map<std::uint32_t, std::shared_ptr<RenderPicture>>
+        render_pictures_;
     std::unordered_map<std::uint32_t, RenderGlyphSet> render_glyph_sets_;
+    std::unordered_map<std::uint32_t, CursorRecord> cursors_;
     std::unordered_map<std::uint32_t, std::vector<SyncWaitCondition>>
         sync_counter_waits_;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
@@ -522,9 +582,9 @@ private:
     std::vector<std::pair<std::uint32_t, std::uint16_t>> clients_;
     std::uint16_t width_;
     std::uint16_t height_;
-    std::optional<Surface> composited_root_;
+    std::shared_ptr<Surface> composited_root_;
+    std::shared_ptr<SurfaceBudget> surface_budget_;
     std::size_t property_bytes_ = 0;
-    std::size_t surface_bytes_ = 0;
     std::size_t pending_events_ = 0;
     std::uint32_t current_time_ = 1;
     std::uint32_t installed_colormap_ = default_colormap_id;

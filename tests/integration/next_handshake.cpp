@@ -272,13 +272,14 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 6> extensions{{
+    constexpr std::array<std::string_view, 7> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
         "XTEST",
         "SHAPE",
         "SYNC",
+        "RENDER",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -296,7 +297,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 6 && get16(reply, 2, little) == sequence &&
+        reply[1] == 7 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -2343,7 +2344,8 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
     put16(request, 4, static_cast<std::uint16_t>(extension.size()), little);
     std::memcpy(request.data() + 8, extension.data(), extension.size());
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 1 || get16(reply, 2, little) != 2 || reply[8] != 0) {
+        reply[0] != 1 || get16(reply, 2, little) != 2 ||
+        reply[8] != 1 || reply[9] != 134 || reply[11] != 131) {
         return false;
     }
 
@@ -2386,6 +2388,605 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
 
     request[0] = 127; // NoOperation
     return write_all(descriptor, request);
+}
+
+bool
+check_render(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t render_opcode = 134;
+    constexpr std::uint32_t xrgb_format = 2;
+    constexpr std::uint32_t a8_format = 3;
+    const std::uint32_t window = resource_base + 1;
+    const std::uint32_t destination = resource_base + 2;
+    const std::uint32_t blue = resource_base + 3;
+    const std::uint32_t red = resource_base + 4;
+    const std::uint32_t glyph_set = resource_base + 5;
+    const std::uint32_t glyph_reference = resource_base + 6;
+    const std::uint32_t cursor = resource_base + 7;
+    const std::uint32_t animated_cursor = resource_base + 8;
+    const std::uint32_t alpha_pixmap = resource_base + 9;
+    const std::uint32_t alpha_picture = resource_base + 10;
+    const std::uint32_t linear = resource_base + 11;
+    const std::uint32_t radial = resource_base + 12;
+    const std::uint32_t conical = resource_base + 13;
+    const std::uint32_t cursor_bitmap = resource_base + 14;
+    const std::uint32_t core_cursor = resource_base + 15;
+    const std::uint32_t glyph_cursor = resource_base + 16;
+    const std::uint32_t nested_cursor = resource_base + 17;
+    std::vector<std::uint8_t> reply;
+    std::vector<std::uint8_t> request;
+    std::uint16_t sequence = 0;
+    if (!query_extension(descriptor, little, "RENDER", ++sequence,
+                         render_opcode, reply, 0, 131)) {
+        return false;
+    }
+
+    const auto send = [&](std::vector<std::uint8_t> &bytes) {
+        ++sequence;
+        return write_all(descriptor, bytes);
+    };
+    const auto synchronize = [&]() {
+        request.assign(12, 0);
+        request[0] = render_opcode;
+        request[1] = 0; // QueryVersion
+        put16(request, 2, 3, little);
+        put32(request, 8, 11, little);
+        if (!send(request) || !read_reply(descriptor, reply))
+            return false;
+        return reply[0] == 1 && get16(reply, 2, little) == sequence &&
+            get32(reply, 8, little) == 0 &&
+            get32(reply, 12, little) == 11;
+    };
+    if (!synchronize())
+        return false;
+
+    request.assign(4, 0);
+    request[0] = render_opcode;
+    request[1] = 1; // QueryPictFormats
+    put16(request, 2, 1, little);
+    if (!send(request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != sequence ||
+        get32(reply, 8, little) != 4 || get32(reply, 12, little) != 1 ||
+        get32(reply, 16, little) != 4 || get32(reply, 20, little) != 1 ||
+        get32(reply, 24, little) != 1 || reply.size() != 196 ||
+        get32(reply, 60, little) != xrgb_format ||
+        get32(reply, 88, little) != a8_format) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = render_opcode;
+    request[1] = 2; // QueryPictIndexValues on a direct format
+    put16(request, 2, 2, little);
+    put32(request, 4, xrgb_format, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != sequence ||
+        get32(reply, 8, little) != 0) {
+        return false;
+    }
+
+    request.assign(32, 0);
+    request[0] = 1; // CreateWindow
+    request[1] = 24;
+    put16(request, 2, 8, little);
+    put32(request, 4, window, little);
+    put32(request, 8, root_window, little);
+    put16(request, 16, 32, little);
+    put16(request, 18, 24, little);
+    put16(request, 22, 1, little);
+    put32(request, 24, 3, little);
+    if (!send(request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = render_opcode;
+    request[1] = 4; // CreatePicture
+    put16(request, 2, 5, little);
+    put32(request, 4, destination, little);
+    put32(request, 8, window, little);
+    put32(request, 12, xrgb_format, little);
+    if (!send(request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 5; // ChangePicture repeat
+    put16(request, 2, 4, little);
+    put32(request, 4, destination, little);
+    put32(request, 8, 1, little);
+    put32(request, 12, 0, little);
+    if (!send(request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = render_opcode;
+    request[1] = 6; // SetPictureClipRectangles
+    put16(request, 2, 5, little);
+    put32(request, 4, destination, little);
+    put16(request, 16, 32, little);
+    put16(request, 18, 24, little);
+    if (!send(request))
+        return false;
+
+    const auto solid = [&](std::uint32_t id, std::uint16_t red_value,
+                           std::uint16_t blue_value) {
+        request.assign(16, 0);
+        request[0] = render_opcode;
+        request[1] = 33;
+        put16(request, 2, 4, little);
+        put32(request, 4, id, little);
+        put16(request, 8, red_value, little);
+        put16(request, 12, blue_value, little);
+        put16(request, 14, 0xffff, little);
+        return send(request);
+    };
+    if (!solid(blue, 0, 0xffff) || !solid(red, 0xffff, 0))
+        return false;
+
+    request.assign(36, 0);
+    request[0] = render_opcode;
+    request[1] = 8; // Composite
+    put16(request, 2, 9, little);
+    request[4] = 1; // Src
+    put32(request, 8, blue, little);
+    put32(request, 16, destination, little);
+    put16(request, 32, 32, little);
+    put16(request, 34, 24, little);
+    if (!send(request))
+        return false;
+
+    request.assign(64, 0);
+    request[0] = render_opcode;
+    request[1] = 10; // Trapezoids
+    put16(request, 2, 16, little);
+    request[4] = 3; // Over
+    put32(request, 8, blue, little);
+    put32(request, 12, destination, little);
+    put32(request, 16, a8_format, little);
+    put32(request, 24, 2U << 16, little);
+    put32(request, 28, 14U << 16, little);
+    put32(request, 32, 4U << 16, little);
+    put32(request, 36, 2U << 16, little);
+    put32(request, 40, 4U << 16, little);
+    put32(request, 44, 14U << 16, little);
+    put32(request, 48, 16U << 16, little);
+    put32(request, 52, 2U << 16, little);
+    put32(request, 56, 16U << 16, little);
+    put32(request, 60, 14U << 16, little);
+    if (!send(request))
+        return false;
+
+    request.assign(48, 0);
+    request[0] = render_opcode;
+    request[1] = 11; // Triangles
+    put16(request, 2, 12, little);
+    request[4] = 3;
+    put32(request, 8, blue, little);
+    put32(request, 12, destination, little);
+    put32(request, 16, a8_format, little);
+    put32(request, 24, 2U << 16, little);
+    put32(request, 28, 2U << 16, little);
+    put32(request, 32, 12U << 16, little);
+    put32(request, 36, 2U << 16, little);
+    put32(request, 40, 2U << 16, little);
+    put32(request, 44, 12U << 16, little);
+    if (!send(request))
+        return false;
+    request[1] = 12; // TriStrip over the same three points
+    if (!send(request))
+        return false;
+    request[1] = 13; // TriFan
+    if (!send(request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = render_opcode;
+    request[1] = 17; // CreateGlyphSet
+    put16(request, 2, 3, little);
+    put32(request, 4, glyph_set, little);
+    put32(request, 8, a8_format, little);
+    if (!send(request))
+        return false;
+    request[1] = 18; // ReferenceGlyphSet
+    put32(request, 4, glyph_reference, little);
+    put32(request, 8, glyph_set, little);
+    if (!send(request))
+        return false;
+
+    request.assign(52, 0);
+    request[0] = render_opcode;
+    request[1] = 20; // AddGlyphs
+    put16(request, 2, 13, little);
+    put32(request, 4, glyph_set, little);
+    put32(request, 8, 2, little);
+    put32(request, 12, 1, little);
+    put32(request, 16, 2, little);
+    for (std::size_t offset : {std::size_t{20}, std::size_t{32}}) {
+        put16(request, offset, 1, little);
+        put16(request, offset + 2, 1, little);
+        put16(request, offset + 8, 1, little);
+    }
+    request[44] = 0xff;
+    request[48] = 0x80;
+    if (!send(request))
+        return false;
+
+    const auto composite_glyph = [&](std::uint8_t minor,
+                                     std::size_t glyph_size) {
+        request.assign(40, 0);
+        request[0] = render_opcode;
+        request[1] = minor;
+        put16(request, 2, 10, little);
+        request[4] = 3;
+        put32(request, 8, red, little);
+        put32(request, 12, destination, little);
+        put32(request, 16, a8_format, little);
+        put32(request, 20, glyph_reference, little);
+        request[28] = 1;
+        put16(request, 32, 20, little);
+        put16(request, 34, 8, little);
+        if (glyph_size == 1)
+            request[36] = 1;
+        else if (glyph_size == 2)
+            put16(request, 36, 1, little);
+        else
+            put32(request, 36, 1, little);
+        return send(request);
+    };
+    if (!composite_glyph(23, 1) || !composite_glyph(24, 2) ||
+        !composite_glyph(25, 4)) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = render_opcode;
+    request[1] = 22; // FreeGlyphs
+    put16(request, 2, 3, little);
+    put32(request, 4, glyph_reference, little);
+    put32(request, 8, 2, little);
+    if (!send(request))
+        return false;
+
+    request.assign(28, 0);
+    request[0] = render_opcode;
+    request[1] = 26; // FillRectangles
+    put16(request, 2, 7, little);
+    request[4] = 1;
+    put32(request, 8, destination, little);
+    put16(request, 12, 0xffff, little);
+    put16(request, 18, 0xffff, little);
+    put16(request, 24, 4, little);
+    put16(request, 26, 4, little);
+    if (!send(request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 27; // CreateCursor
+    put16(request, 2, 4, little);
+    put32(request, 4, cursor, little);
+    put32(request, 8, destination, little);
+    if (!send(request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 2; // install the RENDER cursor on the window
+    put16(request, 2, 4, little);
+    put32(request, 4, window, little);
+    put32(request, 8, 1U << 14, little);
+    put32(request, 12, cursor, little);
+    if (!send(request))
+        return false;
+    request.assign(12, 0);
+    request[0] = 131; // XTEST CompareCursor
+    request[1] = 1;
+    put16(request, 2, 3, little);
+    put32(request, 4, window, little);
+    put32(request, 8, cursor, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != sequence) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 53; // depth-one core cursor source
+    request[1] = 1;
+    put16(request, 2, 4, little);
+    put32(request, 4, cursor_bitmap, little);
+    put32(request, 8, window, little);
+    put16(request, 12, 2, little);
+    put16(request, 14, 1, little);
+    if (!send(request))
+        return false;
+    request.assign(32, 0);
+    request[0] = 93; // core CreateCursor
+    put16(request, 2, 8, little);
+    put32(request, 4, core_cursor, little);
+    put32(request, 8, cursor_bitmap, little);
+    put16(request, 16, 0xffff, little);
+    put16(request, 22, 0xffff, little);
+    if (!send(request))
+        return false;
+    request.assign(20, 0);
+    request[0] = 96; // RecolorCursor
+    put16(request, 2, 5, little);
+    put32(request, 4, core_cursor, little);
+    put16(request, 8, 0xffff, little);
+    put16(request, 16, 0xffff, little);
+    if (!send(request))
+        return false;
+    request.assign(32, 0);
+    request[0] = 94; // typed font resources are not implemented yet
+    put16(request, 2, 8, little);
+    put32(request, 4, glyph_cursor, little);
+    put32(request, 8, 0xdeadbeefU, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 7 ||
+        get16(reply, 2, little) != sequence ||
+        get32(reply, 4, little) != 0xdeadbeefU) {
+        return false;
+    }
+
+    request.assign(44, 0);
+    request[0] = render_opcode;
+    request[1] = 28; // SetPictureTransform identity
+    put16(request, 2, 11, little);
+    put32(request, 4, destination, little);
+    put32(request, 8, 1U << 16, little);
+    put32(request, 24, 1U << 16, little);
+    put32(request, 40, 1U << 16, little);
+    if (!send(request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = render_opcode;
+    request[1] = 29; // QueryFilters
+    put16(request, 2, 2, little);
+    put32(request, 4, window, little);
+    if (!send(request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != sequence ||
+        get32(reply, 8, little) != 2 || get32(reply, 12, little) != 2) {
+        return false;
+    }
+
+    request.assign(20, 0);
+    request[0] = render_opcode;
+    request[1] = 30; // SetPictureFilter bilinear
+    put16(request, 2, 5, little);
+    put32(request, 4, destination, little);
+    put16(request, 8, 8, little);
+    std::memcpy(request.data() + 12, "bilinear", 8);
+    if (!send(request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 31; // CreateAnimCursor
+    put16(request, 2, 4, little);
+    put32(request, 4, animated_cursor, little);
+    put32(request, 8, cursor, little);
+    put32(request, 12, 10, little);
+    if (!send(request))
+        return false;
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 31; // animated cursors cannot be animation frames
+    put16(request, 2, 4, little);
+    put32(request, 4, nested_cursor, little);
+    put32(request, 8, animated_cursor, little);
+    put32(request, 12, 10, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 8 ||
+        get16(reply, 2, little) != sequence ||
+        get32(reply, 4, little) != animated_cursor) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 53; // CreatePixmap A8
+    request[1] = 8;
+    put16(request, 2, 4, little);
+    put32(request, 4, alpha_pixmap, little);
+    put32(request, 8, window, little);
+    put16(request, 12, 16, little);
+    put16(request, 14, 16, little);
+    if (!send(request))
+        return false;
+    request.assign(20, 0);
+    request[0] = render_opcode;
+    request[1] = 4; // CreatePicture A8
+    put16(request, 2, 5, little);
+    put32(request, 4, alpha_picture, little);
+    put32(request, 8, alpha_pixmap, little);
+    put32(request, 12, a8_format, little);
+    if (!send(request))
+        return false;
+    request.assign(36, 0);
+    request[0] = render_opcode;
+    request[1] = 32; // AddTraps
+    put16(request, 2, 9, little);
+    put32(request, 4, alpha_picture, little);
+    put32(request, 12, 2U << 16, little);
+    put32(request, 16, 12U << 16, little);
+    put32(request, 20, 2U << 16, little);
+    put32(request, 24, 2U << 16, little);
+    put32(request, 28, 12U << 16, little);
+    put32(request, 32, 12U << 16, little);
+    if (!send(request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 5; // destination retains alpha picture
+    put16(request, 2, 4, little);
+    put32(request, 4, destination, little);
+    put32(request, 8, 1U << 1, little);
+    put32(request, 12, alpha_picture, little);
+    if (!send(request))
+        return false;
+    request.assign(8, 0);
+    request[0] = render_opcode;
+    request[1] = 7; // release the alpha picture's public ID
+    put16(request, 2, 2, little);
+    put32(request, 4, alpha_picture, little);
+    if (!send(request))
+        return false;
+    request[0] = 54; // release its pixmap's public ID
+    put32(request, 4, alpha_pixmap, little);
+    if (!send(request))
+        return false;
+    request.assign(28, 0);
+    request[0] = render_opcode;
+    request[1] = 26; // retained alpha map remains usable
+    put16(request, 2, 7, little);
+    request[4] = 1;
+    put32(request, 8, destination, little);
+    put16(request, 12, 0xffff, little);
+    put16(request, 18, 0xffff, little);
+    put16(request, 24, 1, little);
+    put16(request, 26, 1, little);
+    if (!send(request) || !synchronize())
+        return false;
+    request.assign(16, 0);
+    request[0] = render_opcode;
+    request[1] = 5; // release the retained alpha-map reference
+    put16(request, 2, 4, little);
+    put32(request, 4, destination, little);
+    put32(request, 8, 1U << 1, little);
+    if (!send(request))
+        return false;
+
+    const auto gradient_tail = [&](std::size_t positions_offset,
+                                   std::size_t colors_offset) {
+        put32(request, positions_offset, 0, little);
+        put32(request, positions_offset + 4, 1U << 16, little);
+        put16(request, colors_offset + 6, 0xffff, little);
+        put16(request, colors_offset + 8, 0xffff, little);
+        put16(request, colors_offset + 10, 0xffff, little);
+        put16(request, colors_offset + 12, 0xffff, little);
+        put16(request, colors_offset + 14, 0xffff, little);
+    };
+    request.assign(52, 0);
+    request[0] = render_opcode;
+    request[1] = 34; // CreateLinearGradient
+    put16(request, 2, 13, little);
+    put32(request, 4, linear, little);
+    put32(request, 16, 16U << 16, little);
+    put32(request, 24, 2, little);
+    gradient_tail(28, 36);
+    if (!send(request))
+        return false;
+    request.assign(60, 0);
+    request[0] = render_opcode;
+    request[1] = 35; // CreateRadialGradient
+    put16(request, 2, 15, little);
+    put32(request, 4, radial, little);
+    put32(request, 24, 1U << 16, little);
+    put32(request, 28, 8U << 16, little);
+    put32(request, 32, 2, little);
+    gradient_tail(36, 44);
+    if (!send(request))
+        return false;
+    request.assign(48, 0);
+    request[0] = render_opcode;
+    request[1] = 36; // CreateConicalGradient
+    put16(request, 2, 12, little);
+    put32(request, 4, conical, little);
+    put32(request, 20, 2, little);
+    gradient_tail(24, 32);
+    if (!send(request) || !synchronize())
+        return false;
+
+    request.assign(8, 0);
+    request[0] = render_opcode;
+    request[1] = 2; // BadPictFormat
+    put16(request, 2, 2, little);
+    put32(request, 4, 0xdeadbeefU, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 131 ||
+        get16(reply, 2, little) != sequence ||
+        get32(reply, 4, little) != 0xdeadbeefU) {
+        return false;
+    }
+    request.assign(36, 0);
+    request[0] = render_opcode;
+    request[1] = 8; // reserved PictOp is BadValue, matching Xorg
+    put16(request, 2, 9, little);
+    request[4] = 14;
+    put32(request, 8, blue, little);
+    put32(request, 16, destination, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != sequence) {
+        return false;
+    }
+    request.assign(12, 0);
+    request[0] = render_opcode;
+    request[1] = 22; // BadGlyph
+    put16(request, 2, 3, little);
+    put32(request, 4, glyph_set, little);
+    put32(request, 8, 0xdeadbeefU, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 135 ||
+        get16(reply, 2, little) != sequence) {
+        return false;
+    }
+    request.assign(8, 0);
+    request[0] = render_opcode;
+    request[1] = 7; // BadPicture
+    put16(request, 2, 2, little);
+    put32(request, 4, 0xdeadbeefU, little);
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 132 ||
+        get16(reply, 2, little) != sequence) {
+        return false;
+    }
+    request[1] = 19; // BadGlyphSet
+    if (!send(request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 134 ||
+        get16(reply, 2, little) != sequence) {
+        return false;
+    }
+
+    for (const auto picture : {
+             linear, radial, conical, red, blue, destination}) {
+        request.assign(8, 0);
+        request[0] = render_opcode;
+        request[1] = 7;
+        put16(request, 2, 2, little);
+        put32(request, 4, picture, little);
+        if (!send(request))
+            return false;
+    }
+    for (const auto set : {glyph_reference, glyph_set}) {
+        request.assign(8, 0);
+        request[0] = render_opcode;
+        request[1] = 19;
+        put16(request, 2, 2, little);
+        put32(request, 4, set, little);
+        if (!send(request))
+            return false;
+    }
+    for (const auto cursor_id : {animated_cursor, core_cursor, cursor}) {
+        request.assign(8, 0);
+        request[0] = 95; // core FreeCursor
+        put16(request, 2, 2, little);
+        put32(request, 4, cursor_id, little);
+        if (!send(request))
+            return false;
+    }
+    request.assign(8, 0);
+    request[0] = 54; // Free core cursor bitmap
+    put16(request, 2, 2, little);
+    put32(request, 4, cursor_bitmap, little);
+    if (!send(request))
+        return false;
+    request[0] = 4; // DestroyWindow
+    put32(request, 4, window, little);
+    return send(request) && synchronize();
 }
 
 bool
@@ -2676,6 +3277,22 @@ run_sync_case(const char *server, bool little)
 }
 
 bool
+run_render_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_render(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_foundation_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -2793,6 +3410,11 @@ main(int argc, char **argv)
     if (!run_sync_case(argv[1], native) ||
         !run_sync_case(argv[1], !native)) {
         std::cerr << "SYNC extension case failed\n";
+        return 1;
+    }
+    if (!run_render_case(argv[1], native) ||
+        !run_render_case(argv[1], !native)) {
+        std::cerr << "RENDER extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

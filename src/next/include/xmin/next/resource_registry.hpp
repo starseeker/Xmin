@@ -18,6 +18,7 @@ enum class ResourceKind {
     sync_fence,
     render_picture,
     render_glyph_set,
+    cursor,
 };
 
 struct ResourceRecord {

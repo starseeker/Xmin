@@ -72,6 +72,11 @@ input hit-testing, bounded composition, and a retained-Xorg XCB oracle,
 all SYNC 3.1 requests in both byte orders, typed counter/alarm notifications,
 cross-client Await and AwaitFence suspension with buffered-request ordering, checked
 64-bit alarm/counter arithmetic, disconnect cleanup, and a retained-Xorg XCB oracle,
+all non-reserved RENDER 0.11 requests in both byte orders, fixed-format discovery,
+picture attributes and lifetime, every operator class, gradients, transforms,
+filters, clips, A1/A8 staging, trapezoids/triangles/traps, shared glyph sets and
+8/16/32-bit composition streams, core/ARGB/animated cursor lifecycle, exact extension
+errors, and an independent generated-libxcb pixel oracle against both servers,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

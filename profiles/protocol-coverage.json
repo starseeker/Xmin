@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "5a5eeca33361d24ad1482cfb2ab0c1c84d697a7f87b794e96058a29e893ff5df",
+    "policy_sha256": "15b32956c47b6ca0beba234781e1f418a2d971801702418dd7735e8bfb4f82a5",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -2214,217 +2214,217 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "QueryPictFormats",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "QueryPictIndexValues",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "CreatePicture",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "ChangePicture",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 6,
           "name": "SetPictureClipRectangles",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 7,
           "name": "FreePicture",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 8,
           "name": "Composite",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 10,
           "name": "Trapezoids",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 11,
           "name": "Triangles",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 12,
           "name": "TriStrip",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 13,
           "name": "TriFan",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 17,
           "name": "CreateGlyphSet",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 18,
           "name": "ReferenceGlyphSet",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 19,
           "name": "FreeGlyphSet",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 20,
           "name": "AddGlyphs",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 22,
           "name": "FreeGlyphs",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 23,
           "name": "CompositeGlyphs8",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 24,
           "name": "CompositeGlyphs16",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 25,
           "name": "CompositeGlyphs32",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 26,
           "name": "FillRectangles",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 27,
           "name": "CreateCursor",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 28,
           "name": "SetPictureTransform",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 29,
           "name": "QueryFilters",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 30,
           "name": "SetPictureFilter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 31,
           "name": "CreateAnimCursor",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 32,
           "name": "AddTraps",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 33,
           "name": "CreateSolidFill",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 34,
           "name": "CreateLinearGradient",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 35,
           "name": "CreateRadialGradient",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 36,
           "name": "CreateConicalGradient",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

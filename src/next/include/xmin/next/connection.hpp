@@ -136,6 +136,10 @@ private:
     Result<void> handle_fill_rectangles(const RequestContext &context);
     Result<void> handle_put_image(const RequestContext &context);
     Result<void> handle_get_image(const RequestContext &context);
+    Result<void> handle_create_cursor(const RequestContext &context);
+    Result<void> handle_create_glyph_cursor(const RequestContext &context);
+    Result<void> handle_free_cursor(const RequestContext &context);
+    Result<void> handle_recolor_cursor(const RequestContext &context);
     Result<void> handle_create_colormap(const RequestContext &context);
     Result<void> handle_free_colormap(const RequestContext &context);
     Result<void> handle_copy_colormap(const RequestContext &context);
@@ -177,6 +181,7 @@ private:
     Result<void> handle_xtest(const RequestContext &context);
     Result<void> handle_shape(const RequestContext &context);
     Result<void> handle_sync(const RequestContext &context);
+    Result<void> handle_render(const RequestContext &context);
     Result<void> update_shape(
         const RequestContext &context, WindowRecord &window,
         std::uint8_t operation, std::uint8_t kind,

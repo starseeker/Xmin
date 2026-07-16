@@ -14,6 +14,8 @@
 namespace xmin::next {
 
 class ServerState;
+class Surface;
+struct RenderPicture;
 
 constexpr std::uint32_t render_argb32_format = 1;
 constexpr std::uint32_t render_xrgb32_format = 2;
@@ -22,6 +24,8 @@ constexpr std::uint32_t render_a1_format = 4;
 constexpr std::size_t maximum_render_gradient_stops = 4096;
 constexpr std::size_t maximum_render_glyphs_per_set = 65536;
 constexpr std::size_t maximum_render_glyph_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t maximum_server_render_glyph_bytes =
+    64U * 1024U * 1024U;
 
 struct RenderDirectFormat {
     std::uint16_t red_shift = 0;
@@ -44,6 +48,7 @@ struct RenderFormat {
 [[nodiscard]] const RenderFormat *render_format(std::uint32_t id) noexcept;
 [[nodiscard]] const RenderFormat *render_format_for_depth(
     std::uint8_t depth) noexcept;
+[[nodiscard]] bool render_operator_valid(std::uint8_t operation) noexcept;
 
 struct RenderColor {
     std::uint16_t red = 0;
@@ -95,12 +100,13 @@ enum class RenderFilter : std::uint8_t {
 struct RenderPictureAttributes {
     RenderRepeat repeat = RenderRepeat::none;
     std::uint32_t alpha_map = 0;
+    std::shared_ptr<RenderPicture> alpha_map_picture;
     std::int32_t alpha_x_origin = 0;
     std::int32_t alpha_y_origin = 0;
     std::int32_t clip_x_origin = 0;
     std::int32_t clip_y_origin = 0;
     std::optional<Region> clip;
-    bool graphics_exposures = true;
+    bool graphics_exposures = false;
     std::uint8_t subwindow_mode = 0;
     std::uint8_t poly_edge = 0;
     std::uint8_t poly_mode = 0;
@@ -114,7 +120,12 @@ struct RenderPictureAttributes {
 };
 
 struct RenderDrawableSource {
+    RenderDrawableSource() = default;
+    explicit RenderDrawableSource(std::uint32_t id) noexcept : drawable(id) {}
+
     std::uint32_t drawable = 0;
+    std::shared_ptr<Surface> surface;
+    bool pixmap = false;
 };
 
 struct RenderSolidSource {
@@ -163,7 +174,7 @@ struct RenderGlyphInfo {
 
 struct RenderGlyph {
     RenderGlyphInfo info;
-    std::vector<std::uint8_t> pixels;
+    std::vector<std::uint32_t> pixels;
 };
 
 struct RenderGlyphStorage {
@@ -175,6 +186,24 @@ struct RenderGlyphStorage {
 struct RenderGlyphSet {
     std::uint32_t id = 0;
     std::shared_ptr<RenderGlyphStorage> storage;
+};
+
+struct RenderGlyphRun {
+    std::int16_t x_offset = 0;
+    std::int16_t y_offset = 0;
+    std::uint32_t glyph_set = 0;
+    std::vector<std::uint32_t> glyphs;
+};
+
+struct RenderSpan {
+    std::int32_t left = 0;
+    std::int32_t right = 0;
+    std::int32_t y = 0;
+};
+
+struct RenderTrap {
+    RenderSpan top;
+    RenderSpan bottom;
 };
 
 enum class RenderStatus {
@@ -213,6 +242,17 @@ public:
         std::uint32_t destination, std::uint32_t mask_format,
         std::int32_t source_x, std::int32_t source_y,
         const std::vector<RenderTriangle> &triangles);
+    [[nodiscard]] RenderStatus composite_glyphs(
+        std::uint8_t operation, std::uint32_t source,
+        std::uint32_t destination, std::uint32_t mask_format,
+        std::int32_t source_x, std::int32_t source_y,
+        const std::vector<RenderGlyphRun> &runs);
+    [[nodiscard]] RenderStatus add_traps(
+        std::uint32_t picture, std::int16_t x_offset,
+        std::int16_t y_offset, const std::vector<RenderTrap> &traps);
+    [[nodiscard]] RenderStatus snapshot(
+        std::uint32_t picture, std::uint16_t &width,
+        std::uint16_t &height, std::vector<std::uint32_t> &pixels);
 
 private:
     ServerState &server_;

@@ -104,7 +104,8 @@
       "name": "RENDER",
       "xml": "render.xml",
       "version": "0.11",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "RANDR",

@@ -893,8 +893,12 @@ Connection::handle_create_window(const RequestContext &context)
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence);
         }
-        window.surface = Surface::create(window.width, window.height,
-                                         window.depth);
+        auto surface = Surface::create(window.width, window.height,
+                                       window.depth);
+        if (!surface)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        window.surface = server_.adopt_surface(std::move(*surface));
         if (!window.surface)
             return send_error(context.order, bad_alloc, context.opcode,
                               context.sequence);
@@ -989,7 +993,13 @@ Connection::handle_create_window(const RequestContext &context)
                                   context.sequence, *value);
             break;
         case 14:
-            if (*value != 0) {
+            if (*value == 0) {
+                window.cursor.reset();
+            }
+            else if (const auto *cursor = server_.cursor(*value)) {
+                window.cursor = cursor->image;
+            }
+            else {
                 return send_error(context.order, bad_cursor, context.opcode,
                                   context.sequence, *value);
             }
@@ -1053,6 +1063,7 @@ Connection::handle_change_window_attributes(const RequestContext &context)
     auto colormap = window->colormap;
     auto background_pixel = window->background_pixel;
     auto border_pixel = window->border_pixel;
+    auto cursor_image = window->cursor;
     std::optional<std::uint32_t> event_mask;
     for (unsigned bit = 0; bit < 15; ++bit) {
         if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
@@ -1145,7 +1156,11 @@ Connection::handle_change_window_attributes(const RequestContext &context)
                                   context.opcode, context.sequence, *value);
             break;
         case 14:
-            if (*value != 0)
+            if (*value == 0)
+                cursor_image.reset();
+            else if (const auto *cursor = server_.cursor(*value))
+                cursor_image = cursor->image;
+            else
                 return send_error(context.order, bad_cursor, context.opcode,
                                   context.sequence, *value);
             break;
@@ -1177,6 +1192,7 @@ Connection::handle_change_window_attributes(const RequestContext &context)
     window->colormap = colormap;
     window->background_pixel = background_pixel;
     window->border_pixel = border_pixel;
+    window->cursor = std::move(cursor_image);
     server_.invalidate_scene();
     return Result<void>::success();
 }
@@ -1522,13 +1538,13 @@ Connection::handle_get_geometry(const RequestContext &context)
         return send_error(context.order, bad_drawable, context.opcode,
                           context.sequence, *drawable);
 
-    const std::uint8_t depth = window == nullptr ? pixmap->surface.depth()
+    const std::uint8_t depth = window == nullptr ? pixmap->surface->depth()
                                                  : window->depth;
     const std::int16_t x = window == nullptr ? 0 : window->x;
     const std::int16_t y = window == nullptr ? 0 : window->y;
-    const std::uint16_t width = window == nullptr ? pixmap->surface.width()
+    const std::uint16_t width = window == nullptr ? pixmap->surface->width()
                                                   : window->width;
-    const std::uint16_t height = window == nullptr ? pixmap->surface.height()
+    const std::uint16_t height = window == nullptr ? pixmap->surface->height()
                                                    : window->height;
     const std::uint16_t border = window == nullptr ? 0 : window->border_width;
 
@@ -2127,7 +2143,7 @@ Connection::handle_grab_pointer(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *window_id);
-    if (*cursor != 0)
+    if (*cursor != 0 && server_.cursor(*cursor) == nullptr)
         return send_error(context.order, bad_cursor, context.opcode,
                           context.sequence, *cursor);
 
@@ -2149,9 +2165,13 @@ Connection::handle_grab_pointer(const RequestContext &context)
         status = 2; // GrabInvalidTime
     }
     else {
+        const auto cursor_image = *cursor == 0
+            ? std::shared_ptr<CursorImage>{}
+            : server_.cursor(*cursor)->image;
         const auto activated = server_.activate_pointer_grab(ActiveGrab{
             config_.resource_base, *window_id, *confine_to, effective_time,
-            *event_mask, *pointer_mode, *keyboard_mode, context.data != 0});
+            *event_mask, *pointer_mode, *keyboard_mode, context.data != 0,
+            false, 0, false, cursor_image});
         if (activated == EventDelivery::queue_full)
             return send_error(context.order, bad_alloc, context.opcode,
                               context.sequence);
@@ -2238,7 +2258,7 @@ Connection::handle_grab_button(const RequestContext &context)
     if (*confine_to != 0 && server_.window(*confine_to) == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *confine_to);
-    if (*cursor != 0)
+    if (*cursor != 0 && server_.cursor(*cursor) == nullptr)
         return send_error(context.order, bad_cursor, context.opcode,
                           context.sequence, *cursor);
 
@@ -2253,6 +2273,8 @@ Connection::handle_grab_button(const RequestContext &context)
     grab.pointer_mode = *pointer_mode;
     grab.keyboard_mode = *keyboard_mode;
     grab.owner_events = context.data != 0;
+    if (*cursor != 0)
+        grab.cursor = server_.cursor(*cursor)->image;
     const auto update = server_.add_passive_grab(std::move(grab));
     if (update == PassiveGrabUpdate::access_denied)
         return send_error(context.order, bad_access, context.opcode,
@@ -2306,7 +2328,7 @@ Connection::handle_change_active_pointer_grab(
     if ((*event_mask & ~pointer_grab_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *event_mask);
-    if (*cursor != 0)
+    if (*cursor != 0 && server_.cursor(*cursor) == nullptr)
         return send_error(context.order, bad_cursor, context.opcode,
                           context.sequence, *cursor);
     auto &input = server_.input();
@@ -2319,6 +2341,9 @@ Connection::handle_change_active_pointer_grab(
         !timestamp_earlier(effective_time,
                            input.pointer_grab->activated_at)) {
         input.pointer_grab->event_mask = *event_mask;
+        input.pointer_grab->cursor = *cursor == 0
+            ? std::shared_ptr<CursorImage>{}
+            : server_.cursor(*cursor)->image;
     }
     return Result<void>::success();
 }
@@ -2372,7 +2397,7 @@ Connection::handle_grab_keyboard(const RequestContext &context)
         const auto activated = server_.activate_keyboard_grab(ActiveGrab{
             config_.resource_base, *window_id, 0, effective_time,
             (1U << 0) | (1U << 1), *pointer_mode, *keyboard_mode,
-            context.data != 0});
+            context.data != 0, false, 0, false, {}});
         if (activated == EventDelivery::queue_full)
             return send_error(context.order, bad_alloc, context.opcode,
                               context.sequence);
@@ -2810,7 +2835,9 @@ Connection::handle_create_pixmap(const RequestContext &context)
     if (!surface)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
-    if (!server_.add_pixmap(PixmapRecord{*id, std::move(*surface)},
+    auto managed_surface = server_.adopt_surface(std::move(*surface));
+    if (!managed_surface ||
+        !server_.add_pixmap(PixmapRecord{*id, std::move(managed_surface)},
                             config_.resource_base)) {
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
@@ -5208,23 +5235,23 @@ Connection::handle_shape(const RequestContext &context)
             return send_error(context.order, bad_pixmap, context.opcode,
                               context.sequence, *source_id, context.data);
         }
-        if (pixmap->surface.depth() != 1) {
+        if (pixmap->surface->depth() != 1) {
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence, 0, context.data);
         }
 
         std::vector<Rectangle> rectangles;
         try {
-            for (std::uint16_t y = 0; y < pixmap->surface.height(); ++y) {
+            for (std::uint16_t y = 0; y < pixmap->surface->height(); ++y) {
                 std::uint16_t x = 0;
-                while (x < pixmap->surface.width()) {
-                    while (x < pixmap->surface.width() &&
-                           (pixmap->surface.pixel(x, y) & 1U) == 0) {
+                while (x < pixmap->surface->width()) {
+                    while (x < pixmap->surface->width() &&
+                           (pixmap->surface->pixel(x, y) & 1U) == 0) {
                         ++x;
                     }
                     const std::uint16_t start = x;
-                    while (x < pixmap->surface.width() &&
-                           (pixmap->surface.pixel(x, y) & 1U) != 0) {
+                    while (x < pixmap->surface->width() &&
+                           (pixmap->surface->pixel(x, y) & 1U) != 0) {
                         ++x;
                     }
                     if (x != start) {
@@ -5534,12 +5561,18 @@ Connection::handle_xtest(const RequestContext &context)
         if (server_.window(*window) == nullptr)
             return send_error(context.order, bad_window, context.opcode,
                               context.sequence, *window, context.data);
-        if (*cursor > 1)
+        if (*cursor > 1 && server_.cursor(*cursor) == nullptr)
             return send_error(context.order, bad_cursor, context.opcode,
                               context.sequence, *cursor, context.data);
+        const auto window_cursor = server_.effective_cursor(*window);
+        std::shared_ptr<CursorImage> requested_cursor;
+        if (*cursor == 1)
+            requested_cursor = server_.current_cursor();
+        else if (*cursor > 1)
+            requested_cursor = server_.cursor(*cursor)->image;
         WireWriter reply(context.order);
         reply.u8(1);
-        reply.u8(*cursor == 1 ? 1 : 0);
+        reply.u8(requested_cursor == window_cursor ? 1 : 0);
         reply.u16(context.sequence);
         reply.u32(0);
         reply.pad(24);
@@ -6200,6 +6233,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_shape(context);
         case ExtensionKind::sync:
             return handle_sync(context);
+        case ExtensionKind::render:
+            return handle_render(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {
@@ -6318,6 +6353,14 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_put_image;
         table[opcode_index(CoreOpcode::GetImage)] =
             &Connection::handle_get_image;
+        table[opcode_index(CoreOpcode::CreateCursor)] =
+            &Connection::handle_create_cursor;
+        table[opcode_index(CoreOpcode::CreateGlyphCursor)] =
+            &Connection::handle_create_glyph_cursor;
+        table[opcode_index(CoreOpcode::FreeCursor)] =
+            &Connection::handle_free_cursor;
+        table[opcode_index(CoreOpcode::RecolorCursor)] =
+            &Connection::handle_recolor_cursor;
         table[opcode_index(CoreOpcode::CreateColormap)] =
             &Connection::handle_create_colormap;
         table[opcode_index(CoreOpcode::FreeColormap)] =

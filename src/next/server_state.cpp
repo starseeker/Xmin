@@ -9,7 +9,35 @@
 #include <utility>
 
 namespace xmin::next {
+
+struct ServerState::SurfaceBudget {
+    std::size_t bytes = 0;
+};
+
+struct ServerState::ManagedSurface {
+    ManagedSurface(Surface value, std::shared_ptr<SurfaceBudget> accounting)
+        : surface(std::move(value)), budget(std::move(accounting))
+    {}
+
+    ~ManagedSurface()
+    {
+        budget->bytes -= surface.storage_bytes();
+    }
+
+    Surface surface;
+    std::shared_ptr<SurfaceBudget> budget;
+};
+
 namespace {
+
+std::uint32_t
+pack_cursor_color(const RenderColor &color) noexcept
+{
+    return 0xff000000U |
+        (static_cast<std::uint32_t>(color.red >> 8) << 16) |
+        (static_cast<std::uint32_t>(color.green >> 8) << 8) |
+        static_cast<std::uint32_t>(color.blue >> 8);
+}
 
 bool
 overlaps(const PassiveGrab &grab, const PassiveGrabDomain &details,
@@ -176,6 +204,31 @@ sync_notification_eligible(const SyncWaitCondition &condition,
 
 } // namespace
 
+void
+CursorImage::recolor(RenderColor new_foreground,
+                     RenderColor new_background) noexcept
+{
+    foreground = new_foreground;
+    background = new_background;
+    if (pixel_roles.size() != pixels.size())
+        return;
+    const std::uint32_t foreground_pixel = pack_cursor_color(foreground);
+    const std::uint32_t background_pixel = pack_cursor_color(background);
+    for (std::size_t index = 0; index < pixels.size(); ++index) {
+        switch (pixel_roles[index]) {
+        case 1:
+            pixels[index] = background_pixel;
+            break;
+        case 2:
+            pixels[index] = foreground_pixel;
+            break;
+        default:
+            pixels[index] = 0;
+            break;
+        }
+    }
+}
+
 PassiveGrabDomain
 passive_grab_details(PassiveGrabKind kind, std::uint8_t detail) noexcept
 {
@@ -207,7 +260,8 @@ passive_grab_modifiers(std::uint16_t modifiers) noexcept
 
 ServerState::ServerState(std::uint16_t width, std::uint16_t height,
                          Clock &clock)
-    : width_(width), height_(height), clock_(clock)
+    : width_(width), height_(height),
+      surface_budget_(std::make_shared<SurfaceBudget>()), clock_(clock)
 {
     input_.pointer_x = width / 2;
     input_.pointer_y = height / 2;
@@ -217,12 +271,12 @@ ServerState::ServerState(std::uint16_t width, std::uint16_t height,
     root.width = width;
     root.height = height;
     root.mapped = true;
-    root.surface = Surface::create(width, height, 24);
-    composited_root_ = Surface::create(width, height, 24);
-    if (root.surface && composited_root_) {
-        surface_bytes_ = root.surface->storage_bytes() +
-            composited_root_->storage_bytes();
-    }
+    auto root_surface = Surface::create(width, height, 24);
+    auto composite_surface = Surface::create(width, height, 24);
+    if (root_surface)
+        root.surface = adopt_surface(std::move(*root_surface));
+    if (composite_surface)
+        composited_root_ = adopt_surface(std::move(*composite_surface));
     windows_.emplace(root.id, std::move(root));
     static_cast<void>(
         resources_.insert(root_window_id, ResourceKind::window, 0));
@@ -234,8 +288,7 @@ bool
 ServerState::valid() const noexcept
 {
     const auto *root = window(root_window_id);
-    return root != nullptr && root->surface.has_value() &&
-        composited_root_.has_value();
+    return root != nullptr && root->surface && composited_root_;
 }
 
 PassiveGrabUpdate
@@ -373,10 +426,8 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
 {
     if (window(added.parent) == nullptr || resource_exists(added.id))
         return false;
-    const std::size_t added_bytes = added.surface
-        ? added.surface->storage_bytes()
-        : 0;
-    if (surface_bytes_ > maximum_server_surface_bytes - added_bytes)
+    if (added.surface &&
+        surface_budget_->bytes > maximum_server_surface_bytes)
         return false;
     const std::uint32_t parent_id = added.parent;
     const std::uint32_t id = added.id;
@@ -389,9 +440,26 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
         return false;
     }
     window(parent_id)->children.push_back(id);
-    surface_bytes_ += added_bytes;
     invalidate_scene();
     return true;
+}
+
+std::shared_ptr<Surface>
+ServerState::adopt_surface(Surface surface)
+{
+    const std::size_t bytes = surface.storage_bytes();
+    if (surface_budget_->bytes > maximum_server_surface_bytes - bytes)
+        return {};
+    surface_budget_->bytes += bytes;
+    try {
+        auto allocation = std::make_shared<ManagedSurface>(
+            std::move(surface), surface_budget_);
+        return std::shared_ptr<Surface>(allocation, &allocation->surface);
+    }
+    catch (const std::bad_alloc &) {
+        surface_budget_->bytes -= bytes;
+        return {};
+    }
 }
 
 bool
@@ -409,11 +477,12 @@ ServerState::resize_window_surface(WindowRecord &candidate,
     if (!bytes || *bytes > maximum_surface_bytes)
         return false;
     const std::size_t old_bytes = candidate.surface->storage_bytes();
-    if (surface_bytes_ - old_bytes > maximum_server_surface_bytes - *bytes)
+    if (surface_budget_->bytes - old_bytes >
+        maximum_server_surface_bytes - *bytes)
         return false;
     if (!candidate.surface->resize(width, height))
         return false;
-    surface_bytes_ = surface_bytes_ - old_bytes + *bytes;
+    surface_budget_->bytes = surface_budget_->bytes - old_bytes + *bytes;
     invalidate_scene();
     return true;
 }
@@ -435,20 +504,17 @@ ServerState::pixmap(std::uint32_t id) const
 bool
 ServerState::add_pixmap(PixmapRecord added, std::uint32_t owner)
 {
-    if (resource_exists(added.id) ||
-        surface_bytes_ >
-            maximum_server_surface_bytes - added.surface.storage_bytes()) {
+    if (!added.surface || resource_exists(added.id) ||
+        surface_budget_->bytes > maximum_server_surface_bytes) {
         return false;
     }
     const std::uint32_t id = added.id;
-    const std::size_t bytes = added.surface.storage_bytes();
     if (!resources_.insert(id, ResourceKind::pixmap, owner))
         return false;
     if (!pixmaps_.emplace(id, std::move(added)).second) {
         static_cast<void>(resources_.erase(id));
         return false;
     }
-    surface_bytes_ += bytes;
     return true;
 }
 
@@ -458,7 +524,6 @@ ServerState::erase_pixmap(std::uint32_t id)
     const auto found = pixmaps_.find(id);
     if (found == pixmaps_.end())
         return false;
-    surface_bytes_ -= found->second.surface.storage_bytes();
     pixmaps_.erase(found);
     static_cast<void>(resources_.erase(id));
     return true;
@@ -535,9 +600,9 @@ Surface *
 ServerState::drawable_surface(std::uint32_t id)
 {
     if (auto *candidate = window(id))
-        return candidate->surface ? &*candidate->surface : nullptr;
+        return candidate->surface.get();
     if (auto *candidate = pixmap(id))
-        return &candidate->surface;
+        return candidate->surface.get();
     return nullptr;
 }
 
@@ -545,9 +610,9 @@ const Surface *
 ServerState::drawable_surface(std::uint32_t id) const
 {
     if (const auto *candidate = window(id))
-        return candidate->surface ? &*candidate->surface : nullptr;
+        return candidate->surface.get();
     if (const auto *candidate = pixmap(id))
-        return &candidate->surface;
+        return candidate->surface.get();
     return nullptr;
 }
 
@@ -558,13 +623,47 @@ ServerState::drawable_depth(std::uint32_t id) const
     return surface == nullptr ? 0 : surface->depth();
 }
 
+std::uint32_t
+ServerState::pointer_window() const noexcept
+{
+    return deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+}
+
+std::shared_ptr<CursorImage>
+ServerState::effective_cursor(std::uint32_t id) const noexcept
+{
+    for (const auto *candidate = window(id); candidate != nullptr;
+         candidate = window(candidate->parent)) {
+        if (candidate->cursor)
+            return candidate->cursor;
+    }
+    return {};
+}
+
+std::shared_ptr<CursorImage>
+ServerState::current_cursor() const noexcept
+{
+    const std::uint32_t pointer = pointer_window();
+    if (!input_.pointer_grab)
+        return effective_cursor(pointer);
+    if (input_.pointer_grab->cursor)
+        return input_.pointer_grab->cursor;
+    const std::uint32_t base =
+        pointer == input_.pointer_grab->window ||
+            is_descendant(pointer, input_.pointer_grab->window)
+        ? pointer
+        : input_.pointer_grab->window;
+    return effective_cursor(base);
+}
+
 Surface *
 ServerState::readable_surface(std::uint32_t id)
 {
     if (id != root_window_id)
         return drawable_surface(id);
     composite_scene();
-    return composited_root_ ? &*composited_root_ : nullptr;
+    return composited_root_.get();
 }
 
 EventDelivery
@@ -1216,24 +1315,53 @@ RenderPicture *
 ServerState::render_picture(std::uint32_t id)
 {
     const auto found = render_pictures_.find(id);
-    return found == render_pictures_.end() ? nullptr : &found->second;
+    return found == render_pictures_.end() ? nullptr : found->second.get();
 }
 
 const RenderPicture *
 ServerState::render_picture(std::uint32_t id) const
 {
     const auto found = render_pictures_.find(id);
-    return found == render_pictures_.end() ? nullptr : &found->second;
+    return found == render_pictures_.end() ? nullptr : found->second.get();
+}
+
+std::shared_ptr<RenderPicture>
+ServerState::render_picture_handle(std::uint32_t id) const
+{
+    const auto found = render_pictures_.find(id);
+    return found == render_pictures_.end()
+        ? std::shared_ptr<RenderPicture>{}
+        : found->second;
 }
 
 bool
 ServerState::add_render_picture(RenderPicture picture, std::uint32_t owner)
 {
     const std::uint32_t id = picture.id;
+    if (auto *drawable = std::get_if<RenderDrawableSource>(&picture.source)) {
+        if (const auto *candidate = window(drawable->drawable)) {
+            drawable->surface = candidate->surface;
+            drawable->pixmap = false;
+        }
+        else if (const auto *candidate = pixmap(drawable->drawable)) {
+            drawable->surface = candidate->surface;
+            drawable->pixmap = true;
+        }
+        if (!drawable->surface)
+            return false;
+    }
+    if (picture.attributes.alpha_map != 0 &&
+        !picture.attributes.alpha_map_picture) {
+        picture.attributes.alpha_map_picture =
+            render_picture_handle(picture.attributes.alpha_map);
+        if (!picture.attributes.alpha_map_picture)
+            return false;
+    }
     if (!resources_.insert(id, ResourceKind::render_picture, owner))
         return false;
     try {
-        if (!render_pictures_.emplace(id, std::move(picture)).second) {
+        auto stored = std::make_shared<RenderPicture>(std::move(picture));
+        if (!render_pictures_.emplace(id, std::move(stored)).second) {
             static_cast<void>(resources_.erase(id));
             return false;
         }
@@ -1251,10 +1379,6 @@ ServerState::erase_render_picture(std::uint32_t id)
     if (render_pictures_.erase(id) == 0)
         return false;
     static_cast<void>(resources_.erase(id));
-    for (auto &entry : render_pictures_) {
-        if (entry.second.attributes.alpha_map == id)
-            entry.second.attributes.alpha_map = 0;
-    }
     return true;
 }
 
@@ -1298,6 +1422,78 @@ bool
 ServerState::erase_render_glyph_set(std::uint32_t id)
 {
     if (render_glyph_sets_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+bool
+ServerState::render_glyph_storage_fits(
+    const RenderGlyphStorage &changed,
+    std::size_t changed_bytes) const noexcept
+{
+    std::size_t total = 0;
+    for (const auto &entry : render_glyph_sets_) {
+        if (!entry.second.storage)
+            continue;
+        const auto *storage = entry.second.storage.get();
+        bool counted = false;
+        for (const auto &other : render_glyph_sets_) {
+            if (other.first < entry.first &&
+                other.second.storage.get() == storage) {
+                counted = true;
+                break;
+            }
+        }
+        if (counted)
+            continue;
+        const std::size_t bytes = storage == &changed
+            ? changed_bytes
+            : storage->bytes;
+        if (bytes > maximum_server_render_glyph_bytes - total)
+            return false;
+        total += bytes;
+    }
+    return true;
+}
+
+CursorRecord *
+ServerState::cursor(std::uint32_t id)
+{
+    const auto found = cursors_.find(id);
+    return found == cursors_.end() ? nullptr : &found->second;
+}
+
+const CursorRecord *
+ServerState::cursor(std::uint32_t id) const
+{
+    const auto found = cursors_.find(id);
+    return found == cursors_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_cursor(CursorRecord cursor, std::uint32_t owner)
+{
+    const std::uint32_t id = cursor.id;
+    if (!cursor.image || !resources_.insert(id, ResourceKind::cursor, owner))
+        return false;
+    try {
+        if (!cursors_.emplace(id, std::move(cursor)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_cursor(std::uint32_t id)
+{
+    if (cursors_.erase(id) == 0)
         return false;
     static_cast<void>(resources_.erase(id));
     return true;
@@ -2623,7 +2819,7 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
                 passive.owner, passive.window, passive.confine_to,
                 current_time_, passive.event_mask, passive.pointer_mode,
                 passive.keyboard_mode, passive.owner_events, true,
-                grab_detail};
+                grab_detail, false, passive.cursor};
             grab = &*activated;
             break;
         }
@@ -2695,7 +2891,7 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
                 events[index].first, press->event, 0, current_time_,
                 selection->second, 1, 1,
                 (selection->second & (1U << 24)) != 0,
-                false, 0, true};
+                false, 0, true, {}};
             std::uint16_t state_after_press = state_before;
             if (detail <= 5) {
                 state_after_press |= static_cast<std::uint16_t>(
@@ -2899,8 +3095,19 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
     clear_selections_for_window(id);
     for (const auto &property : found->second.properties)
         property_bytes_ -= property.second.data.size();
-    if (found->second.surface)
-        surface_bytes_ -= found->second.surface->storage_bytes();
+    for (auto picture = render_pictures_.begin();
+         picture != render_pictures_.end();) {
+        const auto *drawable = std::get_if<RenderDrawableSource>(
+            &picture->second->source);
+        if (drawable != nullptr && !drawable->pixmap &&
+            drawable->drawable == id) {
+            static_cast<void>(resources_.erase(picture->first));
+            picture = render_pictures_.erase(picture);
+        }
+        else {
+            ++picture;
+        }
+    }
     if (auto *parent = window(parent_id)) {
         parent->children.erase(
             std::remove(parent->children.begin(), parent->children.end(), id),
@@ -3270,6 +3477,9 @@ ServerState::disconnect_client(std::uint32_t owner)
         resources_.owned_by(owner, ResourceKind::render_glyph_set);
     for (const auto id : glyph_sets)
         static_cast<void>(erase_render_glyph_set(id));
+    const auto cursors = resources_.owned_by(owner, ResourceKind::cursor);
+    for (const auto id : cursors)
+        static_cast<void>(erase_cursor(id));
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)

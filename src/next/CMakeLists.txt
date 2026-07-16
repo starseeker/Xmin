@@ -3,8 +3,10 @@ add_library(xmin_next_core STATIC
   clock.cpp
   color.cpp
   connection.cpp
+  cursor_protocol.cpp
   display_socket.cpp
   render.cpp
+  render_protocol.cpp
   region.cpp
   server.cpp
   server_state.cpp

@@ -2428,6 +2428,17 @@ test_render_engine()
     constexpr std::uint32_t clipped_picture = owner + 6;
     constexpr std::uint32_t glyph_set = owner + 7;
     constexpr std::uint32_t glyph_reference = owner + 8;
+    constexpr std::uint32_t alpha_user = owner + 9;
+    constexpr std::uint32_t linear_picture = owner + 10;
+    constexpr std::uint32_t radial_picture = owner + 11;
+    constexpr std::uint32_t conical_picture = owner + 12;
+    constexpr std::uint32_t binary_pixmap = owner + 13;
+    constexpr std::uint32_t binary_picture = owner + 14;
+    constexpr std::uint32_t white_picture = owner + 15;
+    constexpr std::uint32_t component_mask = owner + 16;
+    constexpr std::uint32_t color_pixmap = owner + 17;
+    constexpr std::uint32_t alpha_output_pixmap = owner + 18;
+    constexpr std::uint32_t alpha_output_picture = owner + 19;
     xmin::next::ServerState server(32, 24);
 
     if (!expect(xmin::next::render_formats().size() == 4 &&
@@ -2514,9 +2525,26 @@ test_render_engine()
 
     auto alpha_surface = xmin::next::Surface::create(7, 3, 8);
     if (!expect(alpha_surface.has_value(),
-                "RENDER A8 surface creation failed") ||
+                "RENDER A8 surface creation failed")) {
+        return false;
+    }
+
+    xmin::next::CursorImage cursor_image;
+    cursor_image.pixels = {0, 0, 0};
+    cursor_image.pixel_roles = {0, 1, 2};
+    cursor_image.recolor(
+        {0xffff, 0, 0, 0xffff}, {0, 0xffff, 0, 0xffff});
+    if (!expect(cursor_image.pixels[0] == 0 &&
+                    cursor_image.pixels[1] == 0xff00ff00U &&
+                    cursor_image.pixels[2] == 0xffff0000U,
+                "core cursor recoloring did not rewrite role pixels")) {
+        return false;
+    }
+    auto managed_alpha = server.adopt_surface(std::move(*alpha_surface));
+    if (!expect(managed_alpha != nullptr,
+                "RENDER A8 surface adoption failed") ||
         !expect(server.add_pixmap(
-                    {alpha_pixmap, std::move(*alpha_surface)}, owner),
+                    {alpha_pixmap, std::move(managed_alpha)}, owner),
                 "RENDER A8 pixmap insertion failed") ||
         !expect(server.add_render_picture(
                     {alpha_picture, xmin::next::render_a8_format,
@@ -2537,6 +2565,98 @@ test_render_engine()
         return false;
     }
 
+    xmin::next::RenderPictureAttributes alpha_attributes;
+    alpha_attributes.alpha_map = alpha_picture;
+    const auto *alpha_resource = server.render_picture(alpha_picture);
+    const auto *alpha_drawable = alpha_resource == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RenderDrawableSource>(
+              &alpha_resource->source);
+    auto color_surface = xmin::next::Surface::create(7, 3, 32);
+    if (!expect(color_surface.has_value(),
+                "RENDER alpha-mapped color surface creation failed")) {
+        return false;
+    }
+    color_surface->fill(
+        {0, 0, 7, 3}, 0xff0000ffU, 3, 0xffffffffU);
+    auto managed_color = server.adopt_surface(std::move(*color_surface));
+    auto output_surface = xmin::next::Surface::create(7, 3, 32);
+    if (!expect(output_surface.has_value(),
+                "RENDER alpha output surface creation failed")) {
+        return false;
+    }
+    auto managed_output = server.adopt_surface(std::move(*output_surface));
+    if (!expect(alpha_drawable != nullptr && alpha_drawable->pixmap,
+                "RENDER alpha picture did not retain pixmap identity") ||
+        !expect(managed_color != nullptr &&
+                    server.add_pixmap(
+                        {color_pixmap, std::move(managed_color)}, owner),
+                "RENDER alpha-mapped color pixmap insertion failed") ||
+        !expect(managed_output != nullptr &&
+                    server.add_pixmap(
+                        {alpha_output_pixmap, std::move(managed_output)},
+                        owner),
+                "RENDER alpha output pixmap insertion failed") ||
+        !expect(server.add_render_picture(
+                    {alpha_output_picture,
+                     xmin::next::render_argb32_format,
+                     xmin::next::RenderDrawableSource{alpha_output_pixmap},
+                     {}},
+                    owner),
+                "RENDER alpha output picture insertion failed") ||
+        !expect(server.add_render_picture(
+                    {alpha_user, xmin::next::render_argb32_format,
+                     xmin::next::RenderDrawableSource{color_pixmap},
+                     std::move(alpha_attributes)},
+                    owner),
+                "RENDER alpha-map user insertion failed")) {
+        return false;
+    }
+    const auto retained_alpha =
+        server.render_picture(alpha_user)->attributes.alpha_map_picture;
+    if (!expect(retained_alpha != nullptr,
+                "RENDER alpha-map reference was not retained")) {
+        return false;
+    }
+    const auto *retained_source = std::get_if<
+        xmin::next::RenderDrawableSource>(&retained_alpha->source);
+    if (!expect(retained_source != nullptr,
+                "RENDER retained alpha map lost its drawable")) {
+        return false;
+    }
+    const auto retained_surface = retained_source->surface;
+    const xmin::next::RenderTrap alpha_trap{
+        {1 * 65536, 5 * 65536, 0 * 65536},
+        {1 * 65536, 5 * 65536, 1 * 65536}};
+    if (!expect(render.add_traps(alpha_picture, 0, 0, {alpha_trap}) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER AddTraps rasterization failed") ||
+        !expect(retained_surface->pixel(2, 0) != 0,
+                "RENDER AddTraps produced no coverage") ||
+        !expect(server.erase_render_picture(alpha_picture),
+                "RENDER alpha-map public resource removal failed") ||
+        !expect(server.erase_pixmap(alpha_pixmap),
+                "RENDER drawable public resource removal failed") ||
+        !expect(server.render_picture(alpha_picture) == nullptr &&
+                    server.pixmap(alpha_pixmap) == nullptr,
+                "RENDER freed IDs remained public") ||
+        !expect(retained_surface != nullptr,
+                "RENDER references did not retain their resources") ||
+        !expect(render.composite(
+                    1, alpha_user, 0, alpha_output_picture,
+                    0, 0, 0, 0, 0, 0, 7, 3) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER retained alpha map was unusable") ||
+        !expect((server.drawable_surface(alpha_output_pixmap)->pixel(0, 1) >>
+                     24) == 0 &&
+                    (server.drawable_surface(alpha_output_pixmap)->pixel(
+                         3, 1) >> 24) >= 0x7f &&
+                    (server.drawable_surface(alpha_output_pixmap)->pixel(
+                         3, 1) >> 24) <= 0x81,
+                "RENDER alpha-map sampling produced wrong coverage")) {
+        return false;
+    }
+
     const xmin::next::RenderTrapezoid trapezoid{
         2 * 65536, 14 * 65536,
         {{4 * 65536, 2 * 65536}, {4 * 65536, 14 * 65536}},
@@ -2553,6 +2673,141 @@ test_render_engine()
         !expect((root->pixel(8, 8) & 0x00ffffffU) == 0x000000ffU &&
                     (root->pixel(20, 8) & 0x00ffffffU) == 0,
                 "RENDER trapezoid coverage is wrong")) {
+        return false;
+    }
+
+    const std::vector<xmin::next::RenderGradientStop> gradient_stops{
+        {0, {0xffff, 0, 0, 0xffff}},
+        {65536, {0, 0, 0xffff, 0xffff}}};
+    if (!expect(server.add_render_picture(
+                    {linear_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderLinearGradient{
+                         {0, 0}, {32 * 65536, 0}, gradient_stops}, {}},
+                    owner),
+                "RENDER linear gradient insertion failed") ||
+        !expect(render.composite(
+                    1, linear_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER linear gradient composite failed")) {
+        return false;
+    }
+    const std::uint32_t linear_left = root->pixel(1, 12);
+    const std::uint32_t linear_right = root->pixel(30, 12);
+    auto *linear_resource = server.render_picture(linear_picture);
+    linear_resource->attributes.transform[2] = 8 * 65536;
+    linear_resource->attributes.filter = xmin::next::RenderFilter::bilinear;
+    if (!expect(((linear_left >> 16) & 0xffU) > (linear_left & 0xffU) &&
+                    (linear_right & 0xffU) >
+                        ((linear_right >> 16) & 0xffU),
+                "RENDER linear gradient samples are wrong") ||
+        !expect(render.composite(
+                    1, linear_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER transformed bilinear gradient failed") ||
+        !expect((root->pixel(1, 12) & 0xffU) > (linear_left & 0xffU),
+                "RENDER picture transform did not shift sampling")) {
+        return false;
+    }
+    linear_resource->attributes.transform[2] = 0;
+    linear_resource->attributes.repeat = xmin::next::RenderRepeat::normal;
+    std::get<xmin::next::RenderLinearGradient>(
+        linear_resource->source).p2.x = 8 * 65536;
+    if (!expect(render.composite(
+                    1, linear_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER repeated gradient failed") ||
+        !expect(root->pixel(1, 12) == root->pixel(9, 12),
+                "RENDER normal repeat did not tile")) {
+        return false;
+    }
+
+    if (!expect(server.add_render_picture(
+                    {radial_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderRadialGradient{
+                         {16 * 65536, 12 * 65536},
+                         {16 * 65536, 12 * 65536}, 0, 16 * 65536,
+                         gradient_stops}, {}},
+                    owner),
+                "RENDER radial gradient insertion failed") ||
+        !expect(render.composite(
+                    1, radial_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER radial gradient composite failed") ||
+        !expect(root->pixel(16, 12) != root->pixel(30, 12),
+                "RENDER radial gradient produced a flat image") ||
+        !expect(server.add_render_picture(
+                    {conical_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderConicalGradient{
+                         {16 * 65536, 12 * 65536}, 0, gradient_stops}, {}},
+                    owner),
+                "RENDER conical gradient insertion failed") ||
+        !expect(render.composite(
+                    1, conical_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER conical gradient composite failed") ||
+        !expect(root->pixel(24, 12) != root->pixel(8, 12),
+                "RENDER conical gradient produced a flat image")) {
+        return false;
+    }
+
+    xmin::next::RenderPictureAttributes component_attributes;
+    component_attributes.component_alpha = true;
+    if (!expect(server.add_render_picture(
+                    {white_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderSolidSource{
+                         {0xffff, 0xffff, 0xffff, 0xffff}}, {}},
+                    owner),
+                "RENDER component-alpha source insertion failed") ||
+        !expect(server.add_render_picture(
+                    {component_mask, xmin::next::render_argb32_format,
+                     xmin::next::RenderSolidSource{
+                         {0xffff, 0, 0, 0xffff}},
+                     std::move(component_attributes)},
+                    owner),
+                "RENDER component-alpha mask insertion failed") ||
+        !expect(render.fill_rectangles(
+                    1, destination_picture, {0, 0, 0, 0xffff},
+                    {{0, 0, 32, 24}}) == xmin::next::RenderStatus::success,
+                "RENDER component-alpha background clear failed") ||
+        !expect(render.composite(
+                    3, white_picture, component_mask, destination_picture,
+                    0, 0, 0, 0, 0, 0, 1, 1) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER component-alpha composite failed") ||
+        !expect((root->pixel(0, 0) & 0x00ffffffU) == 0x00ff0000U,
+                "RENDER component-alpha channels were not independent")) {
+        return false;
+    }
+
+    auto binary_surface = xmin::next::Surface::create(5, 1, 1);
+    if (!expect(binary_surface.has_value(),
+                "RENDER A1 surface creation failed")) {
+        return false;
+    }
+    auto managed_binary = server.adopt_surface(std::move(*binary_surface));
+    if (!expect(managed_binary != nullptr &&
+                    server.add_pixmap(
+                        {binary_pixmap, std::move(managed_binary)}, owner),
+                "RENDER A1 pixmap insertion failed") ||
+        !expect(server.add_render_picture(
+                    {binary_picture, xmin::next::render_a1_format,
+                     xmin::next::RenderDrawableSource{binary_pixmap}, {}},
+                    owner),
+                "RENDER A1 picture insertion failed") ||
+        !expect(render.fill_rectangles(
+                    1, binary_picture, {0, 0, 0, 0xffff},
+                    {{1, 0, 3, 1}}) == xmin::next::RenderStatus::success,
+                "RENDER native A1 write failed") ||
+        !expect(server.drawable_surface(binary_pixmap)->pixel(0, 0) == 0 &&
+                    server.drawable_surface(binary_pixmap)->pixel(1, 0) == 1 &&
+                    server.drawable_surface(binary_pixmap)->pixel(3, 0) == 1 &&
+                    server.drawable_surface(binary_pixmap)->pixel(4, 0) == 0,
+                "RENDER native A1 layout or write-back is wrong")) {
         return false;
     }
 
@@ -2609,7 +2864,7 @@ test_scene_composition()
     parent.border_width = 1;
     parent.border_pixel = 0x00ff0000U;
     parent.mapped = true;
-    parent.surface = std::move(*parent_surface);
+    parent.surface = server.adopt_surface(std::move(*parent_surface));
     xmin::next::WindowRecord child;
     child.id = owner + 1;
     child.parent = owner;
@@ -2618,7 +2873,7 @@ test_scene_composition()
     child.width = 4;
     child.height = 4;
     child.mapped = true;
-    child.surface = std::move(*child_surface);
+    child.surface = server.adopt_surface(std::move(*child_surface));
     if (!expect(server.add_window(std::move(parent), owner),
                 "scene parent insertion failed") ||
         !expect(server.add_window(std::move(child), owner),
