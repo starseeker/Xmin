@@ -2,11 +2,14 @@
 #define XMIN_NEXT_SERVER_STATE_HPP
 
 #include "xmin/next/atom_table.hpp"
+#include "xmin/next/client_event.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/surface.hpp"
 
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <optional>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -21,6 +24,8 @@ constexpr std::size_t maximum_client_resources = 4096;
 constexpr std::size_t maximum_server_resources = 65536;
 constexpr std::size_t maximum_property_bytes = 1024U * 1024U;
 constexpr std::size_t maximum_server_property_bytes = 16U * 1024U * 1024U;
+constexpr std::size_t maximum_pending_events_per_client = 256;
+constexpr std::size_t maximum_pending_events = 4096;
 
 enum class WindowClass : std::uint16_t {
     input_output = 1,
@@ -35,6 +40,7 @@ struct PropertyValue {
 
 struct WindowRecord {
     std::uint32_t id = 0;
+    std::uint32_t owner = 0;
     std::uint32_t parent = 0;
     std::vector<std::uint32_t> children;
     std::unordered_map<std::uint32_t, std::uint32_t> event_masks;
@@ -76,6 +82,24 @@ struct GraphicsContextRecord {
     std::uint32_t background = 1;
 };
 
+struct SelectionRecord {
+    std::uint32_t window = 0;
+    std::uint32_t client = 0;
+    std::uint32_t changed_at = 0;
+};
+
+enum class SelectionUpdate {
+    updated,
+    ignored,
+    event_queue_full,
+};
+
+enum class EventDelivery {
+    delivered,
+    no_recipient,
+    queue_full,
+};
+
 class ServerState {
 public:
     ServerState(std::uint16_t width, std::uint16_t height);
@@ -110,6 +134,21 @@ public:
     [[nodiscard]] Surface *drawable_surface(std::uint32_t id);
     [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
     [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
+    void advance_time() noexcept;
+    [[nodiscard]] std::uint32_t current_time() const noexcept
+    {
+        return current_time_;
+    }
+    [[nodiscard]] std::uint32_t selection_owner(AtomId selection) const;
+    [[nodiscard]] SelectionUpdate set_selection_owner(
+        AtomId selection, std::uint32_t window, std::uint32_t client,
+        std::uint32_t time);
+    [[nodiscard]] EventDelivery deliver_client_message(
+        std::uint32_t destination, std::uint32_t event_mask, bool propagate,
+        const ClientMessageEvent &event);
+    [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
+    [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
+    void pop_event(std::uint32_t client);
     [[nodiscard]] bool set_property(WindowRecord &window, AtomId property,
                                     PropertyValue value);
     void delete_property(WindowRecord &window, AtomId property);
@@ -127,10 +166,18 @@ private:
     std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
+    std::unordered_map<AtomId, SelectionRecord> selections_;
+    std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
     std::uint16_t width_;
     std::uint16_t height_;
     std::size_t property_bytes_ = 0;
     std::size_t surface_bytes_ = 0;
+    std::size_t pending_events_ = 0;
+    std::uint32_t current_time_ = 1;
+
+    [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
+    [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
+    void clear_selections_for_window(std::uint32_t window);
 };
 
 } // namespace xmin::next

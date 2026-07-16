@@ -113,7 +113,12 @@ canonical 8/16/32-bit storage across clients of opposite byte order.  A bounded
 four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, and host-image-order ZPixmap readback.  Its deliberately small
-request implementation is still a migration target;
+request implementation now also keeps timestamped selection ownership and bounded
+recipient-neutral event queues in shared state, encoding selection-clear and synthetic
+client-message events in each recipient's byte order.  The fixed TrueColor colormap
+supports compact named/hexadecimal allocation and pixel queries.  An independent host-XCB
+oracle passes this complete core slice against both servers.  The remaining core surface
+is still a migration target;
 the Xorg-backed `Xmin` remains the feature-complete server and differential oracle.
 
 With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer

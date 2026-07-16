@@ -65,6 +65,9 @@ private:
     void consume_input(std::size_t size);
     void close_after_output() noexcept;
     Result<void> queue(const std::vector<std::uint8_t> &bytes);
+    Result<void> drain_pending_events();
+    [[nodiscard]] std::vector<std::uint8_t>
+    encode_event(const ClientEvent &event) const;
     Result<void> send_setup_failure(ByteOrder order, std::string reason);
     Result<void> send_setup_success(ByteOrder order);
     Result<void> dispatch(const RequestContext &context);
@@ -82,6 +85,9 @@ private:
     Result<void> handle_delete_property(const RequestContext &context);
     Result<void> handle_get_property(const RequestContext &context);
     Result<void> handle_list_properties(const RequestContext &context);
+    Result<void> handle_set_selection_owner(const RequestContext &context);
+    Result<void> handle_get_selection_owner(const RequestContext &context);
+    Result<void> handle_send_event(const RequestContext &context);
     Result<void> handle_translate_coordinates(const RequestContext &context);
     Result<void> handle_create_pixmap(const RequestContext &context);
     Result<void> handle_free_pixmap(const RequestContext &context);
@@ -91,6 +97,8 @@ private:
     Result<void> handle_copy_area(const RequestContext &context);
     Result<void> handle_fill_rectangles(const RequestContext &context);
     Result<void> handle_get_image(const RequestContext &context);
+    Result<void> handle_alloc_named_color(const RequestContext &context);
+    Result<void> handle_query_colors(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);

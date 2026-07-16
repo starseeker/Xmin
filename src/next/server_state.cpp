@@ -3,6 +3,7 @@
 #include "xmin/next/checked.hpp"
 
 #include <algorithm>
+#include <new>
 #include <utility>
 
 namespace xmin::next {
@@ -77,6 +78,7 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
         return false;
     const std::uint32_t parent_id = added.parent;
     const std::uint32_t id = added.id;
+    added.owner = owner;
     if (!resources_.insert(id, ResourceKind::window, owner))
         return false;
     auto inserted = windows_.emplace(id, std::move(added));
@@ -225,6 +227,171 @@ ServerState::drawable_depth(std::uint32_t id) const
     return surface == nullptr ? 0 : surface->depth();
 }
 
+void
+ServerState::advance_time() noexcept
+{
+    ++current_time_;
+    if (current_time_ == 0)
+        current_time_ = 1;
+}
+
+std::uint32_t
+ServerState::selection_owner(AtomId selection) const
+{
+    const auto found = selections_.find(selection);
+    return found == selections_.end() ? 0 : found->second.window;
+}
+
+bool
+ServerState::can_queue_event(std::uint32_t client) const
+{
+    if (client == 0 || pending_events_ >= maximum_pending_events)
+        return false;
+    const auto found = event_queues_.find(client);
+    return found == event_queues_.end() ||
+        found->second.size() < maximum_pending_events_per_client;
+}
+
+bool
+ServerState::queue_event(std::uint32_t client, ClientEvent event)
+{
+    if (!can_queue_event(client))
+        return false;
+    try {
+        event_queues_[client].push_back(std::move(event));
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    ++pending_events_;
+    return true;
+}
+
+SelectionUpdate
+ServerState::set_selection_owner(AtomId selection, std::uint32_t window_id,
+                                 std::uint32_t client, std::uint32_t time)
+{
+    const std::uint32_t effective_time = time == 0 ? current_time_ : time;
+    const auto later_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) > 0;
+    };
+    const auto earlier_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) < 0;
+    };
+    if (later_than(effective_time, current_time_))
+        return SelectionUpdate::ignored;
+
+    auto found = selections_.find(selection);
+    if (found != selections_.end() &&
+        earlier_than(effective_time, found->second.changed_at)) {
+        return SelectionUpdate::ignored;
+    }
+
+    const bool clear_previous = found != selections_.end() &&
+        found->second.window != 0 &&
+        (window_id == 0 || found->second.client != client);
+    if (clear_previous && !can_queue_event(found->second.client))
+        return SelectionUpdate::event_queue_full;
+
+    if (found == selections_.end()) {
+        try {
+            found = selections_.emplace(selection, SelectionRecord{}).first;
+        }
+        catch (const std::bad_alloc &) {
+            return SelectionUpdate::event_queue_full;
+        }
+    }
+    const SelectionRecord previous = found->second;
+    found->second = SelectionRecord{
+        window_id, window_id == 0 ? 0 : client, effective_time};
+    if (clear_previous) {
+        const SelectionClearEvent event{
+            effective_time, previous.window, selection};
+        if (!queue_event(previous.client, event)) {
+            found->second = previous;
+            return SelectionUpdate::event_queue_full;
+        }
+    }
+    return SelectionUpdate::updated;
+}
+
+EventDelivery
+ServerState::deliver_client_message(std::uint32_t destination,
+                                    std::uint32_t event_mask,
+                                    bool propagate,
+                                    const ClientMessageEvent &event)
+{
+    auto *candidate = window(destination);
+    while (candidate != nullptr) {
+        std::vector<std::uint32_t> recipients;
+        try {
+            if (event_mask == 0) {
+                if (candidate->owner != 0)
+                    recipients.push_back(candidate->owner);
+            }
+            else {
+                for (const auto &selection : candidate->event_masks) {
+                    if ((selection.second & event_mask) != 0)
+                        recipients.push_back(selection.first);
+                }
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+
+        if (!recipients.empty()) {
+            if (pending_events_ > maximum_pending_events - recipients.size())
+                return EventDelivery::queue_full;
+            for (const auto recipient : recipients) {
+                if (!can_queue_event(recipient))
+                    return EventDelivery::queue_full;
+            }
+            for (const auto recipient : recipients) {
+                if (!queue_event(recipient, event))
+                    return EventDelivery::queue_full;
+            }
+            return EventDelivery::delivered;
+        }
+
+        if (!propagate || candidate->parent == 0 || event_mask == 0)
+            break;
+        event_mask &= ~candidate->do_not_propagate_mask;
+        if (event_mask == 0)
+            break;
+        candidate = window(candidate->parent);
+    }
+    return EventDelivery::no_recipient;
+}
+
+bool
+ServerState::has_pending_event(std::uint32_t client) const
+{
+    const auto found = event_queues_.find(client);
+    return found != event_queues_.end() && !found->second.empty();
+}
+
+const ClientEvent *
+ServerState::next_event(std::uint32_t client) const
+{
+    const auto found = event_queues_.find(client);
+    return found == event_queues_.end() || found->second.empty()
+        ? nullptr
+        : &found->second.front();
+}
+
+void
+ServerState::pop_event(std::uint32_t client)
+{
+    const auto found = event_queues_.find(client);
+    if (found == event_queues_.end() || found->second.empty())
+        return;
+    found->second.pop_front();
+    --pending_events_;
+    if (found->second.empty())
+        event_queues_.erase(found);
+}
+
 bool
 ServerState::set_property(WindowRecord &candidate, AtomId property,
                           PropertyValue value)
@@ -268,6 +435,7 @@ ServerState::destroy_window(std::uint32_t id)
         destroy_window(child);
 
     const std::uint32_t parent_id = found->second.parent;
+    clear_selections_for_window(id);
     for (const auto &property : found->second.properties)
         property_bytes_ -= property.second.data.size();
     if (found->second.surface)
@@ -282,8 +450,34 @@ ServerState::destroy_window(std::uint32_t id)
 }
 
 void
+ServerState::clear_selections_for_window(std::uint32_t window_id)
+{
+    for (auto &selection : selections_) {
+        if (selection.second.window == window_id) {
+            selection.second.window = 0;
+            selection.second.client = 0;
+            selection.second.changed_at = current_time_;
+        }
+    }
+}
+
+void
 ServerState::disconnect_client(std::uint32_t owner)
 {
+    for (auto &window_entry : windows_)
+        window_entry.second.event_masks.erase(owner);
+    for (auto &selection : selections_) {
+        if (selection.second.client == owner) {
+            selection.second.window = 0;
+            selection.second.client = 0;
+            selection.second.changed_at = current_time_;
+        }
+    }
+    const auto queued = event_queues_.find(owner);
+    if (queued != event_queues_.end()) {
+        pending_events_ -= queued->second.size();
+        event_queues_.erase(queued);
+    }
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)

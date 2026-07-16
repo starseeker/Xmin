@@ -1,5 +1,6 @@
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/checked.hpp"
+#include "xmin/next/color.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/result.hpp"
@@ -14,6 +15,7 @@
 #include <iostream>
 #include <limits>
 #include <string>
+#include <variant>
 #include <unistd.h>
 
 namespace {
@@ -167,13 +169,92 @@ test_shared_server_state()
                 "root child relationship is wrong")) {
         return false;
     }
+
+    const auto selection = server.atoms().intern("XMIN_SELECTION");
+    server.advance_time();
+    if (!expect(server.set_selection_owner(
+                    selection, first_owner, first_owner, 0) ==
+                    xmin::next::SelectionUpdate::updated,
+                "initial selection ownership failed") ||
+        !expect(server.selection_owner(selection) == first_owner,
+                "selection owner lookup failed")) {
+        return false;
+    }
+
+    xmin::next::ClientMessageEvent message;
+    message.format = 32;
+    message.window = first_owner;
+    message.type = selection;
+    message.data[0] = 0x584d494eU;
+    if (!expect(server.deliver_client_message(
+                    first_owner, 0, false, message) ==
+                    xmin::next::EventDelivery::delivered,
+                "creator-targeted client event was not delivered")) {
+        return false;
+    }
+    const auto *queued = server.next_event(first_owner);
+    const auto *queued_message = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::ClientMessageEvent>(queued);
+    if (!expect(queued_message != nullptr &&
+                    queued_message->data[0] == 0x584d494eU,
+                "queued client event lost semantic data")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+
+    server.advance_time();
+    if (!expect(server.set_selection_owner(
+                    selection, second_owner, second_owner, 0) ==
+                    xmin::next::SelectionUpdate::updated,
+                "selection ownership transfer failed")) {
+        return false;
+    }
+    const auto *selection_event = server.next_event(first_owner);
+    if (!expect(selection_event != nullptr &&
+                    std::holds_alternative<xmin::next::SelectionClearEvent>(
+                        *selection_event),
+                "selection transfer did not notify the previous owner")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    server.window(xmin::next::root_window_id)
+        ->event_masks.emplace(first_owner, 1);
     server.disconnect_client(first_owner);
     return expect(server.window(first_owner) == nullptr,
                   "owner disconnect retained its window") &&
         expect(server.window(second_owner) == nullptr,
                "parent teardown retained a foreign child") &&
         expect(server.window(xmin::next::root_window_id)->children.empty(),
-               "root retained a destroyed child");
+               "root retained a destroyed child") &&
+        expect(server.selection_owner(selection) == 0,
+               "destroyed selection window remained the owner") &&
+        expect(server.window(xmin::next::root_window_id)
+                       ->event_masks.count(first_owner) == 0,
+               "disconnect retained an event selection");
+}
+
+bool
+test_true_color()
+{
+    const auto red = xmin::next::parse_color("Red");
+    const auto compact = xmin::next::parse_color("#0f8");
+    const auto precise = xmin::next::parse_color("#123456789abc");
+    return expect(red && red->red == 0xffff && red->green == 0 &&
+                      red->blue == 0,
+                  "named color parsing failed") &&
+        expect(compact && compact->red == 0 && compact->green == 0xffff &&
+                      compact->blue == 0x8888,
+               "compact hexadecimal color parsing failed") &&
+        expect(precise && precise->red == 0x1234 &&
+                      precise->green == 0x5678 && precise->blue == 0x9abc,
+               "precise hexadecimal color parsing failed") &&
+        expect(!xmin::next::parse_color("not-a-color"),
+               "invalid color name was accepted") &&
+        expect(xmin::next::true_color_pixel(*red) == 0x00ff0000U,
+               "TrueColor pixel packing failed") &&
+        expect(xmin::next::true_color_rgb(0x00123456U).green == 0x3434,
+               "TrueColor pixel query failed");
 }
 
 bool
@@ -227,8 +308,8 @@ main()
             test_wire_order(xmin::next::ByteOrder::little) &&
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
-            test_shared_server_state() && test_surface_raster_and_overlap() &&
-            test_result()
+            test_shared_server_state() && test_true_color() &&
+            test_surface_raster_and_overlap() && test_result()
         ? 0
         : 1;
 }

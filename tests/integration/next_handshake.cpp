@@ -382,6 +382,70 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    request.assign(16, 0);
+    request[0] = 22; // SetSelectionOwner
+    put16(request, 2, 4, little);
+    put32(request, 4, child, little);
+    put32(request, 8, atom, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 23; // GetSelectionOwner
+    put16(request, 2, 2, little);
+    put32(request, 4, atom, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 20 ||
+        get32(reply, 8, little) != child) {
+        return false;
+    }
+
+    constexpr std::string_view color_name = "red";
+    request.assign(16, 0);
+    request[0] = 85; // AllocNamedColor
+    put16(request, 2, 4, little);
+    put32(request, 4, 2, little); // default colormap
+    put16(request, 8, static_cast<std::uint16_t>(color_name.size()), little);
+    std::memcpy(request.data() + 12, color_name.data(), color_name.size());
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 21 ||
+        get32(reply, 8, little) != 0x00ff0000U ||
+        get16(reply, 12, little) != 0xffff ||
+        get16(reply, 14, little) != 0 || get16(reply, 16, little) != 0) {
+        return false;
+    }
+    const auto red_pixel = get32(reply, 8, little);
+
+    request.assign(12, 0);
+    request[0] = 91; // QueryColors
+    put16(request, 2, 3, little);
+    put32(request, 4, 2, little);
+    put32(request, 8, red_pixel, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 40 ||
+        reply[0] != 1 || get16(reply, 2, little) != 22 ||
+        get16(reply, 8, little) != 1 || get16(reply, 32, little) != 0xffff ||
+        get16(reply, 34, little) != 0 || get16(reply, 36, little) != 0) {
+        return false;
+    }
+
+    request.assign(44, 0);
+    request[0] = 25; // SendEvent
+    put16(request, 2, 11, little);
+    put32(request, 4, child, little);
+    request[12] = 33; // ClientMessage
+    request[13] = 32;
+    put32(request, 16, child, little);
+    put32(request, 20, atom, little);
+    put32(request, 24, 0x584d494eU, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != (33 | 0x80U) || reply[1] != 32 ||
+        get16(reply, 2, little) != 23 || get32(reply, 4, little) != child ||
+        get32(reply, 8, little) != atom ||
+        get32(reply, 12, little) != 0x584d494eU) {
+        return false;
+    }
+
     request.assign(8, 0);
     request[0] = 4; // DestroyWindow
     put16(request, 2, 2, little);
@@ -391,7 +455,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[0] = 15; // QueryTree(destroyed child)
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 3 ||
-        get16(reply, 2, little) != 20 || get32(reply, 4, little) != child) {
+        get16(reply, 2, little) != 25 || get32(reply, 4, little) != child) {
         return false;
     }
 
@@ -404,7 +468,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[0] = 43; // GetInputFocus proves recovery
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 1 || get16(reply, 2, little) != 22 ||
+        reply[0] != 1 || get16(reply, 2, little) != 27 ||
         get32(reply, 8, little) != root_window) {
         return false;
     }
@@ -433,7 +497,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 40 ||
         reply[0] != 1 || reply[1] != 32 ||
-        get16(reply, 2, little) != 24 || get32(reply, 8, little) != 19 ||
+        get16(reply, 2, little) != 29 || get32(reply, 8, little) != 19 ||
         get32(reply, 12, little) != 0 || get32(reply, 16, little) != 2 ||
         get32(reply, 32, little) != 0x11223344U ||
         get32(reply, 36, little) != 0xaabbccddU) {
@@ -463,7 +527,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 20, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
-        get16(reply, 2, little) != 26 || get32(reply, 12, little) != 4 ||
+        get16(reply, 2, little) != 31 || get32(reply, 12, little) != 4 ||
         get32(reply, 16, little) != 1 ||
         get32(reply, 32, little) != 0x11223344U) {
         return false;
@@ -475,7 +539,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
-        get16(reply, 2, little) != 27 || get16(reply, 8, little) != 1 ||
+        get16(reply, 2, little) != 32 || get16(reply, 8, little) != 1 ||
         get32(reply, 32, little) != atom) {
         return false;
     }
@@ -498,7 +562,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 32 ||
         reply[0] != 1 || reply[1] != 0 ||
-        get16(reply, 2, little) != 29 || get32(reply, 8, little) != 0) {
+        get16(reply, 2, little) != 34 || get32(reply, 8, little) != 0) {
         return false;
     }
 
@@ -558,7 +622,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
         reply[0] != 1 || reply[1] != 24 ||
-        get16(reply, 2, little) != 34 ||
+        get16(reply, 2, little) != 39 ||
         get32(reply, 32, image_little) != 0x0000ff00U) {
         return false;
     }
@@ -577,7 +641,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 37;
+        reply[0] == 1 && get16(reply, 2, little) == 42;
 }
 
 bool

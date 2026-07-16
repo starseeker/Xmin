@@ -1,6 +1,7 @@
 #include "xmin/next/connection.hpp"
 
 #include "xmin/next/checked.hpp"
+#include "xmin/next/color.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
 
 #include <array>
@@ -39,6 +40,7 @@ enum : std::uint8_t {
     bad_colormap = 12,
     bad_graphics_context = 13,
     bad_id_choice = 14,
+    bad_name = 15,
     bad_length = 16,
 };
 
@@ -197,6 +199,10 @@ Connection::poll_events() const noexcept
         events |= POLLIN;
     if (output_offset_ < output_.size())
         events |= POLLOUT;
+    if (!close_after_output_ && state_ == State::requests && order_ &&
+        server_.has_pending_event(config_.resource_base)) {
+        events |= POLLOUT;
+    }
     return events;
 }
 
@@ -238,6 +244,56 @@ Connection::queue(const std::vector<std::uint8_t> &bytes)
             ErrorCode::io, "connection output buffer limit exceeded");
     }
     output_.insert(output_.end(), bytes.begin(), bytes.end());
+    return Result<void>::success();
+}
+
+std::vector<std::uint8_t>
+Connection::encode_event(const ClientEvent &event) const
+{
+    if (!order_)
+        return {};
+    WireWriter writer(*order_);
+    if (const auto *clear = std::get_if<SelectionClearEvent>(&event)) {
+        writer.u8(29); // SelectionClear
+        writer.u8(0);
+        writer.u16(sequence_);
+        writer.u32(clear->time);
+        writer.u32(clear->window);
+        writer.u32(clear->selection);
+        writer.pad(16);
+        return writer.data();
+    }
+
+    const auto &message = std::get<ClientMessageEvent>(event);
+    writer.u8(33 | 0x80U); // synthetic ClientMessage
+    writer.u8(message.format);
+    writer.u16(sequence_);
+    writer.u32(message.window);
+    writer.u32(message.type);
+    const std::size_t count = 160U / message.format;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (message.format == 8)
+            writer.u8(static_cast<std::uint8_t>(message.data[index]));
+        else if (message.format == 16)
+            writer.u16(static_cast<std::uint16_t>(message.data[index]));
+        else
+            writer.u32(message.data[index]);
+    }
+    return writer.data();
+}
+
+Result<void>
+Connection::drain_pending_events()
+{
+    while (const auto *event = server_.next_event(config_.resource_base)) {
+        const auto encoded = encode_event(*event);
+        if (encoded.size() != 32)
+            return malformed("invalid queued client event");
+        auto queued = queue(encoded);
+        if (!queued)
+            return queued;
+        server_.pop_event(config_.resource_base);
+    }
     return Result<void>::success();
 }
 
@@ -1260,6 +1316,129 @@ Connection::handle_list_properties(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_set_selection_owner(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto owner = reader.u32();
+    const auto selection = reader.u32();
+    const auto time = reader.u32();
+    if (!owner || !selection || !time)
+        return malformed("truncated SetSelectionOwner request");
+    if (*owner != 0 && server_.window(*owner) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *owner);
+    if (!server_.atoms().name(*selection))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *selection);
+
+    const auto updated = server_.set_selection_owner(
+        *selection, *owner, config_.resource_base, *time);
+    if (updated == SelectionUpdate::event_queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_get_selection_owner(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto selection = reader.u32();
+    if (!selection)
+        return malformed("truncated GetSelectionOwner request");
+    if (!server_.atoms().name(*selection))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *selection);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(server_.selection_owner(*selection));
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_send_event(const RequestContext &context)
+{
+    if (context.request.size() != 44)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto requested_destination = reader.u32();
+    const auto event_mask = reader.u32();
+    if (!requested_destination || !event_mask)
+        return malformed("truncated SendEvent request");
+    if ((*event_mask & ~all_event_masks) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *event_mask);
+
+    const std::uint32_t destination = *requested_destination <= 1
+        ? root_window_id
+        : *requested_destination;
+    if (server_.window(destination) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *requested_destination);
+    const std::uint8_t event_type = context.request[12] & 0x7fU;
+    const std::uint8_t format = context.request[13];
+    if (event_type != 33)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, event_type);
+    if (format != 8 && format != 16 && format != 32)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, format);
+
+    WireReader event_reader(context.request.data() + 16, 28, context.order);
+    const auto event_window = event_reader.u32();
+    const auto event_type_atom = event_reader.u32();
+    if (!event_window || !event_type_atom)
+        return malformed("truncated ClientMessage event");
+    ClientMessageEvent event;
+    event.format = format;
+    event.window = *event_window;
+    event.type = *event_type_atom;
+    const std::size_t count = 160U / format;
+    for (std::size_t index = 0; index < count; ++index) {
+        if (format == 8) {
+            const auto value = event_reader.u8();
+            if (!value)
+                return malformed("truncated 8-bit ClientMessage data");
+            event.data[index] = *value;
+        }
+        else if (format == 16) {
+            const auto value = event_reader.u16();
+            if (!value)
+                return malformed("truncated 16-bit ClientMessage data");
+            event.data[index] = *value;
+        }
+        else {
+            const auto value = event_reader.u32();
+            if (!value)
+                return malformed("truncated 32-bit ClientMessage data");
+            event.data[index] = *value;
+        }
+    }
+
+    const auto delivered = server_.deliver_client_message(
+        destination, *event_mask, context.data != 0, event);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_translate_coordinates(const RequestContext &context)
 {
     if (context.request.size() != 16)
@@ -1601,6 +1780,95 @@ Connection::handle_get_image(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_alloc_named_color(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    const auto name_size = reader.u16();
+    if (!colormap || !name_size || !reader.skip(2))
+        return malformed("truncated AllocNamedColor request");
+    const auto padded_name = padded_to_four(*name_size);
+    if (!padded_name || context.request.size() != 12 + *padded_name)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (*colormap != default_colormap_id)
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+
+    const auto *name_data = reinterpret_cast<const char *>(
+        context.request.data() + 12);
+    const auto color = parse_color(std::string_view(name_data, *name_size));
+    if (!color)
+        return send_error(context.order, bad_name, context.opcode,
+                          context.sequence);
+    const std::uint32_t pixel = true_color_pixel(*color);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(pixel);
+    reply.u16(color->red);
+    reply.u16(color->green);
+    reply.u16(color->blue);
+    reply.u16(color->red);
+    reply.u16(color->green);
+    reply.u16(color->blue);
+    reply.pad(8);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_query_colors(const RequestContext &context)
+{
+    if (context.request.size() < 8 ||
+        ((context.request.size() - 8) & 3U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto colormap = reader.u32();
+    if (!colormap)
+        return malformed("truncated QueryColors request");
+    if (*colormap != default_colormap_id)
+        return send_error(context.order, bad_colormap, context.opcode,
+                          context.sequence, *colormap);
+
+    std::vector<RgbColor> colors;
+    colors.reserve(reader.remaining() / 4);
+    while (reader.remaining() != 0) {
+        const auto pixel = reader.u32();
+        if (!pixel)
+            return malformed("truncated QueryColors pixel list");
+        if ((*pixel & 0xff000000U) != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *pixel);
+        colors.push_back(true_color_rgb(*pixel));
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(colors.size() * 2));
+    reply.u16(static_cast<std::uint16_t>(colors.size()));
+    reply.pad(22);
+    for (const auto color : colors) {
+        reply.u16(color.red);
+        reply.u16(color.green);
+        reply.u16(color.blue);
+        reply.pad(2);
+    }
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_input_focus(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -1699,6 +1967,12 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_get_property;
         table[opcode_index(CoreOpcode::ListProperties)] =
             &Connection::handle_list_properties;
+        table[opcode_index(CoreOpcode::SetSelectionOwner)] =
+            &Connection::handle_set_selection_owner;
+        table[opcode_index(CoreOpcode::GetSelectionOwner)] =
+            &Connection::handle_get_selection_owner;
+        table[opcode_index(CoreOpcode::SendEvent)] =
+            &Connection::handle_send_event;
         table[opcode_index(CoreOpcode::TranslateCoordinates)] =
             &Connection::handle_translate_coordinates;
         table[opcode_index(CoreOpcode::CreatePixmap)] =
@@ -1715,6 +1989,10 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_fill_rectangles;
         table[opcode_index(CoreOpcode::GetImage)] =
             &Connection::handle_get_image;
+        table[opcode_index(CoreOpcode::AllocNamedColor)] =
+            &Connection::handle_alloc_named_color;
+        table[opcode_index(CoreOpcode::QueryColors)] =
+            &Connection::handle_query_colors;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryExtension)] =
@@ -1788,6 +2066,7 @@ Connection::process_request()
     consume_input(*request_size);
     const RequestContext context{
         *order_, *opcode, *data, sequence_, request};
+    server_.advance_time();
     auto dispatched = dispatch(context);
     if (!dispatched) {
         return Result<bool>::failure(
@@ -1875,6 +2154,9 @@ Connection::on_writable()
     if (!prepared_)
         return Result<void>::failure(ErrorCode::invalid_argument,
                                      "connection was not prepared");
+    auto drained = drain_pending_events();
+    if (!drained)
+        return drained;
     while (output_offset_ < output_.size()) {
         const auto count = ::write(
             socket_.get(), output_.data() + output_offset_,

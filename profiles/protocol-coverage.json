@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "1e909dbbe3611b3b283663fd2dfd75ca1f052355fc934e4cd1dba3ccf9759719",
+    "policy_sha256": "91ee6d5118d85b5b61769a1519749f0a2ffa17799ec4b731c985870e5e96f4e7",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -286,14 +286,14 @@
       "name": "SetSelectionOwner",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 23,
       "name": "GetSelectionOwner",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 24,
@@ -307,7 +307,7 @@
       "name": "SendEvent",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 26,
@@ -727,7 +727,7 @@
       "name": "AllocNamedColor",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 86,
@@ -769,7 +769,7 @@
       "name": "QueryColors",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 92,

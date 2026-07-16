@@ -412,6 +412,60 @@ create_child(int descriptor, bool little, std::uint32_t id)
 }
 
 bool
+set_selection_owner(int descriptor, bool little, std::uint32_t window)
+{
+    std::vector<std::uint8_t> request(16);
+    request[0] = 22;
+    put16(request, 2, 4, little);
+    put32(request, 4, window, little);
+    put32(request, 8, 1, little); // PRIMARY
+    return write_all(descriptor, request);
+}
+
+bool
+check_selection_owner(int descriptor, bool little, std::uint16_t sequence,
+                      std::uint32_t expected)
+{
+    std::vector<std::uint8_t> request(8);
+    request[0] = 23;
+    put16(request, 2, 2, little);
+    put32(request, 4, 1, little); // PRIMARY
+    if (!write_all(descriptor, request))
+        return false;
+    std::vector<std::uint8_t> reply(32);
+    return read_exact(descriptor, reply) && reply[0] == 1 &&
+        get16(reply, 2, little) == sequence &&
+        get32(reply, 8, little) == expected;
+}
+
+bool
+send_client_message(int descriptor, bool little, std::uint32_t window)
+{
+    std::vector<std::uint8_t> request(44);
+    request[0] = 25;
+    put16(request, 2, 11, little);
+    put32(request, 4, window, little);
+    request[12] = 33; // ClientMessage
+    request[13] = 32;
+    put32(request, 16, window, little);
+    put32(request, 20, 1, little); // PRIMARY
+    put32(request, 24, 0x584d494eU, little);
+    return write_all(descriptor, request);
+}
+
+bool
+read_client_message(int descriptor, bool little, std::uint16_t sequence,
+                    std::uint32_t window)
+{
+    std::vector<std::uint8_t> event(32);
+    return read_exact(descriptor, event) && event[0] == (33 | 0x80U) &&
+        event[1] == 32 && get16(event, 2, little) == sequence &&
+        get32(event, 4, little) == window &&
+        get32(event, 8, little) == 1 &&
+        get32(event, 12, little) == 0x584d494eU;
+}
+
+bool
 change_root_property(int descriptor, bool little)
 {
     std::vector<std::uint8_t> request(28);
@@ -536,6 +590,7 @@ main(int argc, char **argv)
                     geometry_round_trip(first_client.get(), native) &&
                     geometry_round_trip(other_server_client.get(), native);
                 if (passed) {
+                    std::uint16_t second_sequence = 2;
                     passed = create_child(
                         first_client.get(), native, *first_base);
                     auto shared_tree = query_root(
@@ -543,24 +598,38 @@ main(int argc, char **argv)
                     passed = passed && shared_tree &&
                         std::find(shared_tree->begin(), shared_tree->end(),
                                   *first_base) != shared_tree->end();
+                    passed = passed && set_selection_owner(
+                        first_client.get(), native, *first_base);
+                    passed = passed && check_selection_owner(
+                        second_client.get(), !native, ++second_sequence,
+                        *first_base);
+                    passed = passed && send_client_message(
+                        second_client.get(), !native, *first_base);
+                    ++second_sequence;
+                    passed = passed && read_client_message(
+                        first_client.get(), native, 3, *first_base);
                     passed = passed &&
                         change_root_property(first_client.get(), native);
                     first_client = Fd();
                     passed = passed &&
-                        check_root_property(second_client.get(), !native, 3);
+                        check_root_property(second_client.get(), !native,
+                                            ++second_sequence);
                     auto after_disconnect = query_root(
-                        second_client.get(), !native, 4);
+                        second_client.get(), !native, ++second_sequence);
                     if (after_disconnect &&
                         std::find(after_disconnect->begin(),
                                   after_disconnect->end(), *first_base) !=
                             after_disconnect->end()) {
                         after_disconnect = query_root(
-                            second_client.get(), !native, 5);
+                            second_client.get(), !native,
+                            ++second_sequence);
                     }
                     passed = passed && after_disconnect &&
                         std::find(after_disconnect->begin(),
                                   after_disconnect->end(), *first_base) ==
                             after_disconnect->end();
+                    passed = passed && check_selection_owner(
+                        second_client.get(), !native, ++second_sequence, 0);
                 }
             }
         }
