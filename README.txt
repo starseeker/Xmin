@@ -118,7 +118,9 @@ widths.  A typed input snapshot starts the pointer at the legacy-compatible scre
 center, answers pointer, empty motion-history, and key-state queries, and applies
 source-gated/clamped warps.  Typed focus state distinguishes the protocol's
 `PointerRoot` sentinel from the server-owned root XID, honors request timestamps,
-and applies parent/none/pointer-root reversion when windows become unavailable.  A bounded
+and applies parent/none/pointer-root reversion when windows become unavailable.
+Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
+timestamps, cross-client exclusion, and disconnect/window teardown.  A bounded
 four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and

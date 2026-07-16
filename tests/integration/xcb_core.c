@@ -111,6 +111,7 @@ main(void)
     static const char color_name[] = "red";
     const uint32_t property_values[] = { 0x584d494eU, 0x434f5245U };
     xcb_connection_t *connection = NULL;
+    xcb_connection_t *second_connection = NULL;
     xcb_screen_iterator_t screens;
     xcb_screen_t *screen;
     xcb_generic_error_t *error = NULL;
@@ -136,6 +137,8 @@ main(void)
     xcb_get_motion_events_reply_t *motion = NULL;
     xcb_query_keymap_reply_t *keymap = NULL;
     xcb_get_input_focus_reply_t *focus = NULL;
+    xcb_grab_pointer_reply_t *pointer_grab = NULL;
+    xcb_grab_keyboard_reply_t *keyboard_grab = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
@@ -528,6 +531,75 @@ main(void)
                      connection, XCB_INPUT_FOCUS_NONE,
                      XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME),
                  "Restore pointer-root focus")) {
+        goto cleanup;
+    }
+
+    stage = "coordinating active input grabs across clients";
+    second_connection = xcb_connect(NULL, NULL);
+    if (second_connection == NULL ||
+        xcb_connection_has_error(second_connection)) {
+        goto cleanup;
+    }
+    pointer_grab = xcb_grab_pointer_reply(
+        connection,
+        xcb_grab_pointer(
+            connection, 0, child, XCB_EVENT_MASK_BUTTON_PRESS,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE, XCB_NONE,
+            XCB_CURRENT_TIME),
+        &error);
+    if (error != NULL || pointer_grab == NULL ||
+        pointer_grab->status != XCB_GRAB_STATUS_SUCCESS)
+        goto cleanup;
+    free(pointer_grab);
+    pointer_grab = xcb_grab_pointer_reply(
+        second_connection,
+        xcb_grab_pointer(
+            second_connection, 0, screen->root, XCB_EVENT_MASK_BUTTON_PRESS,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE, XCB_NONE,
+            XCB_CURRENT_TIME),
+        &error);
+    if (error != NULL || pointer_grab == NULL ||
+        pointer_grab->status != XCB_GRAB_STATUS_ALREADY_GRABBED ||
+        !checked(connection,
+                 xcb_change_active_pointer_grab_checked(
+                     connection, XCB_NONE, XCB_CURRENT_TIME,
+                     XCB_EVENT_MASK_BUTTON_RELEASE),
+                 "ChangeActivePointerGrab") ||
+        !checked_error(
+            connection,
+            xcb_allow_events_checked(
+                connection, UINT8_MAX, XCB_CURRENT_TIME),
+            XCB_VALUE, "AllowEvents invalid mode") ||
+        !checked(connection,
+                 xcb_allow_events_checked(
+                     connection, XCB_ALLOW_ASYNC_POINTER, XCB_CURRENT_TIME),
+                 "AllowEvents") ||
+        !checked(connection,
+                 xcb_ungrab_pointer_checked(connection, XCB_CURRENT_TIME),
+                 "UngrabPointer")) {
+        goto cleanup;
+    }
+    keyboard_grab = xcb_grab_keyboard_reply(
+        connection,
+        xcb_grab_keyboard(
+            connection, 0, child, XCB_CURRENT_TIME, XCB_GRAB_MODE_ASYNC,
+            XCB_GRAB_MODE_ASYNC),
+        &error);
+    if (error != NULL || keyboard_grab == NULL ||
+        keyboard_grab->status != XCB_GRAB_STATUS_SUCCESS)
+        goto cleanup;
+    free(keyboard_grab);
+    keyboard_grab = xcb_grab_keyboard_reply(
+        second_connection,
+        xcb_grab_keyboard(
+            second_connection, 0, screen->root, XCB_CURRENT_TIME,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+        &error);
+    if (error != NULL || keyboard_grab == NULL ||
+        keyboard_grab->status != XCB_GRAB_STATUS_ALREADY_GRABBED ||
+        !checked(connection,
+                 xcb_ungrab_keyboard_checked(connection, XCB_CURRENT_TIME),
+                 "UngrabKeyboard")) {
         goto cleanup;
     }
 
@@ -950,6 +1022,8 @@ cleanup:
         xcb_flush(connection);
     }
     free(error);
+    free(keyboard_grab);
+    free(pointer_grab);
     free(focus);
     free(keymap);
     free(motion);
@@ -974,5 +1048,7 @@ cleanup:
     free(property_atom);
     if (connection != NULL)
         xcb_disconnect(connection);
+    if (second_connection != NULL)
+        xcb_disconnect(second_connection);
     return result;
 }

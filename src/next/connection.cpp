@@ -35,6 +35,7 @@ constexpr std::uint32_t input_only_attribute_masks =
 constexpr std::uint32_t basic_graphics_context_mask = 0x0000000fU;
 constexpr std::uint32_t graphics_context_clip_origins =
     (1U << 17) | (1U << 18);
+constexpr std::uint16_t pointer_grab_mask = 0x7ffcU;
 
 enum : std::uint8_t {
     bad_request = 1,
@@ -86,6 +87,19 @@ wire_coordinate(std::int32_t value) noexcept
     return static_cast<std::int16_t>(std::clamp<std::int32_t>(
         value, std::numeric_limits<std::int16_t>::min(),
         std::numeric_limits<std::int16_t>::max()));
+}
+
+bool
+timestamp_later(std::uint32_t left, std::uint32_t right) noexcept
+{
+    const std::uint32_t difference = left - right;
+    return difference != 0 && difference < 0x80000000U;
+}
+
+bool
+timestamp_earlier(std::uint32_t left, std::uint32_t right) noexcept
+{
+    return timestamp_later(right, left);
 }
 
 bool
@@ -1847,6 +1861,238 @@ Connection::handle_send_event(const RequestContext &context)
     if (delivered == EventDelivery::queue_full)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_grab_pointer(const RequestContext &context)
+{
+    if (context.request.size() != 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 20, context.order);
+    const auto window_id = reader.u32();
+    const auto event_mask = reader.u16();
+    const auto pointer_mode = reader.u8();
+    const auto keyboard_mode = reader.u8();
+    const auto confine_to = reader.u32();
+    const auto cursor = reader.u32();
+    const auto time = reader.u32();
+    if (!window_id || !event_mask || !pointer_mode || !keyboard_mode ||
+        !confine_to || !cursor || !time) {
+        return malformed("truncated GrabPointer request");
+    }
+    if ((*event_mask & ~pointer_grab_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *event_mask);
+    const auto *confine = *confine_to == 0
+        ? nullptr
+        : server_.window(*confine_to);
+    if (*confine_to != 0 && confine == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *confine_to);
+    if (*keyboard_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *keyboard_mode);
+    if (*pointer_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *pointer_mode);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    const auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (*cursor != 0)
+        return send_error(context.order, bad_cursor, context.opcode,
+                          context.sequence, *cursor);
+
+    auto &input = server_.input();
+    const std::uint32_t effective_time = *time == 0
+        ? server_.current_time()
+        : *time;
+    std::uint8_t status = 0;
+    if (input.pointer_grab &&
+        input.pointer_grab->owner != config_.resource_base) {
+        status = 1; // AlreadyGrabbed
+    }
+    else if (server_.map_state(window->id) != 2 ||
+             (confine != nullptr && server_.map_state(confine->id) != 2)) {
+        status = 3; // GrabNotViewable
+    }
+    else if (timestamp_later(effective_time, server_.current_time()) ||
+             timestamp_earlier(effective_time, input.pointer_grab_time)) {
+        status = 2; // GrabInvalidTime
+    }
+    else {
+        input.pointer_grab = ActiveGrab{
+            config_.resource_base, *window_id, *confine_to, effective_time,
+            *event_mask, *pointer_mode, *keyboard_mode, context.data != 0};
+        input.pointer_grab_time = effective_time;
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(status);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.pad(24);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_ungrab_pointer(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto time = reader.u32();
+    if (!time)
+        return malformed("truncated UngrabPointer request");
+    auto &input = server_.input();
+    const std::uint32_t effective_time = *time == 0
+        ? server_.current_time()
+        : *time;
+    if (input.pointer_grab &&
+        input.pointer_grab->owner == config_.resource_base &&
+        !timestamp_later(effective_time, server_.current_time()) &&
+        !timestamp_earlier(effective_time,
+                           input.pointer_grab->activated_at)) {
+        input.pointer_grab.reset();
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_change_active_pointer_grab(
+    const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto cursor = reader.u32();
+    const auto time = reader.u32();
+    const auto event_mask = reader.u16();
+    if (!cursor || !time || !event_mask || !reader.skip(2))
+        return malformed("truncated ChangeActivePointerGrab request");
+    if ((*event_mask & ~pointer_grab_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *event_mask);
+    if (*cursor != 0)
+        return send_error(context.order, bad_cursor, context.opcode,
+                          context.sequence, *cursor);
+    auto &input = server_.input();
+    const std::uint32_t effective_time = *time == 0
+        ? server_.current_time()
+        : *time;
+    if (input.pointer_grab &&
+        input.pointer_grab->owner == config_.resource_base &&
+        !timestamp_later(effective_time, server_.current_time()) &&
+        !timestamp_earlier(effective_time,
+                           input.pointer_grab->activated_at)) {
+        input.pointer_grab->event_mask = *event_mask;
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_grab_keyboard(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto window_id = reader.u32();
+    const auto time = reader.u32();
+    const auto pointer_mode = reader.u8();
+    const auto keyboard_mode = reader.u8();
+    if (!window_id || !time || !pointer_mode || !keyboard_mode ||
+        !reader.skip(2)) {
+        return malformed("truncated GrabKeyboard request");
+    }
+    if (*keyboard_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *keyboard_mode);
+    if (*pointer_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *pointer_mode);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    const auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+
+    auto &input = server_.input();
+    const std::uint32_t effective_time = *time == 0
+        ? server_.current_time()
+        : *time;
+    std::uint8_t status = 0;
+    if (input.keyboard_grab &&
+        input.keyboard_grab->owner != config_.resource_base) {
+        status = 1;
+    }
+    else if (server_.map_state(window->id) != 2) {
+        status = 3;
+    }
+    else if (timestamp_later(effective_time, server_.current_time()) ||
+             timestamp_earlier(effective_time, input.keyboard_grab_time)) {
+        status = 2;
+    }
+    else {
+        input.keyboard_grab = ActiveGrab{
+            config_.resource_base, *window_id, 0, effective_time,
+            (1U << 0) | (1U << 1), *pointer_mode, *keyboard_mode,
+            context.data != 0};
+        input.keyboard_grab_time = effective_time;
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(status);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.pad(24);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_ungrab_keyboard(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto time = reader.u32();
+    if (!time)
+        return malformed("truncated UngrabKeyboard request");
+    auto &input = server_.input();
+    const std::uint32_t effective_time = *time == 0
+        ? server_.current_time()
+        : *time;
+    if (input.keyboard_grab &&
+        input.keyboard_grab->owner == config_.resource_base &&
+        !timestamp_later(effective_time, server_.current_time()) &&
+        !timestamp_earlier(effective_time,
+                           input.keyboard_grab->activated_at)) {
+        input.keyboard_grab.reset();
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_allow_events(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 7)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
     return Result<void>::success();
 }
 
@@ -3672,6 +3918,18 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_get_selection_owner;
         table[opcode_index(CoreOpcode::SendEvent)] =
             &Connection::handle_send_event;
+        table[opcode_index(CoreOpcode::GrabPointer)] =
+            &Connection::handle_grab_pointer;
+        table[opcode_index(CoreOpcode::UngrabPointer)] =
+            &Connection::handle_ungrab_pointer;
+        table[opcode_index(CoreOpcode::ChangeActivePointerGrab)] =
+            &Connection::handle_change_active_pointer_grab;
+        table[opcode_index(CoreOpcode::GrabKeyboard)] =
+            &Connection::handle_grab_keyboard;
+        table[opcode_index(CoreOpcode::UngrabKeyboard)] =
+            &Connection::handle_ungrab_keyboard;
+        table[opcode_index(CoreOpcode::AllowEvents)] =
+            &Connection::handle_allow_events;
         table[opcode_index(CoreOpcode::GrabServer)] =
             &Connection::handle_grab_server;
         table[opcode_index(CoreOpcode::UngrabServer)] =

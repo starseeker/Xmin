@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "7fc214077dc644a909df8dc33cc90c6a95c6865bd1b34e58716562cf1d9876c6",
+    "policy_sha256": "a36dd1218c7feac6e4992dcf1c2d83b01741304b6e268a0d033effb6c3a46d2e",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -314,14 +314,14 @@
       "name": "GrabPointer",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 27,
       "name": "UngrabPointer",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 28,
@@ -342,21 +342,21 @@
       "name": "ChangeActivePointerGrab",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 31,
       "name": "GrabKeyboard",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 32,
       "name": "UngrabKeyboard",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 33,
@@ -377,7 +377,7 @@
       "name": "AllowEvents",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 36,

@@ -1336,6 +1336,53 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
             return false;
     }
 
+    request.assign(24, 0);
+    request[0] = 26; // GrabPointer
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1U << 2, little); // ButtonPressMask
+    request[10] = 1; // GrabModeAsync
+    request[11] = 1;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 106) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 30; // ChangeActivePointerGrab
+    put16(request, 2, 4, little);
+    put16(request, 12, 1U << 3, little); // ButtonReleaseMask
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 35; // AllowEvents(AsyncPointer)
+    put16(request, 2, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 27; // UngrabPointer
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 31; // GrabKeyboard
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    request[12] = 1;
+    request[13] = 1;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 110) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 32; // UngrabKeyboard
+    put16(request, 2, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
     request.assign(12, 0);
     request[0] = 42; // focus the actual root, not PointerRoot
     request[1] = 2;
@@ -1349,7 +1396,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 1 || reply[1] != 2 ||
-        get16(reply, 2, little) != 107 ||
+        get16(reply, 2, little) != 113 ||
         get32(reply, 8, little) != root_window) {
         return false;
     }
@@ -1366,7 +1413,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && reply[1] == 0 &&
-        get16(reply, 2, little) == 109 &&
+        get16(reply, 2, little) == 115 &&
         get32(reply, 8, little) == pointer_root;
 }
 

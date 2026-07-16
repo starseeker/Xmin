@@ -121,12 +121,27 @@ struct FocusState {
     }
 };
 
+struct ActiveGrab {
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::uint32_t confine_to = 0;
+    std::uint32_t activated_at = 0;
+    std::uint32_t event_mask = 0;
+    std::uint8_t pointer_mode = 1;
+    std::uint8_t keyboard_mode = 1;
+    bool owner_events = false;
+};
+
 struct InputState {
     std::int32_t pointer_x = 0;
     std::int32_t pointer_y = 0;
     std::uint16_t modifier_button_mask = 0;
     std::array<std::uint8_t, 32> pressed_keys{};
     FocusState focus;
+    std::optional<ActiveGrab> pointer_grab;
+    std::optional<ActiveGrab> keyboard_grab;
+    std::uint32_t pointer_grab_time = 1;
+    std::uint32_t keyboard_grab_time = 1;
 };
 
 enum class SelectionUpdate {

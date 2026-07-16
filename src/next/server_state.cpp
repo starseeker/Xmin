@@ -614,6 +614,13 @@ ServerState::destroy_window(std::uint32_t id)
         destroy_window(found->second.children.back());
 
     revert_focus_from(id);
+    if (input_.pointer_grab &&
+        (input_.pointer_grab->window == id ||
+         input_.pointer_grab->confine_to == id)) {
+        input_.pointer_grab.reset();
+    }
+    if (input_.keyboard_grab && input_.keyboard_grab->window == id)
+        input_.keyboard_grab.reset();
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
     for (const auto &property : found->second.properties)
@@ -761,6 +768,10 @@ ServerState::disconnect_client(std::uint32_t owner)
 {
     if (server_grab_owner_ == owner)
         server_grab_owner_ = 0;
+    if (input_.pointer_grab && input_.pointer_grab->owner == owner)
+        input_.pointer_grab.reset();
+    if (input_.keyboard_grab && input_.keyboard_grab->owner == owner)
+        input_.keyboard_grab.reset();
     for (auto &window_entry : windows_)
         window_entry.second.event_masks.erase(owner);
     for (auto &selection : selections_) {

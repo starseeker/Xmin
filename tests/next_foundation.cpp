@@ -260,6 +260,11 @@ test_shared_server_state()
     server.window(xmin::next::root_window_id)
         ->event_masks.emplace(first_owner, 1);
     server.grab_server(first_owner);
+    xmin::next::ActiveGrab active_grab;
+    active_grab.owner = first_owner;
+    active_grab.window = xmin::next::root_window_id;
+    server.input().pointer_grab = active_grab;
+    server.input().keyboard_grab = active_grab;
     if (!expect(server.server_grab_owner() == first_owner,
                 "server grab owner was not recorded")) {
         return false;
@@ -279,7 +284,10 @@ test_shared_server_state()
         expect(server.server_grab_owner() == 0,
                "disconnect retained a server grab") &&
         expect(server.input().focus.kind == xmin::next::FocusKind::pointer_root,
-               "destroyed focus window did not revert to pointer root");
+               "destroyed focus window did not revert to pointer root") &&
+        expect(!server.input().pointer_grab &&
+                   !server.input().keyboard_grab,
+               "disconnect retained an active input grab");
 }
 
 bool
