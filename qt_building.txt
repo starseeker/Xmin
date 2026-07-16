@@ -1,0 +1,593 @@
+Minimalist Qt 6.11.1 build on Xmin
+=================================
+
+Status and conclusion
+---------------------
+
+This plan is based on the BRL-CAD Qt tree at:
+
+  /usr/home/starseeker/bext/qt/qt
+
+as inspected on 2026-07-16.  That tree identifies itself as Qt 6.11.1.  Its
+top-level commit is 692cacdb1d6eea560daac0339ca8c45a89ae7c37 and its qtbase
+tree object is eaedabb16aee6fc1d71441c9be92bc7dd5055a50.  The bext tree must
+remain pristine during this work.
+
+The short answer is yes: a useful Qt 6.11.1 Gui/Widgets build can be made
+self-contained with respect to the Linux X11 development stack, and Xmin
+already implements the necessary server-side protocols.  The missing piece is
+a client-side support library.  It should contain audited upstream subsets of
+libxcb, the small xcb-util libraries, and libxkbcommon rather than new
+implementations of their wire protocols.
+
+For the first, raster-only target, Qt does not need libX11, libX11-xcb,
+libXext, libXrender, libSM, libICE, GL, EGL, DRM, GBM, or any hardware driver.
+Qt's qxcb code has a deliberate no-Xlib path: it calls xcb_connect() directly,
+uses XCB for all drawing and window management, and falls back to the X cursor
+font when Xlib cursor support is absent.  Xmin already embeds that cursor font.
+
+Qt will need a small patch to consume one Xmin client target cleanly.  Its
+current configure logic discovers the conventional X stack as many distinct
+packages and links many distinct CMake targets.  Installing fake pkg-config
+files or aliases for all of those packages would be harder to audit and would
+pollute non-Xmin builds.  The patch should add an explicit Xmin opt-in and use
+one exported CMake target without changing qxcb's runtime implementation.
+
+This plan calls the on-disk support library libXminClient while it is being
+developed and gives it the CMake target Xmin::QtX11.  It is the proposed
+"libXmin" support library; the more specific filename avoids implying a
+general-purpose libX11 replacement before its ABI policy has been settled.
+
+
+What the published Qt requirements mean here
+--------------------------------------------
+
+Qt's Linux requirements page lists XRender, X11, X11-xcb, Xext, XCB and its
+extension/helper libraries, xkbcommon, xkbcommon-x11, Fontconfig, FreeType,
+SM/ICE, and optional GL integration:
+
+  https://doc.qt.io/qt-6/linux-requirements.html
+
+That is the supported general Linux/X11 configuration, not the irreducible
+raster qxcb closure.  Inspection of this exact Qt source gives the narrower
+closure below.
+
+Qt source evidence:
+
+  qtbase/src/gui/configure.cmake
+    The xcb feature requires threads, XCB::XCB, the xcb_syslibs compile/link
+    test, and xkbcommon-x11.  Xlib is a separate feature.  The GLX plugin is
+    conditional on xcb_xlib and desktop OpenGL.
+
+  qtbase/src/plugins/platforms/xcb/CMakeLists.txt
+    The base qxcb plugin links XCB and xkbcommon targets.  X11::X11 and
+    X11::XCB are added only when QT_FEATURE_xcb_xlib is true.  Qt already
+    carries its selected xcb-xinput binding source.
+
+  qtbase/src/plugins/platforms/xcb/qxcbconnection_basic.cpp
+    With xcb_xlib disabled, the connection is opened with xcb_connect().
+
+  qtbase/src/plugins/platforms/xcb/qxcbcursor.cpp
+    With xcb_xlib disabled, Qt uses its qxcbcursorfont.h constants and can
+    create cursors from the server's core cursor font.
+
+  qtbase/src/plugins/platforms/xcb/qxcbkeyboard.cpp
+    Qt creates xkbcommon with XKB_CONTEXT_NO_DEFAULT_INCLUDES and constructs
+    the keymap from the XKB server replies through xkbcommon-x11.  Therefore
+    the normal qxcb keyboard path does not need a host xkeyboard-config data
+    tree.  Xmin's pinned server keymap is sufficient.
+
+  qtbase/src/gui/text/unix/qgenericunixfontdatabase_p.h
+    Fontconfig is optional when Qt uses FreeType.  Qt can use its bundled
+    FreeType and load fonts from QT_QPA_FONTDIR or Qt's package-relative fonts
+    directory.
+
+The server/client distinction is important.  Xmin already provides the X11,
+RENDER, RANDR, SHAPE, XFIXES, XKB, SYNC, MIT-SHM, XInput2, and related server
+implementations.  libXminClient will encode requests, manage the client
+connection, and interpret replies.  None of those client sources should be
+linked into the Xmin server executable merely to satisfy Qt.
+
+
+Minimal raster dependency closure
+---------------------------------
+
+The first implementation should use complete upstream translation units for
+the selected facilities.  Source-file and symbol pruning should happen only
+after the unpruned target passes Qt's tests.
+
+1. libxcb 1.17.0 and xcb-proto 1.17.0
+
+   Reuse Xmin's pinned versions.  Expand the current private subset to provide
+   a normal application connection and these generated protocol bindings:
+
+     xproto/core, RENDER, RANDR, SHAPE, MIT-SHM, SYNC, XFIXES, and XKB.
+
+   The current Xmin::xcb target already has the libxcb request/reply core and
+   some generated bindings, but it intentionally has no xcb_connect()
+   implementation.  xminctl supplies a private local connector instead.  Qt
+   calls xcb_connect(), so libXminClient must either import libxcb's normal
+   connection/authentication translation units or supply an API-compatible
+   local-only connector based on src/control/xmin_xcb_connect.c.
+
+   Prefer the upstream libxcb connection path for the first proof.  It has the
+   expected error-connection semantics and is less likely to surprise Qt.
+   It needs the small libXau authority lookup subset.  A later minimization can
+   restrict DISPLAY parsing and transport to local Unix sockets, :N[.screen],
+   MIT-MAGIC-COOKIE-1, and XAUTHORITY if that remains a stated Xmin profile.
+
+   Qt 6.11.1 already compiles its bundled xcb-xinput source into XcbQpaPrivate,
+   so xinput need not initially be exposed by libXminClient.  Import it later
+   only if non-Qt consumers or removal of Qt's bundled copy justifies it.
+
+2. XCB utility libraries
+
+   Import the upstream sources corresponding to:
+
+     xcb-util
+       Utility/auxiliary helpers required by the helper libraries.  Confirm
+       the final Qt symbol closure; Qt itself uses little of this API.
+
+     xcb-util-image
+       xcb_image_create/annotate/put/destroy and SHM image support used by
+       QBackingStore and cursor upload.
+
+     xcb-util-keysyms
+       Legacy keysym lookup used by Qt's core-keyboard fallback and modifier
+       discovery.
+
+     xcb-util-renderutil
+       Standard RENDER format and visual-format lookup.
+
+     xcb-util-cursor
+       Cursor theme loading.  Absence of an installed cursor theme must be a
+       supported condition; Qt should then use its bitmap/core-font fallback.
+
+     xcb-util-wm (ICCCM portion)
+       WM_HINTS and WM_NORMAL_HINTS helpers used by QXcbWindow.
+
+   Build these as internal object components and fold them into one client
+   library.  Do not install the conventional libxcb-*.so names unless Xmin
+   deliberately decides to provide those complete public ABIs.
+
+3. libxkbcommon and libxkbcommon-x11
+
+   Import a pinned current release, initially as its full core and X11 library
+   source sets, with registry, Wayland, tools, documentation, tests, and XML
+   support disabled.  The only external protocol dependencies for the X11
+   portion are libxcb and xcb-xkb.
+
+   The qxcb path gets its keymap from Xmin over XKB and creates its context with
+   no default include paths.  Consequently no xkeyboard-config files are
+   needed at runtime for this path.  libxkbcommon's X11 support explicitly
+   supports constructing a keymap and state from an X server:
+
+     https://xkbcommon.org/doc/current/group__x11.html
+
+   Qt also builds a compose input-context plugin when xkbcommon is present.
+   That plugin is not the default and Compose data normally comes from libX11's
+   locale files.  The first library may retain xkbcommon's compose code so the
+   Qt build links normally, but the strict runtime test must use an empty data
+   environment.  During minimization, either omit that non-default plugin in
+   Xmin mode or package an explicitly selected small Compose dataset.  Do not
+   accidentally add libX11 locale data to the raster baseline.
+
+4. libXau subset
+
+   Extend the current AuRead/AuDispose subset only as required by libxcb's
+   normal authentication path.  MIT-MAGIC-COOKIE-1 and local authority records
+   are the mandatory behavior.  XDM-AUTH, secure RPC, and remote-display
+   authentication remain out of scope.
+
+5. Platform libraries
+
+   The intended external closure is the C runtime plus normal thread, math,
+   dynamic-loader, and OS socket/shared-memory facilities detected by CMake.
+   There must be no host X11, xcb, xkbcommon, fontconfig, GL, EGL, DRM, GBM,
+   D-Bus, glib, udev, or input-stack dependency in the raster profile.
+
+
+Facilities already matched by the Xmin server
+---------------------------------------------
+
+Qt raster facility       Client support needed       Xmin server status
+----------------------   --------------------------  --------------------------
+Core X11/windowing       libxcb xproto/core          implemented and tested
+Alpha/cursor rendering   xcb-render + renderutil     RENDER implemented/tested
+Screen discovery         xcb-randr                   RANDR 1.x implemented/tested
+Window/input shapes      xcb-shape                   SHAPE implemented/tested
+Selections and regions   xcb-xfixes                  XFIXES implemented/tested
+Keyboard map/state       xcb-xkb + xkbcommon-x11     XKB pinned map/tested
+Input devices/events     Qt bundled xcb-xinput       XI2 virtual devices/tested
+Synchronization          xcb-sync                    SYNC implemented/tested
+Fast image upload        xcb-shm + xcb-image         MIT-SHM conditional/tested
+Cursor fallback          core font requests          cursor font embedded/tested
+
+MIT-SHM needs an additional Qt-specific gate.  Qt 6.11.1 detects SHM protocol
+1.2 and may prefer CreateSegment with file-descriptor passing over SysV SHM.
+Test both Xmin's advertised CreateSegment/fd behavior and its SysV path.  Also
+test an Xmin build with MIT-SHM disabled; Qt must fall back to xcb_image_put
+without a configure or runtime failure.
+
+
+libXminClient target and packaging design
+-----------------------------------------
+
+Add a separately selectable client SDK, for example:
+
+  XMIN_BUILD_QT_CLIENT=ON
+  Xmin::QtX11             exported CMake target
+  libXminClient.so.<abi>  initial shared artifact
+
+A shared library is preferred for the first Qt build.  Both QtGui and
+QtXcbQpa need xkbcommon objects and pass xkbcommon objects across their shared
+library boundary.  A single DSO provides one implementation and avoids
+duplicating internal state.  A static form can be evaluated later with hidden
+visibility and whole-program link tests.
+
+Internally, retain component boundaries for maintenance even though the
+installed artifact is one DSO:
+
+  Xmin::xcb_core
+  Xmin::xcb_protocols
+  Xmin::xcb_util
+  Xmin::xkbcommon
+  Xmin::xkbcommon_x11
+  Xmin::xau
+
+The existing Xmin::xcb target is private to xminctl and deliberately has a
+different connection contract.  Do not silently widen or install it.  Either
+leave it alone while libXminClient is proved, or refactor both users onto a
+common internal object layer after tests show their connection behavior is
+compatible.
+
+Install the conventional public headers under their upstream include names
+(xcb/... and xkbcommon/...) because Qt includes those names directly.  Install
+an Xmin package config which provides Xmin::QtX11.  Record every imported
+source, version, retained path, generator, checksum, license, and local patch
+in UPSTREAM.toml and LICENSES.  Normal configuration must remain offline;
+Python/protocol generation is maintenance-time work as it is for the current
+libxcb subset.
+
+The public-symbol policy needs an explicit decision before calling this a
+general client SDK.  Qt exposes an xcb_connection_t through its native
+interface, and an application plugin might also load a system libxcb.  A DSO
+with upstream-named xcb_* and xkb_* symbols can be subject to ELF symbol
+interposition.  The initial supported profile should therefore be "the Xmin
+Qt build and its plugins", with collision tests.  Options to evaluate are:
+
+  * export the complete retained upstream ABI and forbid a second libxcb;
+  * use a linker version script and regard the library as private to Qt; or
+  * ultimately ship canonical component SONAMEs if third-party Qt plugins need
+    normal libxcb ABI compatibility.
+
+Do not rename upstream functions in the first implementation: Qt's source and
+headers expect their standard names, and renaming would greatly enlarge the Qt
+patch.
+
+
+Qt patch plan
+-------------
+
+Manage the patch in this repository, not in /usr/home/starseeker/bext.  Use:
+
+  patches/qt/qt_xmin.patch
+
+Generate it in the same unified-diff style used by bext patches, with stable
+qtbase and Qt6_BLD path prefixes so it applies with patch -p1.  Include the Qt
+6.11.1/tree-hash assumption in a nearby README or in this document.  Validate
+both a forward dry run on a fresh copy and a reverse dry run after applying.
+
+The patch should be explicit opt-in, provisionally named -xmin-x11.  It should
+make these narrowly scoped changes:
+
+1. qtbase/src/gui/qt_cmdline.cmake
+
+   Add the Xmin X11 client option.  It must not alter ordinary Qt auto
+   detection when absent.
+
+2. qtbase/src/gui/configure.cmake
+
+   In Xmin mode, use qt_find_package(Xmin CONFIG ...) and require the exported
+   Xmin::QtX11 target.  Add an Xmin compile/link test that includes the same
+   xcb and xkbcommon headers used by xcb_syslibs and calls representative
+   connection, RENDER, and XKB functions.
+
+   Make the xcb feature condition accept that successful target/test instead
+   of requiring all conventional XCB::* and PkgConfig::XKB_COMMON_X11
+   targets.  Do not set the feature true without compiling and linking the
+   probe.
+
+   Suppress Xlib, X11-xcb, SM/ICE, EGL-X11, GLX, and system xcb/xkbcommon
+   discovery in the raster Xmin mode.  This prevents a developer machine from
+   contaminating a supposedly minimal result.
+
+3. qtbase/src/gui/CMakeLists.txt
+
+   Link QtGui's qxkbcommon sources to Xmin::QtX11 in Xmin mode rather than
+   XKB::XKB.  Preserve the normal branch unchanged.
+
+4. qtbase/src/plugins/platforms/xcb/CMakeLists.txt
+
+   Link XcbQpaPrivate to Xmin::QtX11 instead of the conventional XCB and
+   xkbcommon target list.  Continue using Qt's bundled xcb-xinput source at
+   first.  qxcb remains named qxcb and no qxcb C++ runtime source should need
+   modification for the raster build.
+
+5. platform input-context CMake, only if needed
+
+   Either link the optional compose plugin to Xmin::QtX11 or omit that plugin
+   in the Xmin-minimal profile.  Prefer retaining it for the first link proof
+   and deciding based on runtime/data footprint afterward.
+
+The installed Qt CMake metadata must retain a dependency on the Xmin package,
+so downstream Qt consumers can resolve Xmin::QtX11.  Use Qt's
+qt_find_package machinery rather than an unrecorded raw find_package call.
+
+An alternative requiring no Qt patch would be to install many conventional
+library names, pkg-config files, and targets (XCB::CURSOR, XCB::ICCCM,
+XKB::XKB, PkgConfig::XKB_COMMON_X11, and so on).  That is a valid fallback if
+we decide to ship a standards-compatible client stack, but it is not the
+recommended one-library experiment.
+
+
+Phased implementation and validation
+-------------------------------------
+
+Phase 0: freeze inputs and establish isolation
+
+  * Record the Qt version, top-level commit, and qtbase tree hash above.
+  * Create ignored local directories under this repository, for example:
+
+      .work/qt-pristine/qtbase
+      .work/Qt6_BLD/qtbase
+      build/qt-xmin-raster
+      build/qt-xmin-raster-install
+
+  * Copy from /usr/home/starseeker/bext/qt/qt; never edit that source.
+  * Define a clean-build environment or container which has a compiler,
+    CMake/Ninja, and Qt's ordinary build tools but no X11 development
+    packages.  In local testing also clear PKG_CONFIG_PATH/PKG_CONFIG_LIBDIR
+    and disable package registries.  A clean container is the authoritative
+    proof because CMake can otherwise find host headers in /usr implicitly.
+
+Gate: a recorded pristine-tree checksum and a repeatable clean configure
+environment.
+
+Phase 1: build an unpruned libXminClient
+
+  * Add or extend a maintenance importer for libxcb/xcb-proto, xcb-util
+    projects, libxkbcommon, and the required libXau sources.
+  * Generate and commit the selected XCB protocol bindings.
+  * Build internal object components and the single shared library.
+  * Export/install Xmin::QtX11 and all required headers.
+  * Add a standalone C/C++ probe copied from Qt's xcb_syslibs test plus
+    xkbcommon-x11 calls.  Link it using only Xmin::QtX11.
+  * Add a real authenticated connection test through xmin-run, including a
+    wrong-cookie rejection test.
+
+Gate: the installed target compiles, links, connects to Xmin, queries the
+required extensions, builds an XKB keymap/state, and has no forbidden NEEDED
+entries.
+
+Phase 2: create and validate the Qt patch
+
+  * Modify only the local Qt copy.
+  * Add the explicit Xmin option and target branches described above.
+  * Generate patches/qt/qt_xmin.patch using the bext-style diff convention.
+  * Delete and recreate the modified copy, apply the patch with -p1, and
+    compare it to the working tree to prove the patch is complete.
+  * Ensure a normal non-Xmin Qt configure still follows the original paths.
+
+Gate: forward and reverse patch dry runs pass, the standard configuration is
+unchanged when the option is absent, and Xmin mode fails clearly when
+Xmin::QtX11 is missing.
+
+Phase 3: configure and build raster Qt
+
+Start from a deliberately restricted profile similar to:
+
+  -xcb -xmin-x11
+  -no-xcb-xlib -no-feature-xlib -no-sm
+  -no-opengl -no-egl -no-eglfs -no-vulkan
+  -no-fontconfig -qt-freetype -qt-harfbuzz
+  -qt-zlib -qt-libpng -qt-libjpeg
+  -no-dbus -no-glib
+  -nomake examples -nomake tests
+
+Pass the Xmin installation through CMAKE_PREFIX_PATH or Xmin_DIR after `--`.
+Use Qt's actual accepted spellings when implementing; the list above states
+the intended feature result.  Keep threads and the Unix event dispatcher.
+Do not disable Gui or Widgets.
+
+Check CMakeCache.txt and Qt's configure summary, requiring at least:
+
+  FEATURE_gui=ON
+  FEATURE_xcb=ON
+  the new Xmin client feature=ON
+  FEATURE_xlib=OFF
+  FEATURE_xcb_xlib=OFF
+  FEATURE_xcb_glx_plugin=OFF
+  FEATURE_egl=OFF
+  FEATURE_fontconfig=OFF
+
+Gate: QtCore, QtGui, QtWidgets, and the qxcb platform plugin build and install
+without any conventional X development package.
+
+Phase 4: audit the build product
+
+Recursively inspect ELF NEEDED/RPATH entries with readelf (and ldd/lddtree as
+a secondary convenience).  The raster bundle must not reference:
+
+  libX11, libX11-xcb, libXext, libXrender, libxcb or libxcb-*,
+  libxkbcommon, libSM, libICE, libfontconfig, libGL, libEGL,
+  libdrm, libgbm, DRI drivers, Vulkan loaders, glib, or D-Bus.
+
+References to the new libXminClient and normal platform C runtime libraries
+are expected.  Also inspect the Qt cache and link command database so a static
+host library cannot hide from the NEEDED audit.
+
+Run with a sanitized environment and an empty temporary HOME/XDG tree.  Set a
+package-relative Qt plugin path and ensure qxcb is loaded from the test
+installation.  Do not use LD_LIBRARY_PATH entries containing host X libraries.
+
+Gate: dependency audit passes and the application starts solely from the
+bundle plus OS runtime.
+
+Phase 5: raster runtime acceptance
+
+Build tests/qt/raster.cpp against the new Qt rather than a system Qt and run it
+under xmin-run.  Expand the acceptance suite to cover:
+
+  * window create/map/expose, paint, resize, and pixel readback;
+  * clipboard and selection transfer, including a second client;
+  * core and XI2 keyboard/pointer events sent through xminctl/XTEST;
+  * modifiers, lock state, autorepeat behavior, and printable US key mapping;
+  * standard and custom bitmap cursors with no cursor theme installed;
+  * RANDR screen geometry and DPI;
+  * XFIXES/SHAPE/SYNC paths exercised by qxcb;
+  * MIT-SHM SysV and fd-backed upload where advertised;
+  * a separate XMIN_ENABLE_MITSHM=OFF run proving image-put fallback;
+  * malformed/missing DISPLAY, bad authority, server exit, and clean Qt error
+    handling; and
+  * two simultaneous Qt processes on the same Xmin display.
+
+Qt rasterizes modern text in the client.  Xmin's embedded server fonts do not
+provide Qt application fonts.  Package at least one licensed TrueType/OpenType
+font in Qt's fonts directory or set QT_QPA_FONTDIR to a bundled directory, and
+add a text-render/capture test.  This is a data packaging requirement, not a
+Fontconfig dependency.
+
+Gate: all tests pass with empty host font, cursor, XKB, and X11 data paths.
+
+Phase 6: minimize by measurement
+
+Only after the passing Qt build:
+
+  * obtain undefined-symbol sets from QtGui, QtXcbQpa, qxcb, and the helper
+    libraries;
+  * use link maps and --gc-sections reports to find unused objects;
+  * remove whole upstream translation units only when tests prove they are
+    unreachable;
+  * retain complete generated bindings for each selected wire protocol unless
+    there is a compelling and maintainable reason to generate a smaller API;
+  * decide whether xcb-cursor themes and Compose support belong in the normal
+    profile or an option; and
+  * compare source size, stripped DSO size, relocation count, startup time,
+    and resident memory before and after each reduction.
+
+Do not replace protocol parsers with optimistic stubs.  It is better to keep a
+small complete upstream module than to pass Qt's configure test but fail on an
+unusual reply or event.
+
+Gate: every reduction is represented in the importer allowlist/UPSTREAM.toml
+and preserves the complete acceptance suite.
+
+Phase 7: software OpenGL (separate milestone)
+
+The raster milestone intentionally uses -no-opengl.  This is enough to prove
+the minimal X client stack, but it is not enough for BRL-CAD applications that
+require QOpenGLWidget or Qt's desktop OpenGL APIs.
+
+Hardware acceleration remains out of scope.  Xmin's client-side OSMesa-backed
+libGL.so.1 is the intended renderer, not DRI/DRM.  However, Qt's current qxcb
+GLX integration is conditional on xcb_xlib and uses Xlib and Xlib internals
+substantially.  Xmin's current libGL bridge also expects several weak Xlib
+entry points for visual lookup, geometry, GC/image upload, flush, and sync.
+
+Evaluate two routes after raster is stable:
+
+  A. Import a measured libX11/libX11-xcb client subset into the Xmin support
+     package.  It must cover Qt's GLX integration and the weak Xlib operations
+     used by Xmin libGL, with locale, XIM, XKB data, Xcms, and unused transports
+     omitted where possible.  This minimizes Qt source changes but expands the
+     client library.
+
+  B. Add an Xmin-specific Qt OpenGL integration which passes the existing XCB
+     connection and native drawable IDs to a revised Xmin GL client API.  This
+     avoids Xlib entirely but creates a larger Qt patch and a project-specific
+     interface.
+
+Prototype both far enough to count retained source and patch size.  Prefer B
+if its API can remain small and stable; prefer A if the required libX11 subset
+is modest and significantly reduces Qt maintenance.  In either case configure
+Qt for desktop OpenGL against only Xmin's software library and keep EGL, DRI,
+DRM, GBM, Vulkan, and hardware GL absent.
+
+Reuse tests/qt/opengl.cpp as the first OpenGL gate, then add QOpenGLWidget and
+the smallest representative BRL-CAD viewer.  Audit NEEDED entries again: the
+only GL implementation should be the package-relative Xmin libGL/OSMesa path.
+
+The Xmin server's indirect GLX path is not a substitute for this milestone.
+Arbitrary Qt OpenGL 2.0/GLSL calls execute in the client and need the bundled
+software-direct bridge.
+
+Gate: Qt OpenGL 2.0 and QOpenGLWidget render/capture correctly with no host GL
+or X library and no graphics device.
+
+Phase 8: BRL-CAD/bext integration, only after the experiment
+
+Do not change bext during the experiment.  Once raster and, if required,
+software OpenGL pass:
+
+  * copy the reviewed patch into bext's Qt ExternalProject flow or reference
+    an agreed release copy;
+  * add Xmin/libXminClient as an explicit Qt build dependency;
+  * pass -xmin-x11 and Xmin_DIR through qt_config.cmake.in;
+  * retain bext's existing headless-backend failure check, now expecting xcb;
+  * install the Xmin runtime, qxcb plugin, fonts, and optional software GL as a
+    relocatable unit; and
+  * run a representative BRL-CAD Qt application, not only a synthetic Qt test.
+
+
+Risks and decision points
+-------------------------
+
+1. ABI/symbol collision
+   A monolithic library exporting standard xcb/xkbcommon symbols can conflict
+   with plugins that load system versions.  Resolve this before claiming broad
+   third-party plugin compatibility.
+
+2. Qt patch drift
+   The patch is tied to Qt 6.11.1 configure/CMake structure.  Keep it small,
+   explicit, and free of qxcb runtime changes so rebasing is a mechanical
+   source inspection rather than a port of a custom QPA plugin.
+
+3. XKB is the largest non-rendering client subsystem
+   Keep upstream code first.  Xmin's server-supplied map removes runtime data,
+   but not the need to construct a libxkbcommon keymap and state correctly.
+
+4. MIT-SHM version 1.2/fd passing
+   Qt may choose the fd path based on the server version.  Advertising it
+   without working descriptor passing will cause real backing-store failures.
+
+5. Cursor and Compose data
+   Cursor themes and Compose tables are optional conveniences, not hidden
+   dependencies.  Test their absence and make any bundled data explicit.
+
+6. Fonts
+   No-Fontconfig does not mean no font files.  A relocatable Qt package needs
+   an explicit application-font policy.
+
+7. OpenGL
+   A raster-only success must not be described as a complete BRL-CAD Qt
+   solution if BRL-CAD's selected targets require QOpenGLWidget.  Treat the
+   software GL milestone separately and keep all hardware paths disabled.
+
+8. Scope of DISPLAY support
+   A local-only Xmin profile can deliberately omit TCP/remote display support,
+   but the behavior and error reporting of xcb_connect() still need tests.
+
+
+Definition of success
+---------------------
+
+The raster experiment is successful when a clean machine can build the
+selected Qt 6.11.1 Core/Gui/Widgets/qxcb stack using Xmin::QtX11, run it on an
+authenticated Xmin display, render text and raster content, accept keyboard
+and pointer input, and pass the dependency audit without any installed X11 or
+graphics development/runtime package.
+
+The BRL-CAD target is successful when the same is true for a representative
+BRL-CAD Qt program, with the additional software-OpenGL milestone completed if
+that program requires Qt OpenGL.
