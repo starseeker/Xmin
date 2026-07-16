@@ -695,6 +695,8 @@ ServerState::clear_selections_for_window(std::uint32_t window_id)
 void
 ServerState::disconnect_client(std::uint32_t owner)
 {
+    if (server_grab_owner_ == owner)
+        server_grab_owner_ = 0;
     for (auto &window_entry : windows_)
         window_entry.second.event_masks.erase(owner);
     for (auto &selection : selections_) {

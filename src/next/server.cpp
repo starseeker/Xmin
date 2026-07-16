@@ -215,9 +215,15 @@ Server::run()
         descriptors.reserve(2 + clients.size());
         descriptors.push_back(pollfd{listener_.fd(), POLLIN, 0});
         descriptors.push_back(pollfd{pipe.value()[0].get(), POLLIN, 0});
+        const std::uint32_t grab_owner = state_.server_grab_owner();
         for (const auto &client : clients) {
+            short events = client.connection->poll_events();
+            if (grab_owner != 0 &&
+                client.connection->client_id() != grab_owner) {
+                events &= static_cast<short>(~POLLIN);
+            }
             descriptors.push_back(pollfd{
-                client.connection->fd(), client.connection->poll_events(), 0});
+                client.connection->fd(), events, 0});
         }
         const std::size_t polled_client_count = clients.size();
 
@@ -276,13 +282,20 @@ Server::run()
         std::vector<bool> remove(clients.size(), false);
         for (std::size_t index = 0; index < polled_client_count; ++index) {
             const short events = descriptors[index + 2].revents;
+            const std::uint32_t current_grab = state_.server_grab_owner();
+            const bool may_process = current_grab == 0 ||
+                current_grab == clients[index].connection->client_id();
             Result<void> operation = Result<void>::success();
             if ((events & POLLNVAL) != 0) {
                 operation = Result<void>::failure(
                     ErrorCode::io, "client descriptor became invalid");
             }
+            else if (!may_process && (events & POLLHUP) != 0) {
+                remove[index] = true;
+                continue;
+            }
             else {
-                if ((events & (POLLIN | POLLHUP)) != 0)
+                if (may_process && (events & (POLLIN | POLLHUP)) != 0)
                     operation = clients[index].connection->on_readable();
                 if (operation && !clients[index].connection->finished() &&
                     (events & POLLOUT) != 0) {

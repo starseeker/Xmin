@@ -396,6 +396,56 @@ geometry_round_trip(int descriptor, bool little)
 }
 
 bool
+send_simple_request(int descriptor, bool little, std::uint8_t opcode)
+{
+    std::vector<std::uint8_t> request(4);
+    request[0] = opcode;
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request);
+}
+
+bool
+synchronize(int descriptor, bool little, std::uint16_t sequence)
+{
+    if (!send_simple_request(descriptor, little, 43)) // GetInputFocus
+        return false;
+    std::vector<std::uint8_t> reply(32);
+    return read_exact(descriptor, reply) && reply[0] == 1 &&
+        get16(reply, 2, little) == sequence &&
+        get32(reply, 8, little) == root_window;
+}
+
+bool
+send_geometry_query(int descriptor, bool little)
+{
+    std::vector<std::uint8_t> request(8);
+    request[0] = 14;
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    return write_all(descriptor, request);
+}
+
+bool
+read_geometry_reply(int descriptor, bool little, std::uint16_t sequence)
+{
+    std::vector<std::uint8_t> reply(32);
+    return read_exact(descriptor, reply) && reply[0] == 1 && reply[1] == 24 &&
+        get16(reply, 2, little) == sequence &&
+        get32(reply, 8, little) == root_window;
+}
+
+bool
+remains_blocked(int descriptor)
+{
+    pollfd candidate{descriptor, POLLIN, 0};
+    int ready;
+    do {
+        ready = ::poll(&candidate, 1, 100);
+    } while (ready < 0 && errno == EINTR);
+    return ready == 0;
+}
+
+bool
 create_child(int descriptor, bool little, std::uint32_t id)
 {
     std::vector<std::uint8_t> request(32);
@@ -590,11 +640,21 @@ main(int argc, char **argv)
                     geometry_round_trip(first_client.get(), native) &&
                     geometry_round_trip(other_server_client.get(), native);
                 if (passed) {
-                    std::uint16_t second_sequence = 2;
+                    passed = send_simple_request(
+                        first_client.get(), native, 36) &&
+                        synchronize(first_client.get(), native, 3) &&
+                        send_geometry_query(second_client.get(), !native) &&
+                        remains_blocked(second_client.get()) &&
+                        send_simple_request(first_client.get(), native, 37) &&
+                        synchronize(first_client.get(), native, 5) &&
+                        read_geometry_reply(second_client.get(), !native, 2);
+                }
+                if (passed) {
+                    std::uint16_t second_sequence = 3;
                     passed = create_child(
                         first_client.get(), native, *first_base);
                     auto shared_tree = query_root(
-                        second_client.get(), !native, 2);
+                        second_client.get(), !native, second_sequence);
                     passed = passed && shared_tree &&
                         std::find(shared_tree->begin(), shared_tree->end(),
                                   *first_base) != shared_tree->end();
@@ -607,7 +667,7 @@ main(int argc, char **argv)
                         second_client.get(), !native, *first_base);
                     ++second_sequence;
                     passed = passed && read_client_message(
-                        first_client.get(), native, 3, *first_base);
+                        first_client.get(), native, 7, *first_base);
                     passed = passed &&
                         change_root_property(first_client.get(), native);
                     first_client = Fd();

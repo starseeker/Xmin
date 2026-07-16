@@ -181,6 +181,20 @@ public:
                                        std::uint32_t new_parent,
                                        std::int16_t x, std::int16_t y);
     void set_subwindows_mapped(std::uint32_t id, bool mapped);
+    void grab_server(std::uint32_t owner) noexcept
+    {
+        if (server_grab_owner_ == 0 || server_grab_owner_ == owner)
+            server_grab_owner_ = owner;
+    }
+    void ungrab_server(std::uint32_t owner) noexcept
+    {
+        if (server_grab_owner_ == owner)
+            server_grab_owner_ = 0;
+    }
+    [[nodiscard]] std::uint32_t server_grab_owner() const noexcept
+    {
+        return server_grab_owner_;
+    }
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
@@ -204,6 +218,7 @@ private:
     std::size_t pending_events_ = 0;
     std::uint32_t current_time_ = 1;
     std::uint32_t installed_colormap_ = default_colormap_id;
+    std::uint32_t server_grab_owner_ = 0;
     bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;

@@ -221,6 +221,11 @@ test_shared_server_state()
     server.pop_event(first_owner);
     server.window(xmin::next::root_window_id)
         ->event_masks.emplace(first_owner, 1);
+    server.grab_server(first_owner);
+    if (!expect(server.server_grab_owner() == first_owner,
+                "server grab owner was not recorded")) {
+        return false;
+    }
     server.disconnect_client(first_owner);
     return expect(server.window(first_owner) == nullptr,
                   "owner disconnect retained its window") &&
@@ -232,7 +237,9 @@ test_shared_server_state()
                "destroyed selection window remained the owner") &&
         expect(server.window(xmin::next::root_window_id)
                        ->event_masks.count(first_owner) == 0,
-               "disconnect retained an event selection");
+               "disconnect retained an event selection") &&
+        expect(server.server_grab_owner() == 0,
+               "disconnect retained a server grab");
 }
 
 bool

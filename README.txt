@@ -98,7 +98,9 @@ described in `modernize.txt`.  It no longer needs an inherited test socket: it o
 direct Unix-domain X11 listener, atomically reserves dynamic or explicit displays,
 recovers stale locks and sockets, reads bounded binary Xauthority records, assigns a
 distinct resource-ID range to each client, and multiplexes bounded nonblocking
-connections through one `poll` loop.  SIGINT/SIGTERM wake that loop through a pipe so
+connections through one `poll` loop.  Core server grabs mute request processing for
+other clients without blocking their output, and release on owner ungrab or disconnect.
+SIGINT/SIGTERM wake that loop through a pipe so
 normal RAII cleanup removes the display socket and lock.  Native- and opposite-endian
 raw clients cover fragmented setup/request input, authentication rejection, malformed
 length recovery, concurrent display allocation, simultaneous clients, and lifecycle

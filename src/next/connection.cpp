@@ -1843,6 +1843,26 @@ Connection::handle_send_event(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_grab_server(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    server_.grab_server(config_.resource_base);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_ungrab_server(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    server_.ungrab_server(config_.resource_base);
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_translate_coordinates(const RequestContext &context)
 {
     if (context.request.size() != 16)
@@ -3436,6 +3456,10 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_get_selection_owner;
         table[opcode_index(CoreOpcode::SendEvent)] =
             &Connection::handle_send_event;
+        table[opcode_index(CoreOpcode::GrabServer)] =
+            &Connection::handle_grab_server;
+        table[opcode_index(CoreOpcode::UngrabServer)] =
+            &Connection::handle_ungrab_server;
         table[opcode_index(CoreOpcode::TranslateCoordinates)] =
             &Connection::handle_translate_coordinates;
         table[opcode_index(CoreOpcode::CreatePixmap)] =

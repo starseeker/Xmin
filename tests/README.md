@@ -62,7 +62,8 @@ queries and colormap install/copy/free semantics, and synthetic client-message
 delivery. It checks an unadvertised opcode at 255
 cannot escape the 128-slot core table, and proves that one client's window is visible
 to another while a 32-bit property remains correctly encoded for the opposite-endian
-client after disconnect teardown.
+client after disconnect teardown. The standalone two-client test also proves that a
+server grab defers the opposite-endian client's request until the owner ungrabs.
 The next-server graphics vertical slice independently covers surface allocation caps,
 plane masks, overlap-safe self-copy, canonical GC clip-region unions and origins,
 clipped point/line/segment/rectangle drawing, and

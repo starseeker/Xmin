@@ -35,6 +35,10 @@ public:
     Result<void> serve();
 
     [[nodiscard]] int fd() const noexcept { return socket_.get(); }
+    [[nodiscard]] std::uint32_t client_id() const noexcept
+    {
+        return config_.resource_base;
+    }
     [[nodiscard]] short poll_events() const noexcept;
     [[nodiscard]] bool finished() const noexcept { return finished_; }
 
@@ -95,6 +99,8 @@ private:
     Result<void> handle_set_selection_owner(const RequestContext &context);
     Result<void> handle_get_selection_owner(const RequestContext &context);
     Result<void> handle_send_event(const RequestContext &context);
+    Result<void> handle_grab_server(const RequestContext &context);
+    Result<void> handle_ungrab_server(const RequestContext &context);
     Result<void> handle_translate_coordinates(const RequestContext &context);
     Result<void> handle_create_pixmap(const RequestContext &context);
     Result<void> handle_free_pixmap(const RequestContext &context);

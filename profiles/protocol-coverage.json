@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "2b8831c9efbc6ab272ded5073d02e07f942c97447e3b9ecc40876073bcd16196",
+    "policy_sha256": "526e1484289aad7d30370d499b289e84ce3f38d61859f99b724e448e90f2e6bb",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -384,14 +384,14 @@
       "name": "GrabServer",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 37,
       "name": "UngrabServer",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 38,
