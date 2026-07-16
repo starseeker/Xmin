@@ -1,5 +1,6 @@
 add_library(xmin_next_core STATIC
   atom_table.cpp
+  clock.cpp
   color.cpp
   connection.cpp
   display_socket.cpp

@@ -100,6 +100,8 @@ recovers stale locks and sockets, reads bounded binary Xauthority records, assig
 distinct resource-ID range to each client, and multiplexes bounded nonblocking
 connections through one `poll` loop.  Core server grabs mute request processing for
 other clients without blocking their output, and release on owner ungrab or disconnect.
+An injected monotonic clock supplies poll deadlines without mutable global time, so
+fake-clock tests can advance scheduled work without sleeping.
 SIGINT/SIGTERM wake that loop through a pipe so
 normal RAII cleanup removes the display socket and lock.  Native- and opposite-endian
 raw clients cover fragmented setup/request input, authentication rejection, malformed
@@ -150,7 +152,9 @@ failure.  Pointer grabs whose grab or confinement window loses viewability now e
 the typed `NotifyUngrab` path before the normal crossing and release only when the
 whole transition commits.  Keyboard grabs follow the analogous focus path back to
 the real focus, including Xorg's nonlinear out/in pair when the grab and focus window
-coincide, before normal reversion.  Repeat timers remain a later vertical slice.
+coincide, before normal reversion.  Key repeat uses Xorg's 660 ms delay and 40 ms
+interval, emits each release/press pair atomically without changing persistent key
+state, obeys global and per-key controls, bounds catch-up, and cancels on release.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Explicit grabs
 and ungrabs now atomically emit their typed `NotifyGrab`/`NotifyUngrab` crossing and

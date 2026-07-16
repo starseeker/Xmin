@@ -211,6 +211,7 @@ Server::run()
     std::vector<bool> slots(maximum_clients_, false);
 
     for (;;) {
+        static_cast<void>(state_.process_timers());
         std::vector<pollfd> descriptors;
         descriptors.reserve(2 + clients.size());
         descriptors.push_back(pollfd{listener_.fd(), POLLIN, 0});
@@ -231,7 +232,8 @@ Server::run()
         do {
             ready = ::poll(
                 descriptors.data(),
-                static_cast<nfds_t>(descriptors.size()), -1);
+                static_cast<nfds_t>(descriptors.size()),
+                state_.timer_timeout_milliseconds());
         } while (ready < 0 && errno == EINTR);
         if (ready < 0)
             return io_failure("poll");
@@ -295,11 +297,13 @@ Server::run()
                 continue;
             }
             else {
-                if (may_process && (events & (POLLIN | POLLHUP)) != 0)
-                    operation = clients[index].connection->on_readable();
-                if (operation && !clients[index].connection->finished() &&
-                    (events & POLLOUT) != 0) {
+                if (may_process && (events & POLLOUT) != 0) {
                     operation = clients[index].connection->on_writable();
+                }
+                if (operation && !clients[index].connection->finished() &&
+                    may_process &&
+                    (events & (POLLIN | POLLHUP)) != 0) {
+                    operation = clients[index].connection->on_readable();
                 }
                 if (operation && !clients[index].connection->finished() &&
                     (events & POLLHUP) != 0 &&

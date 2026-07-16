@@ -89,8 +89,9 @@ passive_grab_modifiers(std::uint16_t modifiers) noexcept
     return result;
 }
 
-ServerState::ServerState(std::uint16_t width, std::uint16_t height)
-    : width_(width), height_(height)
+ServerState::ServerState(std::uint16_t width, std::uint16_t height,
+                         Clock &clock)
+    : width_(width), height_(height), clock_(clock)
 {
     input_.pointer_x = width / 2;
     input_.pointer_y = height / 2;
@@ -1609,6 +1610,135 @@ ServerState::refresh_modifier_button_mask() noexcept
 }
 
 EventDelivery
+ServerState::repeat_key(std::uint8_t detail)
+{
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    std::uint32_t source = pointer_window;
+    std::uint32_t propagation_stop = root_window_id;
+    if (input_.focus.kind == FocusKind::none) {
+        source = 0;
+    }
+    else if (input_.focus.kind == FocusKind::window) {
+        propagation_stop = input_.focus.window;
+        if (pointer_window != input_.focus.window &&
+            !is_descendant(pointer_window, input_.focus.window)) {
+            source = input_.focus.window;
+        }
+    }
+
+    std::uint16_t press_state = input_.modifier_button_mask;
+    for (std::size_t group = 0; group < 8; ++group) {
+        bool contains_key = false;
+        bool another_pressed = false;
+        for (std::size_t index = 0;
+             index < input_.modifier_keys_per_group; ++index) {
+            const std::uint8_t keycode = input_.modifier_map[
+                group * input_.modifier_keys_per_group + index];
+            contains_key = contains_key || keycode == detail;
+            if (keycode != 0 && keycode != detail &&
+                (input_.pressed_keys[keycode >> 3] &
+                 (1U << (keycode & 7U))) != 0) {
+                another_pressed = true;
+            }
+        }
+        if (contains_key && !another_pressed) {
+            press_state &= static_cast<std::uint16_t>(~(1U << group));
+        }
+    }
+
+    std::vector<PlannedEvent> events;
+    bool delivered = false;
+    const ActiveGrab *grab = input_.keyboard_grab
+        ? &*input_.keyboard_grab
+        : nullptr;
+    for (const auto &repeated :
+         std::array<std::pair<std::uint8_t, std::uint16_t>, 2>{{
+             {3, input_.modifier_button_mask}, {2, press_state}}}) {
+        CoreInputEvent event;
+        event.type = repeated.first;
+        event.detail = detail;
+        event.time = current_time_;
+        event.root = root_window_id;
+        event.root_x = wire_coordinate(input_.pointer_x);
+        event.root_y = wire_coordinate(input_.pointer_y);
+        event.state = repeated.second;
+        const EventDelivery routed = source == 0
+            ? EventDelivery::no_recipient
+            : route_input_event(
+                event, repeated.first == 2 ? 1U << 0 : 1U << 1,
+                source, propagation_stop, pointer_window, grab, events);
+        if (routed == EventDelivery::queue_full)
+            return routed;
+        delivered = delivered || routed == EventDelivery::delivered;
+    }
+    if (!queue_events_atomically(events))
+        return EventDelivery::queue_full;
+    return delivered ? EventDelivery::delivered
+                     : EventDelivery::no_recipient;
+}
+
+void
+ServerState::update_repeat_controls() noexcept
+{
+    if (!key_repeat_)
+        return;
+    const std::uint8_t key = key_repeat_->key;
+    const bool pressed = (input_.pressed_keys[key >> 3] &
+                          (1U << (key & 7U))) != 0;
+    const bool enabled = input_.global_auto_repeat &&
+        (input_.auto_repeats[key >> 3] & (1U << (key & 7U))) != 0;
+    if (!pressed || !enabled)
+        key_repeat_.reset();
+}
+
+int
+ServerState::timer_timeout_milliseconds() const noexcept
+{
+    if (!key_repeat_)
+        return -1;
+    const auto remaining = key_repeat_->deadline - clock_.now();
+    if (remaining <= Clock::time_point::duration::zero())
+        return 0;
+    auto milliseconds = std::chrono::duration_cast<
+        std::chrono::milliseconds>(remaining);
+    if (milliseconds < remaining)
+        milliseconds += std::chrono::milliseconds{1};
+    if (milliseconds.count() > std::numeric_limits<int>::max())
+        return std::numeric_limits<int>::max();
+    return static_cast<int>(milliseconds.count());
+}
+
+EventDelivery
+ServerState::process_timers()
+{
+    update_repeat_controls();
+    if (!key_repeat_)
+        return EventDelivery::no_recipient;
+    const auto now = clock_.now();
+    bool delivered = false;
+    constexpr std::size_t maximum_repeat_burst = 32;
+    std::size_t repeated = 0;
+    while (key_repeat_ && key_repeat_->deadline <= now &&
+           repeated < maximum_repeat_burst) {
+        const std::uint8_t key = key_repeat_->key;
+        advance_time();
+        const EventDelivery result = repeat_key(key);
+        if (result == EventDelivery::queue_full) {
+            key_repeat_->deadline = now + default_repeat_interval;
+            return result;
+        }
+        delivered = delivered || result == EventDelivery::delivered;
+        key_repeat_->deadline += default_repeat_interval;
+        ++repeated;
+    }
+    if (key_repeat_ && key_repeat_->deadline <= now)
+        key_repeat_->deadline = now + default_repeat_interval;
+    return delivered ? EventDelivery::delivered
+                     : EventDelivery::no_recipient;
+}
+
+EventDelivery
 ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
                           std::int32_t root_x, std::int32_t root_y)
 {
@@ -1838,6 +1968,15 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
          input_.pointer_grab->automatic) &&
         input_.pressed_buttons.none()) {
         input_.pointer_grab.reset();
+    }
+    if (type == 2 && input_.global_auto_repeat &&
+        (input_.auto_repeats[detail >> 3] &
+         (1U << (detail & 7U))) != 0) {
+        key_repeat_ = KeyRepeat{
+            detail, clock_.now() + default_repeat_delay};
+    }
+    else if (type == 3 && key_repeat_ && key_repeat_->key == detail) {
+        key_repeat_.reset();
     }
     return delivered;
 }

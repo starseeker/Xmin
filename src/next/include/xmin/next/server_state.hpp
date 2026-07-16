@@ -3,6 +3,7 @@
 
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/client_event.hpp"
+#include "xmin/next/clock.hpp"
 #include "xmin/next/generated/core_keymap.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/surface.hpp"
@@ -34,6 +35,8 @@ constexpr std::size_t maximum_passive_grabs_per_client = 256;
 constexpr std::size_t maximum_passive_grabs = 4096;
 constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
+inline constexpr auto default_repeat_delay = std::chrono::milliseconds{660};
+inline constexpr auto default_repeat_interval = std::chrono::milliseconds{40};
 
 enum class WindowClass : std::uint16_t {
     input_output = 1,
@@ -246,7 +249,8 @@ enum class PassiveGrabUpdate {
 
 class ServerState {
 public:
-    ServerState(std::uint16_t width, std::uint16_t height);
+    ServerState(std::uint16_t width, std::uint16_t height,
+                Clock &clock = default_clock());
 
     [[nodiscard]] std::uint16_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint16_t height() const noexcept { return height_; }
@@ -314,6 +318,9 @@ public:
     [[nodiscard]] EventDelivery inject_input(
         std::uint8_t type, std::uint8_t detail,
         std::int32_t root_x, std::int32_t root_y);
+    [[nodiscard]] EventDelivery process_timers();
+    [[nodiscard]] int timer_timeout_milliseconds() const noexcept;
+    void update_repeat_controls() noexcept;
     [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
     [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
     void pop_event(std::uint32_t client);
@@ -368,6 +375,11 @@ public:
 private:
     using PlannedEvent = std::pair<std::uint32_t, ClientEvent>;
 
+    struct KeyRepeat {
+        std::uint8_t key = 0;
+        Clock::time_point deadline;
+    };
+
     AtomTable atoms_;
     ResourceRegistry resources_;
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
@@ -386,7 +398,9 @@ private:
     std::uint32_t current_time_ = 1;
     std::uint32_t installed_colormap_ = default_colormap_id;
     std::uint32_t server_grab_owner_ = 0;
+    Clock &clock_;
     InputState input_;
+    std::optional<KeyRepeat> key_repeat_;
     std::vector<PassiveGrab> passive_grabs_;
     bool scene_dirty_ = true;
 
@@ -403,6 +417,7 @@ private:
         std::uint32_t source, std::uint32_t propagation_stop,
         std::uint32_t pointer_window, const ActiveGrab *grab,
         std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] EventDelivery repeat_key(std::uint8_t detail);
     [[nodiscard]] EventDelivery append_crossing_events(
         std::uint32_t from, std::uint32_t to,
         std::int32_t root_x, std::int32_t root_y,

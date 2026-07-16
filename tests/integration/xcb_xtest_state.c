@@ -1,3 +1,5 @@
+#include <errno.h>
+#include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -29,6 +31,26 @@ poll_event_type(xcb_connection_t *connection, uint8_t type)
         free(event);
     }
     return NULL;
+}
+
+static xcb_generic_event_t *
+wait_event_type(xcb_connection_t *connection, uint8_t type)
+{
+    xcb_generic_event_t *event = poll_event_type(connection, type);
+    if (event != NULL)
+        return event;
+    struct pollfd descriptor = {
+        .fd = xcb_get_file_descriptor(connection),
+        .events = POLLIN,
+        .revents = 0,
+    };
+    int ready;
+    do {
+        ready = poll(&descriptor, 1, 2000);
+    } while (ready < 0 && errno == EINTR);
+    if (ready <= 0 || (descriptor.revents & POLLIN) == 0)
+        return NULL;
+    return poll_event_type(connection, type);
 }
 
 int
@@ -122,6 +144,34 @@ main(void)
         connection, xcb_query_keymap(connection), &error);
     if (error != NULL || keys == NULL || (keys->keys[12] & 1U) == 0) {
         fprintf(stderr, "XTEST key state was not observable\n");
+        free(keys);
+        goto cleanup;
+    }
+    free(keys);
+    event = wait_event_type(connection, XCB_KEY_RELEASE);
+    xcb_key_release_event_t *repeat_release =
+        (xcb_key_release_event_t *) event;
+    if (repeat_release == NULL || repeat_release->detail != 96 ||
+        repeat_release->event != screen->root) {
+        fprintf(stderr, "key repeat release failed\n");
+        free(event);
+        goto cleanup;
+    }
+    const xcb_timestamp_t repeat_time = repeat_release->time;
+    free(event);
+    event = wait_event_type(connection, XCB_KEY_PRESS);
+    key_event = (xcb_key_press_event_t *) event;
+    if (key_event == NULL || key_event->detail != 96 ||
+        key_event->event != screen->root || key_event->time != repeat_time) {
+        fprintf(stderr, "key repeat press failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    keys = xcb_query_keymap_reply(
+        connection, xcb_query_keymap(connection), &error);
+    if (error != NULL || keys == NULL || (keys->keys[12] & 1U) == 0) {
+        fprintf(stderr, "key repeat changed persistent key state\n");
         free(keys);
         goto cleanup;
     }

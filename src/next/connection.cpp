@@ -4385,6 +4385,7 @@ Connection::handle_change_keyboard_control(const RequestContext &context)
     updated.key_click_percent = key_click_percent;
     updated.bell_percent = bell_percent;
     updated.global_auto_repeat = global_auto_repeat;
+    server_.update_repeat_controls();
     return Result<void>::success();
 }
 
@@ -5278,10 +5279,12 @@ Connection::serve()
         return prepared;
 
     while (!finished_) {
+        static_cast<void>(server_.process_timers());
         pollfd descriptor{socket_.get(), poll_events(), 0};
         int result;
         do {
-            result = ::poll(&descriptor, 1, -1);
+            result = ::poll(
+                &descriptor, 1, server_.timer_timeout_milliseconds());
         } while (result < 0 && errno == EINTR);
         if (result < 0)
             return io_failure("poll");
@@ -5289,7 +5292,13 @@ Connection::serve()
             return Result<void>::failure(ErrorCode::io,
                                          "client descriptor became invalid");
         }
-        if ((descriptor.revents & (POLLIN | POLLHUP)) != 0) {
+        if ((descriptor.revents & POLLOUT) != 0) {
+            auto written = on_writable();
+            if (!written)
+                return written;
+        }
+        if (!finished_ &&
+            (descriptor.revents & (POLLIN | POLLHUP)) != 0) {
             auto read = on_readable();
             if (!read)
                 return read;
@@ -5297,11 +5306,6 @@ Connection::serve()
         if (!finished_ && (descriptor.revents & POLLHUP) != 0 &&
             (descriptor.revents & POLLOUT) == 0) {
             return Result<void>::success();
-        }
-        if (!finished_ && (descriptor.revents & POLLOUT) != 0) {
-            auto written = on_writable();
-            if (!written)
-                return written;
         }
         if (!finished_ && (descriptor.revents & POLLERR) != 0 &&
             (descriptor.revents & (POLLIN | POLLOUT | POLLHUP)) == 0) {

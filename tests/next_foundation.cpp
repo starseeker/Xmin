@@ -11,16 +11,31 @@
 
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdint>
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <optional>
 #include <string>
 #include <variant>
 #include <vector>
 #include <unistd.h>
 
 namespace {
+
+class ManualClock final : public xmin::next::Clock {
+public:
+    [[nodiscard]] time_point now() const noexcept override { return now_; }
+
+    void advance(std::chrono::milliseconds elapsed) noexcept
+    {
+        now_ += elapsed;
+    }
+
+private:
+    time_point now_{};
+};
 
 bool
 expect(bool condition, const char *message)
@@ -625,6 +640,180 @@ test_input_routing()
         : std::get_if<xmin::next::CoreInputEvent>(queued);
     return expect(key != nullptr && key->type == 3 && key->detail == 40,
                   "passive grab release event was not delivered");
+}
+
+bool
+test_key_repeat_timers()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t key_mask = (1U << 0) | (1U << 1);
+    constexpr std::uint8_t keycode = 96;
+    ManualClock clock;
+    xmin::next::ServerState server(100, 80, clock);
+    if (!expect(server.register_client(owner),
+                "repeat-timer client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 59);
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window,
+                    xmin::next::root_window_id, 0, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "repeat-timer focus setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, key_mask);
+
+    const auto key = [&](std::uint8_t type,
+                         std::optional<std::uint32_t> time = std::nullopt) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CoreInputEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == keycode &&
+            value->event == xmin::next::root_window_id &&
+            value->state == 0 && value->sequence == 59 &&
+            (!time || value->time == *time);
+        const std::uint32_t event_time = value == nullptr ? 0 : value->time;
+        server.pop_event(owner);
+        return std::pair<bool, std::uint32_t>{matches, event_time};
+    };
+
+    if (!expect(server.inject_input(2, keycode, 50, 40) ==
+                    xmin::next::EventDelivery::delivered,
+                "repeat-timer key press failed")) {
+        return false;
+    }
+    const auto initial_press = key(2);
+    if (!expect(initial_press.first &&
+                    server.timer_timeout_milliseconds() == 660,
+                "repeat delay was not armed")) {
+        return false;
+    }
+    clock.advance(std::chrono::milliseconds{659});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    !server.has_pending_event(owner) &&
+                    server.timer_timeout_milliseconds() == 1,
+                "repeat fired before its initial deadline")) {
+        return false;
+    }
+    clock.advance(std::chrono::milliseconds{1});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::delivered,
+                "repeat deadline did not fire")) {
+        return false;
+    }
+    const auto first_release = key(3);
+    const auto first_repeat = key(2, first_release.second);
+    if (!expect(first_release.first && first_repeat.first &&
+                    first_release.second > initial_press.second &&
+                    (server.input().pressed_keys[keycode >> 3] &
+                     (1U << (keycode & 7U))) != 0 &&
+                    server.timer_timeout_milliseconds() == 40,
+                "repeat pair changed persistent key state or timestamps")) {
+        return false;
+    }
+
+    clock.advance(std::chrono::milliseconds{80});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::delivered,
+                "repeat interval catch-up failed")) {
+        return false;
+    }
+    for (std::size_t pair = 0; pair < 2; ++pair) {
+        const auto release = key(3);
+        const auto press = key(2, release.second);
+        if (!expect(release.first && press.first,
+                    "repeat catch-up pair is malformed")) {
+            return false;
+        }
+    }
+    if (!expect(!server.has_pending_event(owner) &&
+                    server.inject_input(3, keycode, 50, 40) ==
+                        xmin::next::EventDelivery::delivered &&
+                    key(3).first &&
+                    server.timer_timeout_milliseconds() == -1,
+                "physical release did not cancel repeat")) {
+        return false;
+    }
+
+    server.input().global_auto_repeat = false;
+    server.update_repeat_controls();
+    if (!expect(server.inject_input(2, keycode, 50, 40) ==
+                    xmin::next::EventDelivery::delivered &&
+                    key(2).first &&
+                    server.timer_timeout_milliseconds() == -1 &&
+                    server.inject_input(3, keycode, 50, 40) ==
+                        xmin::next::EventDelivery::delivered &&
+                    key(3).first,
+                "global repeat disable was ignored")) {
+        return false;
+    }
+    server.input().global_auto_repeat = true;
+    server.input().auto_repeats[keycode >> 3] &=
+        static_cast<std::uint8_t>(~(1U << (keycode & 7U)));
+    server.update_repeat_controls();
+    if (!expect(server.inject_input(2, keycode, 50, 40) ==
+                    xmin::next::EventDelivery::delivered &&
+                    key(2).first &&
+                    server.timer_timeout_milliseconds() == -1 &&
+                    server.inject_input(3, keycode, 50, 40) ==
+                        xmin::next::EventDelivery::delivered &&
+                    key(3).first,
+                "per-key repeat disable was ignored")) {
+        return false;
+    }
+    server.input().auto_repeats[keycode >> 3] |=
+        static_cast<std::uint8_t>(1U << (keycode & 7U));
+
+    if (!expect(server.inject_input(2, keycode, 50, 40) ==
+                    xmin::next::EventDelivery::delivered &&
+                    key(2).first,
+                "repeat queue-pressure key press failed")) {
+        return false;
+    }
+    xmin::next::ClientMessageEvent message;
+    message.window = xmin::next::root_window_id;
+    for (std::size_t count = 0;
+         count + 1 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        xmin::next::root_window_id, key_mask, false,
+                        message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "repeat queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    clock.advance(xmin::next::default_repeat_delay);
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::queue_full &&
+                    server.timer_timeout_milliseconds() == 40 &&
+                    (server.input().pressed_keys[keycode >> 3] &
+                     (1U << (keycode & 7U))) != 0,
+                "repeat queue failure changed timer or key state")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "repeat queue failure left a partial event pair")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 1 == xmin::next::maximum_pending_events_per_client &&
+            server.inject_input(3, keycode, 50, 40) ==
+                xmin::next::EventDelivery::delivered &&
+            key(3).first && server.timer_timeout_milliseconds() == -1,
+        "repeat queue failure changed the existing event count");
 }
 
 bool
@@ -2226,7 +2415,7 @@ main()
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_passive_grabs() &&
-            test_input_routing() &&
+            test_input_routing() && test_key_repeat_timers() &&
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
             test_focus_events() &&
