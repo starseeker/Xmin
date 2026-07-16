@@ -152,7 +152,10 @@ whole transition commits.  Keyboard grabs follow the analogous focus path back t
 the real focus, including Xorg's nonlinear out/in pair when the grab and focus window
 coincide, before normal reversion.  Repeat timers remain a later vertical slice.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
-timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
+timestamps, cross-client exclusion, and disconnect/window teardown.  Explicit grabs
+and ungrabs now atomically emit their typed `NotifyGrab`/`NotifyUngrab` crossing and
+focus paths before replies, preserving X11 wire sequence order; passive key grabs use
+the same focus transaction around the triggering press and release.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with
 atomic wildcard subtraction, cross-client conflict checks, and lifecycle cleanup.  A
 bounded four-format `Surface` value now backs windows and typed pixmap records; the first GC

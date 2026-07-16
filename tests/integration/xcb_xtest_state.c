@@ -667,6 +667,176 @@ main(void)
     }
     free(reparent_focus);
 
+    xcb_grab_pointer_reply_t *explicit_pointer = xcb_grab_pointer_reply(
+        connection,
+        xcb_grab_pointer(
+            connection, 0, reparent_parent,
+            XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE, XCB_NONE,
+            XCB_CURRENT_TIME),
+        &error);
+    if (error != NULL || explicit_pointer == NULL ||
+        explicit_pointer->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "explicit pointer grab failed\n");
+        free(explicit_pointer);
+        goto cleanup;
+    }
+    free(explicit_pointer);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child ||
+        leave_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit pointer grab LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != reparent_parent ||
+        enter_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit pointer grab EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection,
+                 xcb_ungrab_pointer_checked(connection, XCB_CURRENT_TIME),
+                 "explicit pointer ungrab")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "explicit pointer ungrab LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "explicit pointer ungrab EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
+    xcb_grab_keyboard_cookie_t explicit_keyboard_cookie =
+        xcb_grab_keyboard(
+            connection, 0, child, XCB_CURRENT_TIME,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC);
+    xcb_grab_keyboard_reply_t *explicit_keyboard =
+        xcb_grab_keyboard_reply(
+            connection, explicit_keyboard_cookie, &error);
+    if (error != NULL || explicit_keyboard == NULL ||
+        explicit_keyboard->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr,
+                "explicit keyboard grab failed: error=%u status=%u "
+                "connection=%d sequence=%u\n",
+                error == NULL ? 0 : error->error_code,
+                explicit_keyboard == NULL ? 255 : explicit_keyboard->status,
+                xcb_connection_has_error(connection),
+                explicit_keyboard_cookie.sequence);
+        free(error);
+        error = NULL;
+        free(explicit_keyboard);
+        goto cleanup;
+    }
+    free(explicit_keyboard);
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_POINTER ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit keyboard grab pointer FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_POINTER ||
+        focus_event->event != reparent_parent ||
+        focus_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit keyboard grab parent FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit keyboard grab root FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_VIRTUAL ||
+        focus_event->event != reparent_parent ||
+        focus_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit keyboard grab parent FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "explicit keyboard grab FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection,
+                 xcb_ungrab_keyboard_checked(connection, XCB_CURRENT_TIME),
+                 "explicit keyboard ungrab")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "explicit keyboard ungrab FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "explicit keyboard ungrab FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
     xcb_grab_pointer_reply_t *view_loss_grab = xcb_grab_pointer_reply(
         connection,
         xcb_grab_pointer(

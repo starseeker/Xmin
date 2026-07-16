@@ -689,6 +689,96 @@ ServerState::set_input_focus(FocusKind kind, std::uint32_t window_id,
     return FocusUpdate::updated;
 }
 
+EventDelivery
+ServerState::activate_pointer_grab(ActiveGrab grab)
+{
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    const std::uint32_t old_window = input_.pointer_grab
+        ? input_.pointer_grab->window
+        : pointer_window;
+    std::vector<PlannedEvent> events;
+    const EventDelivery crossing = append_crossing_events(
+        old_window, grab.window, input_.pointer_x, input_.pointer_y,
+        input_.modifier_button_mask, 1, nullptr, input_.focus, events);
+    if (crossing == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return EventDelivery::queue_full;
+    }
+    input_.pointer_grab_time = grab.activated_at;
+    input_.pointer_grab = std::move(grab);
+    return crossing;
+}
+
+EventDelivery
+ServerState::deactivate_pointer_grab()
+{
+    if (!input_.pointer_grab)
+        return EventDelivery::no_recipient;
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    std::vector<PlannedEvent> events;
+    const EventDelivery crossing = append_crossing_events(
+        input_.pointer_grab->window, pointer_window,
+        input_.pointer_x, input_.pointer_y,
+        input_.modifier_button_mask, 2, nullptr, input_.focus, events);
+    if (crossing == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return EventDelivery::queue_full;
+    }
+    input_.pointer_grab.reset();
+    return crossing;
+}
+
+EventDelivery
+ServerState::activate_keyboard_grab(ActiveGrab grab)
+{
+    FocusState old_focus = input_.focus;
+    if (input_.keyboard_grab) {
+        old_focus.kind = FocusKind::window;
+        old_focus.window = input_.keyboard_grab->window;
+    }
+    FocusState grabbed_focus = input_.focus;
+    grabbed_focus.kind = FocusKind::window;
+    grabbed_focus.window = grab.window;
+    std::vector<PlannedEvent> events;
+    EventDelivery focus = EventDelivery::no_recipient;
+    if (!input_.keyboard_grab || old_focus.window != grab.window) {
+        const std::uint32_t pointer_window = deepest_window_at(
+            root_window_id, input_.pointer_x, input_.pointer_y);
+        focus = append_focus_events(
+            old_focus, grabbed_focus, 1, pointer_window, events);
+    }
+    if (focus == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return EventDelivery::queue_full;
+    }
+    input_.keyboard_grab_time = grab.activated_at;
+    input_.keyboard_grab = std::move(grab);
+    return focus;
+}
+
+EventDelivery
+ServerState::deactivate_keyboard_grab()
+{
+    if (!input_.keyboard_grab)
+        return EventDelivery::no_recipient;
+    FocusState grabbed_focus = input_.focus;
+    grabbed_focus.kind = FocusKind::window;
+    grabbed_focus.window = input_.keyboard_grab->window;
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    std::vector<PlannedEvent> events;
+    const EventDelivery focus = append_focus_events(
+        grabbed_focus, input_.focus, 2, pointer_window, events);
+    if (focus == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return EventDelivery::queue_full;
+    }
+    input_.keyboard_grab.reset();
+    return focus;
+}
+
 std::uint32_t
 ServerState::selection_owner(AtomId selection) const
 {
@@ -1604,6 +1694,7 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     std::vector<PlannedEvent> events;
     EventDelivery crossing = EventDelivery::no_recipient;
     EventDelivery grab_crossing = EventDelivery::no_recipient;
+    EventDelivery grab_focus = EventDelivery::no_recipient;
     if (motion_event && previous_pointer_window != pointer_window) {
         crossing = append_crossing_events(
             previous_pointer_window, pointer_window, event_x, event_y,
@@ -1622,6 +1713,15 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
             state_after_press, 1, nullptr, input_.focus, events);
         if (grab_crossing == EventDelivery::queue_full)
             return grab_crossing;
+    }
+    if (type == 2 && activated) {
+        FocusState grabbed_focus = input_.focus;
+        grabbed_focus.kind = FocusKind::window;
+        grabbed_focus.window = activated->window;
+        grab_focus = append_focus_events(
+            input_.focus, grabbed_focus, 1, pointer_window, events);
+        if (grab_focus == EventDelivery::queue_full)
+            return grab_focus;
     }
     const std::size_t route_start = events.size();
     const EventDelivery routed = source == 0 ||
@@ -1679,11 +1779,23 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         if (grab_crossing == EventDelivery::queue_full)
             return grab_crossing;
     }
+    const bool releases_keyboard_grab = type == 3 && grab != nullptr &&
+        grab->passive && grab->passive_detail == detail;
+    if (releases_keyboard_grab) {
+        FocusState grabbed_focus = input_.focus;
+        grabbed_focus.kind = FocusKind::window;
+        grabbed_focus.window = grab->window;
+        grab_focus = append_focus_events(
+            grabbed_focus, input_.focus, 2, pointer_window, events);
+        if (grab_focus == EventDelivery::queue_full)
+            return grab_focus;
+    }
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
     const EventDelivery delivered =
         crossing == EventDelivery::delivered ||
         grab_crossing == EventDelivery::delivered ||
+        grab_focus == EventDelivery::delivered ||
         routed == EventDelivery::delivered
         ? EventDelivery::delivered
         : EventDelivery::no_recipient;
@@ -1706,18 +1818,21 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     }
     refresh_modifier_button_mask();
     if (activated) {
-        if (key_event)
+        if (key_event) {
             input_.keyboard_grab = *activated;
-        else
+            input_.keyboard_grab_time = activated->activated_at;
+        }
+        else {
             input_.pointer_grab = *activated;
+            input_.pointer_grab_time = activated->activated_at;
+        }
     }
-    if (automatic)
+    if (automatic) {
         input_.pointer_grab = *automatic;
-    if (type == 3 && input_.keyboard_grab &&
-        input_.keyboard_grab->passive &&
-        input_.keyboard_grab->passive_detail == detail) {
-        input_.keyboard_grab.reset();
+        input_.pointer_grab_time = automatic->activated_at;
     }
+    if (releases_keyboard_grab)
+        input_.keyboard_grab.reset();
     if (type == 5 && input_.pointer_grab &&
         (input_.pointer_grab->passive ||
          input_.pointer_grab->automatic) &&

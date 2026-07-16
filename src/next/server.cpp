@@ -301,6 +301,12 @@ Server::run()
                     (events & POLLOUT) != 0) {
                     operation = clients[index].connection->on_writable();
                 }
+                if (operation && !clients[index].connection->finished() &&
+                    (events & POLLHUP) != 0 &&
+                    (events & POLLOUT) == 0) {
+                    remove[index] = true;
+                    continue;
+                }
                 if (operation && (events & POLLERR) != 0 &&
                     (events & (POLLIN | POLLOUT | POLLHUP)) == 0) {
                     operation = Result<void>::failure(

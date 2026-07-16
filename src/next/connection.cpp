@@ -2035,11 +2035,16 @@ Connection::handle_grab_pointer(const RequestContext &context)
         status = 2; // GrabInvalidTime
     }
     else {
-        input.pointer_grab = ActiveGrab{
+        const auto activated = server_.activate_pointer_grab(ActiveGrab{
             config_.resource_base, *window_id, *confine_to, effective_time,
-            *event_mask, *pointer_mode, *keyboard_mode, context.data != 0};
-        input.pointer_grab_time = effective_time;
+            *event_mask, *pointer_mode, *keyboard_mode, context.data != 0});
+        if (activated == EventDelivery::queue_full)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
     }
+    auto drained = drain_pending_events();
+    if (!drained)
+        return drained;
 
     WireWriter reply(context.order);
     reply.u8(1);
@@ -2069,9 +2074,13 @@ Connection::handle_ungrab_pointer(const RequestContext &context)
         !timestamp_later(effective_time, server_.current_time()) &&
         !timestamp_earlier(effective_time,
                            input.pointer_grab->activated_at)) {
-        input.pointer_grab.reset();
+        if (server_.deactivate_pointer_grab() ==
+                EventDelivery::queue_full) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        }
     }
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -2246,12 +2255,17 @@ Connection::handle_grab_keyboard(const RequestContext &context)
         status = 2;
     }
     else {
-        input.keyboard_grab = ActiveGrab{
+        const auto activated = server_.activate_keyboard_grab(ActiveGrab{
             config_.resource_base, *window_id, 0, effective_time,
             (1U << 0) | (1U << 1), *pointer_mode, *keyboard_mode,
-            context.data != 0};
-        input.keyboard_grab_time = effective_time;
+            context.data != 0});
+        if (activated == EventDelivery::queue_full)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
     }
+    auto drained = drain_pending_events();
+    if (!drained)
+        return drained;
 
     WireWriter reply(context.order);
     reply.u8(1);
@@ -2281,9 +2295,13 @@ Connection::handle_ungrab_keyboard(const RequestContext &context)
         !timestamp_later(effective_time, server_.current_time()) &&
         !timestamp_earlier(effective_time,
                            input.keyboard_grab->activated_at)) {
-        input.keyboard_grab.reset();
+        if (server_.deactivate_keyboard_grab() ==
+                EventDelivery::queue_full) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        }
     }
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -5275,6 +5293,10 @@ Connection::serve()
             auto read = on_readable();
             if (!read)
                 return read;
+        }
+        if (!finished_ && (descriptor.revents & POLLHUP) != 0 &&
+            (descriptor.revents & POLLOUT) == 0) {
+            return Result<void>::success();
         }
         if (!finished_ && (descriptor.revents & POLLOUT) != 0) {
             auto written = on_writable();

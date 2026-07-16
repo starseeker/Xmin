@@ -1380,6 +1380,212 @@ test_reparent_lifecycle_events()
 }
 
 bool
+test_grab_transitions()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    constexpr std::uint32_t key_mask = (1U << 0) | (1U << 1);
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "grab-transition client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 103);
+    xmin::next::WindowRecord parent_window;
+    parent_window.id = parent;
+    parent_window.parent = xmin::next::root_window_id;
+    parent_window.x = 5;
+    parent_window.y = 5;
+    parent_window.width = 40;
+    parent_window.height = 40;
+    xmin::next::WindowRecord child_window;
+    child_window.id = child;
+    child_window.parent = parent;
+    child_window.x = 5;
+    child_window.y = 5;
+    child_window.width = 20;
+    child_window.height = 20;
+    if (!expect(server.add_window(std::move(parent_window), owner) &&
+                    server.add_window(std::move(child_window), owner) &&
+                    server.set_window_mapped(*server.window(parent), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.set_window_mapped(*server.window(child), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window,
+                        xmin::next::root_window_id, 0, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "grab-transition setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, focus_mask);
+    server.window(parent)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+    server.window(child)->event_masks.emplace(
+        owner, crossing_mask | focus_mask | key_mask);
+
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint8_t mode, std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == mode && value->sequence == 103;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint8_t mode, std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == mode && value->sequence == 103;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto key = [&](std::uint8_t type, std::uint8_t detail) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CoreInputEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == child &&
+            value->sequence == 103;
+        server.pop_event(owner);
+        return matches;
+    };
+
+    if (!expect(server.activate_pointer_grab(xmin::next::ActiveGrab{
+                    owner, parent, 0, server.current_time(), crossing_mask,
+                    1, 1, false}) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.input().pointer_grab &&
+                    crossing(8, 0, 1, child) &&
+                    crossing(7, 2, 1, parent) &&
+                    server.deactivate_pointer_grab() ==
+                        xmin::next::EventDelivery::delivered &&
+                    !server.input().pointer_grab &&
+                    crossing(8, 2, 2, parent) &&
+                    crossing(7, 0, 2, child) &&
+                    !server.has_pending_event(owner),
+                "explicit pointer grab transition is wrong")) {
+        return false;
+    }
+
+    if (!expect(server.activate_keyboard_grab(xmin::next::ActiveGrab{
+                    owner, child, 0, server.current_time(), key_mask,
+                    1, 1, false}) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.input().keyboard_grab &&
+                    focus(10, 5, 1, child) &&
+                    focus(10, 5, 1, parent) &&
+                    focus(10, 2, 1, xmin::next::root_window_id) &&
+                    focus(9, 1, 1, parent) &&
+                    focus(9, 0, 1, child) &&
+                    server.deactivate_keyboard_grab() ==
+                        xmin::next::EventDelivery::delivered &&
+                    !server.input().keyboard_grab &&
+                    focus(10, 0, 2, child) &&
+                    focus(10, 1, 2, parent) &&
+                    focus(9, 2, 2, xmin::next::root_window_id) &&
+                    !server.has_pending_event(owner),
+                "explicit keyboard grab transition is wrong")) {
+        return false;
+    }
+
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 0, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "same-focus grab setup failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    if (!expect(server.activate_keyboard_grab(xmin::next::ActiveGrab{
+                    owner, child, 0, server.current_time(), key_mask,
+                    1, 1, false}) ==
+                    xmin::next::EventDelivery::delivered &&
+                    focus(10, 3, 1, child) && focus(9, 3, 1, child) &&
+                    server.deactivate_keyboard_grab() ==
+                        xmin::next::EventDelivery::delivered &&
+                    focus(10, 3, 2, child) && focus(9, 3, 2, child) &&
+                    !server.has_pending_event(owner),
+                "same-focus explicit keyboard transition is wrong")) {
+        return false;
+    }
+
+    xmin::next::PassiveGrab passive;
+    passive.kind = xmin::next::PassiveGrabKind::key;
+    passive.details = xmin::next::passive_grab_details(passive.kind, 40);
+    passive.modifiers = xmin::next::passive_grab_modifiers(0);
+    passive.owner = owner;
+    passive.window = child;
+    passive.event_mask = key_mask;
+    if (!expect(server.add_passive_grab(std::move(passive)) ==
+                    xmin::next::PassiveGrabUpdate::updated &&
+                    server.inject_input(2, 40, 15, 15) ==
+                        xmin::next::EventDelivery::delivered &&
+                    server.input().keyboard_grab &&
+                    server.input().keyboard_grab->passive &&
+                    focus(10, 3, 1, child) && focus(9, 3, 1, child) &&
+                    key(2, 40) &&
+                    server.inject_input(3, 40, 15, 15) ==
+                        xmin::next::EventDelivery::delivered &&
+                    !server.input().keyboard_grab && key(3, 40) &&
+                    focus(10, 3, 2, child) && focus(9, 3, 2, child) &&
+                    !server.has_pending_event(owner),
+                "passive keyboard grab transition is wrong")) {
+        return false;
+    }
+
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count + 1 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        child, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "grab-transition queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.activate_pointer_grab(xmin::next::ActiveGrab{
+                    owner, parent, 0, server.current_time(), crossing_mask,
+                    1, 1, false}) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    !server.input().pointer_grab,
+                "queue failure committed an explicit pointer grab")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "grab activation failure left a partial crossing")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 1 == xmin::next::maximum_pending_events_per_client,
+        "grab activation failure changed the existing event count");
+}
+
+bool
 test_pointer_grab_view_loss()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -2026,6 +2232,7 @@ main()
             test_focus_events() &&
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
+            test_grab_transitions() &&
             test_pointer_grab_view_loss() &&
             test_keyboard_grab_view_loss() &&
             test_true_color() &&

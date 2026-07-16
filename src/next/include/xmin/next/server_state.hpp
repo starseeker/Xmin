@@ -355,6 +355,10 @@ public:
     [[nodiscard]] FocusUpdate set_input_focus(
         FocusKind kind, std::uint32_t window, std::uint8_t revert_to,
         std::uint32_t time);
+    [[nodiscard]] EventDelivery activate_pointer_grab(ActiveGrab grab);
+    [[nodiscard]] EventDelivery deactivate_pointer_grab();
+    [[nodiscard]] EventDelivery activate_keyboard_grab(ActiveGrab grab);
+    [[nodiscard]] EventDelivery deactivate_keyboard_grab();
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;

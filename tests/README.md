@@ -73,6 +73,8 @@ plus legacy-oracle map/unmap/destroy/reparent focus-reversion and stationary-poi
 crossings and all-or-nothing tree/geometry/focus rollback under queue pressure,
 plus confinement-driven pointer `NotifyUngrab` ordering and grab-state rollback,
 keyboard `NotifyUngrab` focus restoration for distinct and coincident real focus,
+explicit pointer/keyboard `NotifyGrab`/`NotifyUngrab` wire order, passive-key focus
+transitions, activation rollback, and abandoned-output hangup cleanup,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

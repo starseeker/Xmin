@@ -2022,6 +2022,18 @@ run_success_case(const char *server, bool little, bool fragmented)
 }
 
 bool
+run_abandoned_setup_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    const bool sent = send_setup(child.socket, little, true);
+    static_cast<void>(::shutdown(child.socket, SHUT_RDWR));
+    ::close(child.socket);
+    return sent && wait_for_success(child.process);
+}
+
+bool
 run_rejected_case(const char *server, bool wrong_version)
 {
     Child child = spawn_server(server);
@@ -2065,6 +2077,10 @@ main(int argc, char **argv)
     if (!run_xtest_case(argv[1], native) ||
         !run_xtest_case(argv[1], !native)) {
         std::cerr << "XTEST state injection case failed\n";
+        return 1;
+    }
+    if (!run_abandoned_setup_case(argv[1], native)) {
+        std::cerr << "abandoned setup-output case failed\n";
         return 1;
     }
     if (!run_rejected_case(argv[1], false)) {
