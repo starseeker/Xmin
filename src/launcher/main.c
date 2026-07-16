@@ -129,7 +129,7 @@ resolve_launcher_path(const char *program)
 static int
 configure_bundled_gl(const char *launcher_path)
 {
-#if XMIN_BUILD_GLX
+#if XMIN_BUILD_CLIENT_GL
 #if defined(__APPLE__)
     static const char variable[] = "DYLD_LIBRARY_PATH";
 #else

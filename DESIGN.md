@@ -378,8 +378,10 @@ pkg-config lookup, or implicit host Mesa/font lookup.
 
 Suggested controls:
 
-- `XMIN_BUILD_GLX=ON|OFF` -- embedded OSMesa, server-side indirect GLX, and the
-  separately installed software-direct client `libGL.so.1`.
+- `XMIN_BUILD_CLIENT_GL=ON|OFF` -- separately installed software-direct client
+  `libGL.so.1`; independent of the server protocol profile.
+- `XMIN_BUILD_INDIRECT_GLX=OFF|ON` -- legacy embedded OSMesa and server-side
+  indirect GLX, excluded from the clean default profile.
 - `XMIN_ENABLE_MITSHM=AUTO|ON|OFF` -- based on genuine platform support.
 - `XMIN_ENABLE_TCP=OFF` -- explicit opt-in only.
 - `XMIN_PIXMAN_SIMD=AUTO|ON|OFF` -- generic C is always available.

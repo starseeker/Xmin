@@ -297,7 +297,7 @@ main(void)
         "DOUBLE-BUFFER",
         "Present",
         "XINERAMA",
-#if XMIN_BUILD_GLX
+#if XMIN_BUILD_INDIRECT_GLX
         "GLX",
 #endif
 #if XMIN_HAVE_MITSHM

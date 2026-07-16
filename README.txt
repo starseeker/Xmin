@@ -93,8 +93,8 @@ Another core-protocol gate round-trips properties, window hierarchy/configuratio
 geometry, pixmap copy/readback, selection ownership, named colors, and synthetic
 events.  The opposite-endian raw client verifies malformed core `BadLength` recovery.
 
-With `XMIN_BUILD_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer and Xorg's
-non-DRI indirect GLX implementation.  A project-owned provider maps GLX contexts and CPU
+With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer
+and Xorg's non-DRI indirect GLX implementation.  A project-owned provider maps GLX contexts and CPU
 drawables directly to OSMesa; a raw-wire integration test creates an indirect context,
 renders and swaps a fixed-function triangle, binds different-sized draw/read windows,
 verifies both GL readback and X11 pixel output, and proves single-buffered `glFlush`
@@ -102,7 +102,8 @@ presentation plus pbuffer render/read/release.  No DRI, DRM, host Mesa, or loada
 GL driver is used.  The raw test also wraps a core pixmap as a GLXPixmap, synchronizes
 it with `WaitGL`, and reads the resulting X pixels.  This proves the legacy indirect
 server path.  The
-separately shipped `lib/xmin/libGL.so.1` supplies the conventional GL/GLX client ABI
+Independently, `XMIN_BUILD_CLIENT_GL=ON` builds the separately shipped
+`lib/xmin/libGL.so.1`, which supplies the conventional GL/GLX client ABI
 with a second, standard-symbol OSMesa build.  `xmin-run` selects it for the child
 through a package-relative library path, so it requires no system installation.
 Tests create direct OpenGL 2.0 contexts, share texture objects, compile and render with

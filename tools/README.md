@@ -4,3 +4,10 @@ Source refresh, XKB generation, embedded-font generation, and provenance-checkin
 tools belong here. Their output must be committed so the normal build remains
 offline and requires only CMake and the selected compilers.
 
+`generate-protocol-coverage.py` expands `profiles/protocol.json` and the
+retained xcb-proto XML into the committed request-level coverage report. Run:
+
+```sh
+python3 tools/generate-protocol-coverage.py \
+  profiles/protocol.json protocol/xcb profiles/protocol-coverage.json
+```

@@ -8,6 +8,35 @@ set_tests_properties(xmin.help PROPERTIES
   PASS_REGULAR_EXPRESSION "use: X \\[:<display>\\] \\[option\\]"
 )
 
+if(TARGET Xmin::next_server)
+  add_test(NAME xmin.next-version COMMAND Xmin::next_server --version)
+  set_tests_properties(xmin.next-version PROPERTIES
+    PASS_REGULAR_EXPRESSION "Xmin-next ${PROJECT_VERSION}"
+  )
+
+  add_test(NAME xmin.next-help COMMAND Xmin::next_server --help)
+  set_tests_properties(xmin.next-help PROPERTIES
+    PASS_REGULAR_EXPRESSION "usage: Xmin-next --client-fd"
+  )
+
+  add_executable(xmin_next_foundation next_foundation.cpp)
+  target_compile_features(xmin_next_foundation PRIVATE cxx_std_17)
+  target_link_libraries(xmin_next_foundation PRIVATE Xmin::next_core)
+  xmin_enable_warnings(xmin_next_foundation)
+  add_test(NAME xmin.next-foundation COMMAND xmin_next_foundation)
+
+  add_executable(xmin_next_handshake integration/next_handshake.cpp)
+  target_compile_features(xmin_next_handshake PRIVATE cxx_std_17)
+  target_compile_definitions(xmin_next_handshake PRIVATE
+    _POSIX_C_SOURCE=200809L
+  )
+  xmin_enable_warnings(xmin_next_handshake)
+  add_test(NAME xmin.next-handshake
+    COMMAND xmin_next_handshake $<TARGET_FILE:xmin_next>
+  )
+  set_tests_properties(xmin.next-handshake PROPERTIES TIMEOUT 20)
+endif()
+
 add_executable(xmin_server_handshake integration/server_handshake.c)
 target_compile_features(xmin_server_handshake PRIVATE c_std_11)
 target_include_directories(xmin_server_handshake PRIVATE
@@ -193,40 +222,40 @@ if(TARGET Xmin::osmesa)
   )
   set_tests_properties(xmin.glx-render PROPERTIES TIMEOUT 20)
 
-  if(TARGET Xmin::gl_client)
-    add_executable(xmin_software_direct_glsl glx/software_direct_glsl.c)
-    target_compile_features(xmin_software_direct_glsl PRIVATE c_std_11)
-    target_link_libraries(xmin_software_direct_glsl PRIVATE Xmin::gl_client)
-    xmin_enable_warnings(xmin_software_direct_glsl)
-    add_test(NAME xmin.software-direct-glsl
-      COMMAND xmin_software_direct_glsl
-    )
+endif()
 
-    # Xlib is application-side and test-only. The shipped client bridge keeps
-    # these references weak and does not acquire a host-X11 DT_NEEDED entry.
-    find_path(XMIN_TEST_X11_INCLUDE_DIR X11/Xlib.h)
-    find_library(XMIN_TEST_X11_LIBRARY NAMES X11)
-    if(XMIN_TEST_X11_INCLUDE_DIR AND XMIN_TEST_X11_LIBRARY AND TARGET Xmin::run)
-      add_executable(xmin_software_direct_window
-        glx/software_direct_window.c
-      )
-      target_compile_features(xmin_software_direct_window PRIVATE c_std_11)
-      target_include_directories(xmin_software_direct_window SYSTEM PRIVATE
-        "${XMIN_TEST_X11_INCLUDE_DIR}"
-      )
-      target_link_libraries(xmin_software_direct_window PRIVATE
-        Xmin::gl_client
-        "${XMIN_TEST_X11_LIBRARY}"
-      )
-      xmin_enable_warnings(xmin_software_direct_window)
-      add_test(NAME xmin.software-direct-window
-        COMMAND Xmin::run
-          --server $<TARGET_FILE:xmin_server>
-          --screen 64x64x24
-          -- $<TARGET_FILE:xmin_software_direct_window>
-      )
-      set_tests_properties(xmin.software-direct-window PROPERTIES TIMEOUT 20)
-    endif()
+# The direct client library is a separate product from server-side indirect
+# GLX. Its tests deliberately run against the clean server profile, where the
+# GLX extension is absent.
+if(TARGET Xmin::gl_client)
+  add_executable(xmin_software_direct_glsl glx/software_direct_glsl.c)
+  target_compile_features(xmin_software_direct_glsl PRIVATE c_std_11)
+  target_link_libraries(xmin_software_direct_glsl PRIVATE Xmin::gl_client)
+  xmin_enable_warnings(xmin_software_direct_glsl)
+  add_test(NAME xmin.software-direct-glsl COMMAND xmin_software_direct_glsl)
+
+  # Xlib is application-side and test-only. The shipped client bridge keeps
+  # these references weak and does not acquire a host-X11 DT_NEEDED entry.
+  find_path(XMIN_TEST_X11_INCLUDE_DIR X11/Xlib.h)
+  find_library(XMIN_TEST_X11_LIBRARY NAMES X11)
+  if(XMIN_TEST_X11_INCLUDE_DIR AND XMIN_TEST_X11_LIBRARY AND TARGET Xmin::run)
+    add_executable(xmin_software_direct_window glx/software_direct_window.c)
+    target_compile_features(xmin_software_direct_window PRIVATE c_std_11)
+    target_include_directories(xmin_software_direct_window SYSTEM PRIVATE
+      "${XMIN_TEST_X11_INCLUDE_DIR}"
+    )
+    target_link_libraries(xmin_software_direct_window PRIVATE
+      Xmin::gl_client
+      "${XMIN_TEST_X11_LIBRARY}"
+    )
+    xmin_enable_warnings(xmin_software_direct_window)
+    add_test(NAME xmin.software-direct-window
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 64x64x24
+        -- $<TARGET_FILE:xmin_software_direct_window>
+    )
+    set_tests_properties(xmin.software-direct-window PROPERTIES TIMEOUT 20)
   endif()
 endif()
 

@@ -191,7 +191,7 @@ xmin_add_component(xfont2
 # and Mask types on LP64 hosts.
 target_compile_definitions(xmin_xfont2 PUBLIC _XSERVER64=1)
 
-if(XMIN_BUILD_GLX)
+if(XMIN_BUILD_INDIRECT_GLX)
   include("${CMAKE_CURRENT_SOURCE_DIR}/osmesa/osmesa-sources.cmake")
   list(TRANSFORM xmin_osmesa_source_files
     PREPEND "${CMAKE_CURRENT_SOURCE_DIR}/osmesa/src/"

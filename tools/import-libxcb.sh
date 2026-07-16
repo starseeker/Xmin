@@ -26,6 +26,7 @@ generated=$(mktemp -d "${TMPDIR:-/tmp}/xmin-libxcb.XXXXXX")
 trap 'rm -rf "$generated"' EXIT HUP INT TERM
 
 protocols="xproto bigreq xc_misc render shape xfixes damage composite xtest"
+profile_protocols="xproto bigreq ge shape xinput xtest sync xkb xc_misc xfixes render randr composite damage present shm dbe screensaver xinerama glx"
 (
     cd "$generated"
     for protocol in $protocols; do
@@ -57,5 +58,13 @@ done
 install -d "$root/LICENSES/libxcb" "$root/LICENSES/xcb-proto"
 cp -p "$libxcb/COPYING" "$root/LICENSES/libxcb/COPYING"
 cp -p "$xcbproto/COPYING" "$root/LICENSES/xcb-proto/COPYING"
+
+# Retain the declarative wire descriptions used by Xmin-next's narrow
+# generator and support-profile checker.  Generated files remain committed;
+# the normal product build does not need Python or xcb-proto.
+install -d "$root/protocol/xcb"
+for protocol in $profile_protocols; do
+    cp -p "$xcbproto/src/$protocol.xml" "$root/protocol/xcb/$protocol.xml"
+done
 
 echo "Imported the private libxcb/xcb-proto 1.17.0 automation subset."

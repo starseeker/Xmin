@@ -11,8 +11,10 @@ function(xmin_normalize_tristate variable)
   set_property(CACHE ${variable} PROPERTY STRINGS AUTO ON OFF)
 endfunction()
 
-option(XMIN_BUILD_GLX
-  "Build embedded OSMesa, indirect server GLX, and bundled client libGL" ON)
+option(XMIN_BUILD_CLIENT_GL
+  "Build the bundled software-direct client libGL" ON)
+option(XMIN_BUILD_INDIRECT_GLX
+  "Build embedded OSMesa and the legacy indirect server GLX provider" OFF)
 option(XMIN_ENABLE_TCP
   "Enable the TCP transport (the normal build is local-socket only)" OFF)
 option(XMIN_BUILD_LAUNCHER
@@ -23,6 +25,8 @@ option(XMIN_REQUIRE_TOOLKIT_TESTS
 option(XMIN_ENABLE_INSTALL "Generate install rules" ${PROJECT_IS_TOP_LEVEL})
 option(XMIN_WARNINGS_AS_ERRORS
   "Treat warnings in project-owned code as errors" OFF)
+option(XMIN_ENABLE_SANITIZERS
+  "Instrument C and C++ code with AddressSanitizer and UndefinedBehaviorSanitizer" OFF)
 
 if(XMIN_REQUIRE_TOOLKIT_TESTS AND NOT XMIN_BUILD_TESTS)
   message(FATAL_ERROR

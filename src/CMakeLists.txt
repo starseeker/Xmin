@@ -1,3 +1,7 @@
+# Xmin-next is an independent C++17 process. It does not link any Xorg server
+# objects; the legacy executable remains an oracle during migration.
+add_subdirectory(next)
+
 # Preserve the broad upstream X server boundaries. These subdirectories expose
 # stable Xmin:: component targets linked into the server executable.
 add_subdirectory(dix)
@@ -14,8 +18,11 @@ if(XMIN_BUILD_LAUNCHER)
   add_subdirectory(launcher)
 endif()
 
-if(XMIN_BUILD_GLX)
+if(XMIN_BUILD_INDIRECT_GLX)
   add_subdirectory(glx)
+endif()
+
+if(XMIN_BUILD_CLIENT_GL)
   add_subdirectory(client/glx)
 endif()
 

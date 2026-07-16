@@ -1,0 +1,156 @@
+{
+  "schema_version": 1,
+  "product": "Xmin clean 2D",
+  "wire_protocol": "X11 11.0",
+  "transport": {
+    "unix_domain": "required",
+    "tcp": "intentionally_unsupported"
+  },
+  "authentication": {
+    "MIT-MAGIC-COOKIE-1": "required",
+    "unsafe_no_access_control": "explicit_test_option"
+  },
+  "display": {
+    "screens": 1,
+    "outputs": 1,
+    "crtcs": 1,
+    "root_depth": 24,
+    "root_storage": "XRGB8888",
+    "root_visual": "TrueColor",
+    "pixmap_depths": [1, 8, 24, 32]
+  },
+  "core": {
+    "xml": "xproto.xml",
+    "contract": "required",
+    "reserved_opcodes": [120, 121, 122, 123, 124, 125, 126],
+    "legacy_status": "implemented",
+    "next_status": "not_yet_implemented",
+    "next_partial_opcodes": [14, 43, 98, 99, 127]
+  },
+  "extensions": [
+    {
+      "name": "Generic Event Extension",
+      "xml": "ge.xml",
+      "version": "1.0",
+      "contract": "required"
+    },
+    {
+      "name": "SHAPE",
+      "xml": "shape.xml",
+      "version": "1.1",
+      "contract": "required"
+    },
+    {
+      "name": "XInputExtension",
+      "xml": "xinput.xml",
+      "version": "2.4",
+      "contract": "required",
+      "compatibility_opcodes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
+        13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+        29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
+    },
+    {
+      "name": "XTEST",
+      "xml": "xtest.xml",
+      "version": "2.2",
+      "contract": "required"
+    },
+    {
+      "name": "BIG-REQUESTS",
+      "xml": "bigreq.xml",
+      "version": "0.0",
+      "contract": "required"
+    },
+    {
+      "name": "SYNC",
+      "xml": "sync.xml",
+      "version": "3.1",
+      "contract": "required"
+    },
+    {
+      "name": "XKEYBOARD",
+      "xml": "xkb.xml",
+      "version": "1.0",
+      "contract": "required"
+    },
+    {
+      "name": "XC-MISC",
+      "xml": "xc_misc.xml",
+      "version": "1.1",
+      "contract": "required"
+    },
+    {
+      "name": "XFIXES",
+      "xml": "xfixes.xml",
+      "version": "6.0",
+      "contract": "required"
+    },
+    {
+      "name": "RENDER",
+      "xml": "render.xml",
+      "version": "0.11",
+      "contract": "required"
+    },
+    {
+      "name": "RANDR",
+      "xml": "randr.xml",
+      "version": "1.6",
+      "contract": "required"
+    },
+    {
+      "name": "Composite",
+      "xml": "composite.xml",
+      "version": "0.4",
+      "contract": "required"
+    },
+    {
+      "name": "DAMAGE",
+      "xml": "damage.xml",
+      "version": "1.1",
+      "contract": "required"
+    },
+    {
+      "name": "Present",
+      "xml": "present.xml",
+      "version": "1.4",
+      "contract": "required"
+    },
+    {
+      "name": "MIT-SHM",
+      "xml": "shm.xml",
+      "version": "1.2",
+      "contract": "platform_conditional"
+    },
+    {
+      "name": "DOUBLE-BUFFER",
+      "xml": "dbe.xml",
+      "version": "1.0",
+      "contract": "compatibility"
+    },
+    {
+      "name": "MIT-SCREEN-SAVER",
+      "xml": "screensaver.xml",
+      "version": "1.1",
+      "contract": "compatibility"
+    },
+    {
+      "name": "XINERAMA",
+      "xml": "xinerama.xml",
+      "version": "1.1",
+      "contract": "compatibility"
+    },
+    {
+      "name": "GLX",
+      "xml": "glx.xml",
+      "version": "1.4",
+      "contract": "optional_legacy"
+    }
+  ],
+  "cli": {
+    "server": ["display", "-screen", "-auth", "-ac", "-displayfd",
+      "-nolisten tcp", "--help", "--version"],
+    "launcher": ["xmin-run"],
+    "controller": ["xminctl"],
+    "capture": ["xmincapture"]
+  }
+}

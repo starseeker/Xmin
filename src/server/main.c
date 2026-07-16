@@ -21,7 +21,8 @@ print_version(void)
            XMIN_HAVE_MITSHM ? "on" : "off",
            XMIN_ENABLE_TCP ? "on" : "off");
     printf("GLX/OSMesa integration: %s\n",
-           XMIN_BUILD_GLX ? "enabled (indirect software renderer)" : "disabled");
+           XMIN_BUILD_INDIRECT_GLX ?
+               "enabled (indirect software renderer)" : "disabled");
     printf("embedded pixman: %s (generic C)\n", pixman_version_string());
 }
 

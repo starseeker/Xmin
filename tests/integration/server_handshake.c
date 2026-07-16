@@ -213,7 +213,7 @@ main(int argc, char **argv)
         "DOUBLE-BUFFER",
         "Present",
         "XINERAMA",
-#if XMIN_BUILD_GLX
+#if XMIN_BUILD_INDIRECT_GLX
         "GLX"
 #endif
     };

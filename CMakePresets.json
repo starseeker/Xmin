@@ -25,6 +25,46 @@
         "CMAKE_BUILD_TYPE": "Release",
         "XMIN_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "legacy-glx",
+      "displayName": "Compatibility build with indirect GLX",
+      "description": "Enables the intentionally non-default server-side indirect GLX provider",
+      "binaryDir": "${sourceDir}/build/legacy-glx",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "XMIN_BUILD_TESTS": "ON",
+        "XMIN_BUILD_INDIRECT_GLX": "ON"
+      }
+    },
+    {
+      "name": "minimal",
+      "displayName": "Minimal server-only build",
+      "description": "Builds neither client OpenGL nor legacy indirect server GLX",
+      "binaryDir": "${sourceDir}/build/minimal",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "XMIN_BUILD_TESTS": "ON",
+        "XMIN_BUILD_CLIENT_GL": "OFF",
+        "XMIN_BUILD_INDIRECT_GLX": "OFF"
+      }
+    },
+    {
+      "name": "sanitizer",
+      "displayName": "ASan and UBSan",
+      "description": "Portable Clang/GCC sanitizer gate for project and vendored code",
+      "binaryDir": "${sourceDir}/build/sanitizer",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug",
+        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
+        "XMIN_BUILD_TESTS": "ON",
+        "XMIN_BUILD_CLIENT_GL": "OFF",
+        "XMIN_BUILD_INDIRECT_GLX": "OFF",
+        "XMIN_ENABLE_SANITIZERS": "ON",
+        "XMIN_WARNINGS_AS_ERRORS": "ON"
+      }
     }
   ],
   "buildPresets": [
@@ -35,6 +75,18 @@
     {
       "name": "release",
       "configurePreset": "release"
+    },
+    {
+      "name": "legacy-glx",
+      "configurePreset": "legacy-glx"
+    },
+    {
+      "name": "minimal",
+      "configurePreset": "minimal"
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer"
     }
   ],
   "testPresets": [
@@ -51,7 +103,31 @@
       "output": {
         "outputOnFailure": true
       }
+    },
+    {
+      "name": "legacy-glx",
+      "configurePreset": "legacy-glx",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "minimal",
+      "configurePreset": "minimal",
+      "output": {
+        "outputOnFailure": true
+      }
+    },
+    {
+      "name": "sanitizer",
+      "configurePreset": "sanitizer",
+      "environment": {
+        "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+        "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
+      },
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }
-

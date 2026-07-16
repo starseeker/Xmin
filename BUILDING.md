@@ -87,7 +87,7 @@ devices as Xmin devices, and cleans up mmap files and SysV shared-memory segment
 
 - CMake 3.21 or newer;
 - a C11 compiler;
-- a C++17 compiler when `XMIN_BUILD_GLX=ON`;
+- a C++17 compiler;
 - a platform thread implementation supported by CMake; and
 - a POSIX libc with `fmemopen` for the embedded XKB stream.
 
@@ -184,7 +184,8 @@ transport is absent unless explicitly enabled at configure time.
 
 | Option | Default | Purpose |
 | --- | --- | --- |
-| `XMIN_BUILD_GLX` | `ON` | Embed OSMesa, build the non-DRI indirect GLX server provider, and ship the software-direct `libGL.so.1` client bridge. |
+| `XMIN_BUILD_CLIENT_GL` | `ON` | Ship the software-direct `libGL.so.1` client bridge. This does not add GLX to the server. |
+| `XMIN_BUILD_INDIRECT_GLX` | `OFF` | Embed a second, namespaced OSMesa and build the legacy non-DRI indirect GLX server provider. |
 | `XMIN_ENABLE_MITSHM` | `AUTO` | Enable MIT-SHM only when SysV shared memory is detected; also accepts `ON` or `OFF`. |
 | `XMIN_ENABLE_TCP` | `OFF` | Compile and listen on xtrans TCP sockets. This is explicit opt-in; local sockets are the normal path and authentication is required outside isolated test systems. |
 | `XMIN_PIXMAN_SIMD` | `AUTO` | Control future optional pixman SIMD implementations. |
@@ -193,6 +194,7 @@ transport is absent unless explicitly enabled at configure time.
 | `XMIN_REQUIRE_TOOLKIT_TESTS` | `OFF` | Require at least one Qt 5/6 Gui acceptance target and the GTK 3 target; intended for release/CI gates. |
 | `XMIN_ENABLE_INSTALL` | top-level `ON` | Generate executable and documentation install rules. |
 | `XMIN_WARNINGS_AS_ERRORS` | `OFF` | Promote warnings in project-owned code to errors. |
+| `XMIN_ENABLE_SANITIZERS` | `OFF` | Enable AddressSanitizer and UndefinedBehaviorSanitizer with Clang or GCC. |
 
 The cache variables `XMIN_DEFAULT_WIDTH`, `XMIN_DEFAULT_HEIGHT`,
 `XMIN_DEFAULT_DEPTH`, and `XMIN_DEFAULT_DPI` configure the compiled defaults.
