@@ -146,8 +146,10 @@ scheduling, destruction now composes that transition with no-fail subtree erasur
 the same external oracle verifies its focus/crossing order against both servers.
 Reparenting plans Xorg's old-tree unmap and new-tree remap paths in one atomic batch,
 using no-throw vector swaps to preserve stacking, geometry, mapping, and focus on
-failure.  Active-grab invalidation on view loss and repeat timers remain later
-vertical slices.
+failure.  Pointer grabs whose grab or confinement window loses viewability now emit
+the typed `NotifyUngrab` path before the normal crossing and release only when the
+whole transition commits.  Keyboard-grab view-loss notifications and repeat timers
+remain later vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with

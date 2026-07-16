@@ -1380,6 +1380,129 @@ test_reparent_lifecycle_events()
 }
 
 bool
+test_pointer_grab_view_loss()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "view-loss client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 107);
+    xmin::next::WindowRecord parent_window;
+    parent_window.id = parent;
+    parent_window.parent = xmin::next::root_window_id;
+    parent_window.x = 5;
+    parent_window.y = 5;
+    parent_window.width = 40;
+    parent_window.height = 40;
+    xmin::next::WindowRecord child_window;
+    child_window.id = child;
+    child_window.parent = parent;
+    child_window.x = 5;
+    child_window.y = 5;
+    child_window.width = 20;
+    child_window.height = 20;
+    if (!expect(server.add_window(std::move(parent_window), owner) &&
+                    server.add_window(std::move(child_window), owner) &&
+                    server.set_window_mapped(*server.window(parent), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.set_window_mapped(*server.window(child), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window, parent, 0, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "view-loss window setup failed")) {
+        return false;
+    }
+    server.window(parent)->event_masks.emplace(owner, crossing_mask);
+    server.window(child)->event_masks.emplace(owner, crossing_mask);
+    const auto arm_grab = [&] {
+        server.input().pointer_grab = xmin::next::ActiveGrab{
+            owner, parent, child, server.current_time(), crossing_mask,
+            1, 1, false};
+    };
+    arm_grab();
+
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint8_t mode, std::uint32_t event,
+                              std::int16_t event_x,
+                              std::int16_t event_y) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->child == 0 && value->event_x == event_x &&
+            value->event_y == event_y && value->mode == mode &&
+            value->same_screen && value->focus && value->sequence == 107;
+        server.pop_event(owner);
+        return matches;
+    };
+    if (!expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.input().pointer_grab &&
+                    !server.window(child)->mapped &&
+                    crossing(8, 2, 2, parent, 10, 10) &&
+                    crossing(7, 0, 2, child, 5, 5) &&
+                    crossing(8, 0, 0, child, 5, 5) &&
+                    crossing(7, 2, 0, parent, 10, 10) &&
+                    !server.has_pending_event(owner),
+                "pointer-grab view-loss sequence is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_window_mapped(*server.window(child), true) ==
+                    xmin::next::EventDelivery::delivered,
+                "view-loss rollback remap failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    arm_grab();
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count + 3 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        child, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "view-loss queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    server.window(child)->mapped &&
+                    server.input().pointer_grab &&
+                    server.input().pointer_grab->window == parent &&
+                    server.input().pointer_grab->confine_to == child,
+                "queue failure released a live pointer grab")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "view-loss queue failure left a partial crossing")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 3 == xmin::next::maximum_pending_events_per_client,
+        "view-loss queue failure changed the existing event count");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -1694,6 +1817,7 @@ main()
             test_focus_events() &&
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
+            test_pointer_grab_view_loss() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

@@ -667,6 +667,98 @@ main(void)
     }
     free(reparent_focus);
 
+    xcb_grab_pointer_reply_t *view_loss_grab = xcb_grab_pointer_reply(
+        connection,
+        xcb_grab_pointer(
+            connection, 0, reparent_parent,
+            XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, child, XCB_NONE,
+            XCB_CURRENT_TIME),
+        &error);
+    if (error != NULL || view_loss_grab == NULL ||
+        view_loss_grab->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "view-loss pointer grab failed\n");
+        free(view_loss_grab);
+        goto cleanup;
+    }
+    free(view_loss_grab);
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    if (!checked(connection, xcb_unmap_window_checked(connection, child),
+                 "unmap pointer confinement window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "view-loss ungrab LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "view-loss ungrab EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "view-loss normal LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != reparent_parent ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "view-loss normal EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection, xcb_map_window_checked(connection, child),
+                 "remap pointer confinement window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "view-loss remap LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "view-loss remap EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
     xcb_test_compare_cursor_reply_t *cursor = xcb_test_compare_cursor_reply(
         connection,
         xcb_test_compare_cursor(
