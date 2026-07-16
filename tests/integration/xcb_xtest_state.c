@@ -66,8 +66,7 @@ main(void)
     const xcb_window_t child = xcb_generate_id(connection);
     const uint32_t child_event_mask =
         XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW |
-        XCB_EVENT_MASK_LEAVE_WINDOW | XCB_EVENT_MASK_BUTTON_PRESS |
-        XCB_EVENT_MASK_BUTTON_RELEASE;
+        XCB_EVENT_MASK_LEAVE_WINDOW;
     if (!checked(connection,
                  xcb_create_window_checked(
                      connection, XCB_COPY_FROM_PARENT, child, screen->root,
@@ -209,8 +208,30 @@ main(void)
     xcb_button_press_event_t *button_event =
         (xcb_button_press_event_t *) event;
     if (button_event == NULL || button_event->detail != 1 ||
-        button_event->event != child || button_event->state != 0) {
+        button_event->event != screen->root || button_event->state != 0) {
         fprintf(stderr, "XTEST ButtonPress event routing failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child ||
+        leave_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "automatic-grab LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != screen->root ||
+        enter_event->mode != XCB_NOTIFY_MODE_GRAB) {
+        fprintf(stderr, "automatic-grab EnterNotify failed\n");
         free(event);
         goto cleanup;
     }
@@ -243,7 +264,7 @@ main(void)
     event = poll_event_type(connection, XCB_BUTTON_RELEASE);
     button_event = (xcb_button_press_event_t *) event;
     if (button_event == NULL || button_event->detail != 1 ||
-        button_event->event != child ||
+        button_event->event != screen->root ||
         button_event->state != XCB_BUTTON_MASK_1) {
         fprintf(stderr, "XTEST ButtonRelease event routing failed\n");
         free(event);
@@ -253,8 +274,31 @@ main(void)
     event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
     leave_event = (xcb_leave_notify_event_t *) event;
     if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != screen->root ||
+        leave_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "automatic-ungrab LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "automatic-ungrab EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
         leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
-        leave_event->event != child || leave_event->child != XCB_NONE) {
+        leave_event->event != child || leave_event->child != XCB_NONE ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
         if (leave_event == NULL) {
             fprintf(stderr,
                     "XTEST restore LeaveNotify crossing failed: no event\n");

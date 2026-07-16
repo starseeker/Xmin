@@ -761,6 +761,145 @@ test_crossing_events()
 }
 
 bool
+test_automatic_pointer_grab()
+{
+    constexpr std::uint32_t first_owner = 0x00200000;
+    constexpr std::uint32_t second_owner = 0x00400000;
+    constexpr std::uint32_t parent = first_owner | 1U;
+    constexpr std::uint32_t child = first_owner | 2U;
+    constexpr std::uint32_t button_masks = (1U << 2) | (1U << 3);
+    constexpr std::uint32_t crossing_masks = (1U << 4) | (1U << 5);
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(first_owner) &&
+                    server.register_client(second_owner),
+                "automatic-grab client registration failed")) {
+        return false;
+    }
+
+    xmin::next::WindowRecord parent_window;
+    parent_window.id = parent;
+    parent_window.parent = xmin::next::root_window_id;
+    parent_window.x = 10;
+    parent_window.y = 10;
+    parent_window.width = 40;
+    parent_window.height = 40;
+    xmin::next::WindowRecord child_window;
+    child_window.id = child;
+    child_window.parent = parent;
+    child_window.x = 5;
+    child_window.y = 5;
+    child_window.width = 20;
+    child_window.height = 20;
+    if (!expect(server.add_window(std::move(parent_window), first_owner) &&
+                    server.add_window(std::move(child_window), first_owner),
+                "automatic-grab window insertion failed")) {
+        return false;
+    }
+    auto *stored_parent = server.window(parent);
+    auto *stored_child = server.window(child);
+    server.set_window_mapped(*stored_parent, true);
+    server.set_window_mapped(*stored_child, true);
+    if (!expect(server.inject_input(6, 0, 18, 18) ==
+                    xmin::next::EventDelivery::no_recipient,
+                "automatic-grab pointer setup delivered an event")) {
+        return false;
+    }
+    stored_parent->event_masks.emplace(
+        first_owner, button_masks | crossing_masks);
+    stored_child->event_masks.emplace(second_owner, crossing_masks);
+    if (!expect(server.inject_input(4, 1, 18, 18) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.input().pointer_grab &&
+                    server.input().pointer_grab->automatic &&
+                    server.input().pointer_grab->owner == first_owner &&
+                    server.input().pointer_grab->window == parent,
+                "normal button press did not activate an automatic grab")) {
+        return false;
+    }
+    const auto *queued = server.next_event(first_owner);
+    const auto *button = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(button != nullptr && button->type == 4 &&
+                    button->detail == 1 && button->event == parent &&
+                    button->child == child && button->state == 0,
+                "automatic-grab button press metadata is wrong")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    queued = server.next_event(first_owner);
+    const auto *crossing = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CrossingEvent>(queued);
+    if (!expect(crossing != nullptr && crossing->type == 7 &&
+                    crossing->detail == 2 && crossing->event == parent &&
+                    crossing->mode == 1,
+                "automatic-grab enter transition is wrong")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    queued = server.next_event(second_owner);
+    crossing = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CrossingEvent>(queued);
+    if (!expect(crossing != nullptr && crossing->type == 8 &&
+                    crossing->detail == 0 && crossing->event == child &&
+                    crossing->mode == 1,
+                "automatic-grab leave transition is wrong")) {
+        return false;
+    }
+    server.pop_event(second_owner);
+
+    if (!expect(server.inject_input(4, 2, 18, 18) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.inject_input(5, 1, 18, 18) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.input().pointer_grab &&
+                    server.input().pointer_grab->automatic,
+                "automatic grab ended before the final button release")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    server.pop_event(first_owner);
+    if (!expect(server.inject_input(5, 2, 18, 18) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.input().pointer_grab &&
+                    server.input().pressed_buttons.none(),
+                "automatic grab survived the final button release")) {
+        return false;
+    }
+    queued = server.next_event(first_owner);
+    button = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(button != nullptr && button->type == 5 &&
+                    button->detail == 2 && button->state == (1U << 9),
+                "final grabbed button release has the wrong state")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    queued = server.next_event(first_owner);
+    crossing = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CrossingEvent>(queued);
+    if (!expect(crossing != nullptr && crossing->type == 8 &&
+                    crossing->detail == 2 && crossing->event == parent &&
+                    crossing->mode == 2,
+                "automatic-ungrab leave transition is wrong")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    queued = server.next_event(second_owner);
+    crossing = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CrossingEvent>(queued);
+    return expect(crossing != nullptr && crossing->type == 7 &&
+                      crossing->detail == 0 && crossing->event == child &&
+                      crossing->mode == 2,
+                  "automatic-ungrab enter transition is wrong");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -1066,6 +1205,7 @@ main()
             test_shared_server_state() && test_passive_grabs() &&
             test_input_routing() &&
             test_crossing_events() &&
+            test_automatic_pointer_grab() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

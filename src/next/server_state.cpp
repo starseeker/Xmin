@@ -945,7 +945,8 @@ EventDelivery
 ServerState::append_crossing_events(
     std::uint32_t from, std::uint32_t to,
     std::int32_t root_x, std::int32_t root_y, std::uint16_t state,
-    const ActiveGrab *grab, std::vector<PlannedEvent> &events) const
+    std::uint8_t mode, const ActiveGrab *grab,
+    std::vector<PlannedEvent> &events) const
 {
     if (from == to)
         return EventDelivery::no_recipient;
@@ -970,6 +971,7 @@ ServerState::append_crossing_events(
         event.event_x = wire_coordinate(root_x - origin.first);
         event.event_y = wire_coordinate(root_y - origin.second);
         event.state = state;
+        event.mode = mode;
         event.focus = input_.focus.kind == FocusKind::pointer_root ||
             (input_.focus.kind == FocusKind::window &&
              (destination == input_.focus.window ||
@@ -1212,13 +1214,27 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     event.state = state_before;
     std::vector<PlannedEvent> events;
     EventDelivery crossing = EventDelivery::no_recipient;
+    EventDelivery grab_crossing = EventDelivery::no_recipient;
     if (motion_event && previous_pointer_window != pointer_window) {
         crossing = append_crossing_events(
             previous_pointer_window, pointer_window, event_x, event_y,
-            state_before, grab, events);
+            state_before, 0, grab, events);
         if (crossing == EventDelivery::queue_full)
             return crossing;
     }
+    if (type == 4 && activated) {
+        std::uint16_t state_after_press = state_before;
+        if (detail <= 5) {
+            state_after_press |= static_cast<std::uint16_t>(
+                1U << (detail + 7));
+        }
+        grab_crossing = append_crossing_events(
+            pointer_window, activated->window, event_x, event_y,
+            state_after_press, 1, nullptr, events);
+        if (grab_crossing == EventDelivery::queue_full)
+            return grab_crossing;
+    }
+    const std::size_t route_start = events.size();
     const EventDelivery routed = source == 0 ||
             (button_event && wire_detail == 0)
         ? EventDelivery::no_recipient
@@ -1226,10 +1242,59 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
                             pointer_window, grab, events);
     if (routed == EventDelivery::queue_full)
         return routed;
+    std::optional<ActiveGrab> automatic;
+    if (type == 4 && grab == nullptr && routed == EventDelivery::delivered) {
+        for (std::size_t index = route_start; index < events.size(); ++index) {
+            const auto *press = std::get_if<CoreInputEvent>(
+                &events[index].second);
+            if (press == nullptr)
+                continue;
+            const auto *target = window(press->event);
+            if (target == nullptr)
+                break;
+            const auto selection = target->event_masks.find(
+                events[index].first);
+            if (selection == target->event_masks.end())
+                break;
+            automatic = ActiveGrab{
+                events[index].first, press->event, 0, current_time_,
+                selection->second, 1, 1,
+                (selection->second & (1U << 24)) != 0,
+                false, 0, true};
+            std::uint16_t state_after_press = state_before;
+            if (detail <= 5) {
+                state_after_press |= static_cast<std::uint16_t>(
+                    1U << (detail + 7));
+            }
+            grab_crossing = append_crossing_events(
+                pointer_window, press->event, event_x, event_y,
+                state_after_press, 1, nullptr, events);
+            if (grab_crossing == EventDelivery::queue_full)
+                return grab_crossing;
+            break;
+        }
+    }
+    const bool releases_pointer_grab = type == 5 && grab != nullptr &&
+        (grab->passive || grab->automatic) &&
+        input_.pressed_buttons.test(detail) &&
+        input_.pressed_buttons.count() == 1;
+    if (releases_pointer_grab) {
+        std::uint16_t state_after_release = state_before;
+        if (detail <= 5) {
+            state_after_release &= static_cast<std::uint16_t>(
+                ~(1U << (detail + 7)));
+        }
+        grab_crossing = append_crossing_events(
+            grab->window, pointer_window, event_x, event_y,
+            state_after_release, 2, nullptr, events);
+        if (grab_crossing == EventDelivery::queue_full)
+            return grab_crossing;
+    }
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
     const EventDelivery delivered =
         crossing == EventDelivery::delivered ||
+        grab_crossing == EventDelivery::delivered ||
         routed == EventDelivery::delivered
         ? EventDelivery::delivered
         : EventDelivery::no_recipient;
@@ -1257,13 +1322,17 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         else
             input_.pointer_grab = *activated;
     }
+    if (automatic)
+        input_.pointer_grab = *automatic;
     if (type == 3 && input_.keyboard_grab &&
         input_.keyboard_grab->passive &&
         input_.keyboard_grab->passive_detail == detail) {
         input_.keyboard_grab.reset();
     }
     if (type == 5 && input_.pointer_grab &&
-        input_.pointer_grab->passive && input_.pressed_buttons.none()) {
+        (input_.pointer_grab->passive ||
+         input_.pointer_grab->automatic) &&
+        input_.pressed_buttons.none()) {
         input_.pointer_grab.reset();
     }
     return delivered;

@@ -138,6 +138,7 @@ struct ActiveGrab {
     bool owner_events = false;
     bool passive = false;
     std::uint8_t passive_detail = 0;
+    bool automatic = false;
 };
 
 enum class PassiveGrabKind : std::uint8_t {
@@ -392,7 +393,8 @@ private:
     [[nodiscard]] EventDelivery append_crossing_events(
         std::uint32_t from, std::uint32_t to,
         std::int32_t root_x, std::int32_t root_y,
-        std::uint16_t state, const ActiveGrab *grab,
+        std::uint16_t state, std::uint8_t mode,
+        const ActiveGrab *grab,
         std::vector<PlannedEvent> &events) const;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
