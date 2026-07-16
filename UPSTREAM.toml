@@ -86,6 +86,7 @@ patches = [
   "patches/xorg-server/0009-use-typed-noop-callbacks.patch",
   "patches/xorg-server/0010-use-type-safe-reply-swap-adapters.patch",
   "patches/xorg-server/0011-use-type-safe-pixman-shape-adapters.patch",
+  "patches/xorg-server/0012-avoid-shifting-negative-line-errors.patch",
 ]
 importer = "tools/import-xorg.sh"
 

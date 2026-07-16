@@ -256,6 +256,8 @@ patch -s -V none -d "$root" -p1 < \
     "$root/patches/xorg-server/0010-use-type-safe-reply-swap-adapters.patch"
 patch -s -V none -d "$root" -p1 < \
     "$root/patches/xorg-server/0011-use-type-safe-pixman-shape-adapters.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/xorg-server/0012-avoid-shifting-negative-line-errors.patch"
 
 install -d "$root/LICENSES/xorg-server"
 cp -p "$xserver/COPYING" "$root/LICENSES/xorg-server/COPYING"
