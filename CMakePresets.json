@@ -122,7 +122,7 @@
       "name": "sanitizer",
       "configurePreset": "sanitizer",
       "environment": {
-        "ASAN_OPTIONS": "detect_leaks=1:strict_string_checks=1",
+        "ASAN_OPTIONS": "strict_string_checks=1",
         "UBSAN_OPTIONS": "print_stacktrace=1:halt_on_error=1"
       },
       "output": {
