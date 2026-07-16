@@ -244,6 +244,7 @@ main(void)
     graphics = xcb_generate_id(connection);
     {
         const uint32_t red = 0x00ff0000U;
+        const uint32_t blue = 0x000000ffU;
         const xcb_rectangle_t rectangle = { 0, 0, 12, 9 };
 
         if (!checked(connection,
@@ -259,6 +260,12 @@ main(void)
                          connection, pixmap, graphics, 1, &rectangle),
                      "PolyFillRectangle") ||
             !checked(connection,
+                     xcb_put_image_checked(
+                         connection, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap,
+                         graphics, 1, 1, 6, 4, 0, 24,
+                         sizeof(blue), (const uint8_t *) &blue),
+                     "PutImage") ||
+            !checked(connection,
                      xcb_copy_area_checked(connection, pixmap, child, graphics,
                                            0, 0, 0, 0, 12, 9),
                      "CopyArea"))
@@ -273,7 +280,7 @@ main(void)
         xcb_get_image_data_length(image) < 4)
         goto cleanup;
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
-    if ((pixel & 0x00ffffffU) != 0x00ff0000U)
+    if ((pixel & 0x00ffffffU) != 0x000000ffU)
         goto cleanup;
     free(image);
     image = xcb_get_image_reply(
@@ -286,7 +293,7 @@ main(void)
         xcb_get_image_data_length(image) < 4)
         goto cleanup;
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
-    if ((pixel & 0x00ffffffU) != 0x00ff0000U)
+    if ((pixel & 0x00ffffffU) != 0x000000ffU)
         goto cleanup;
 
     stage = "round-tripping selection ownership";

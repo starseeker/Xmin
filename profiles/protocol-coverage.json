@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "91ee6d5118d85b5b61769a1519749f0a2ffa17799ec4b731c985870e5e96f4e7",
+    "policy_sha256": "5ad203d54871f1ba99a44c518fcb24ff3bff7061a4b533da75e88901321a28a1",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -636,7 +636,7 @@
       "name": "PutImage",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 73,

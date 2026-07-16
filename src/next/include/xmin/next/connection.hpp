@@ -96,6 +96,7 @@ private:
     Result<void> handle_free_graphics_context(const RequestContext &context);
     Result<void> handle_copy_area(const RequestContext &context);
     Result<void> handle_fill_rectangles(const RequestContext &context);
+    Result<void> handle_put_image(const RequestContext &context);
     Result<void> handle_get_image(const RequestContext &context);
     Result<void> handle_alloc_named_color(const RequestContext &context);
     Result<void> handle_query_colors(const RequestContext &context);

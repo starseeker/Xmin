@@ -112,7 +112,8 @@ properties support replace/prepend/append, partial reads, listing, deletion, and
 canonical 8/16/32-bit storage across clients of opposite byte order.  A bounded
 four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
-overlap-safe copies, and host-image-order ZPixmap readback.  Window-local contents are
+overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and
+ARGB8888 in the setup-advertised image and bitmap order.  Window-local contents are
 composed lazily into a separate root image with stacking, borders, nested ancestor
 clipping, and lossless map/unmap behavior, so capture never destroys root backing pixels.
 Its deliberately small

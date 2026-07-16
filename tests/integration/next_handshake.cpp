@@ -600,6 +600,41 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
 
     request.assign(28, 0);
+    request[0] = 72; // PutImage
+    request[1] = 2;  // ZPixmap
+    put16(request, 2, 7, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, graphics, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    put16(request, 16, 1, little);
+    put16(request, 18, 1, little);
+    request[21] = 24;
+    const bool image_little = host_is_little_endian();
+    put32(request, 24, 0x000000ffU, image_little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73; // verify PutImage before copying
+    request[1] = 2;
+    put16(request, 2, 5, little);
+    put32(request, 4, pixmap, little);
+    put16(request, 8, 1, little);
+    put16(request, 10, 1, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 0xffffffffU, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, little) != 39 ||
+        get32(reply, 32, image_little) != 0x000000ffU) {
+        std::cerr << "direct PutImage readback failed\n";
+        return false;
+    }
+
+    request.assign(28, 0);
     request[0] = 62; // CopyArea
     put16(request, 2, 7, little);
     put32(request, 4, pixmap, little);
@@ -615,15 +650,17 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[1] = 2;  // ZPixmap
     put16(request, 2, 5, little);
     put32(request, 4, root_window, little);
+    put16(request, 8, 1, little);
+    put16(request, 10, 1, little);
     put16(request, 12, 1, little);
     put16(request, 14, 1, little);
     put32(request, 16, 0xffffffffU, little);
-    const bool image_little = host_is_little_endian();
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
         reply[0] != 1 || reply[1] != 24 ||
-        get16(reply, 2, little) != 39 ||
-        get32(reply, 32, image_little) != 0x0000ff00U) {
+        get16(reply, 2, little) != 41 ||
+        get32(reply, 32, image_little) != 0x000000ffU) {
+        std::cerr << "copied PutImage readback failed\n";
         return false;
     }
 
@@ -637,11 +674,73 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 4, pixmap, little);
     if (!write_all(descriptor, request))
         return false;
+
+    request.assign(16, 0);
+    request[0] = 53; // 1-bit pixmap exercises bitmap order and row padding
+    request[1] = 1;
+    put16(request, 2, 4, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 9, little);
+    put16(request, 14, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 55;
+    put16(request, 2, 4, little);
+    put32(request, 4, graphics, little);
+    put32(request, 8, pixmap, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(28, 0);
+    request[0] = 72;
+    request[1] = 2;
+    put16(request, 2, 7, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, graphics, little);
+    put16(request, 12, 9, little);
+    put16(request, 14, 1, little);
+    request[21] = 1;
+    const std::uint8_t bitmap_edge = image_little ? 0x01U : 0x80U;
+    request[24] = bitmap_edge;
+    request[25] = bitmap_edge;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73;
+    request[1] = 2;
+    put16(request, 2, 5, little);
+    put32(request, 4, pixmap, little);
+    put16(request, 12, 9, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 47 || reply[32] != bitmap_edge ||
+        reply[33] != bitmap_edge || reply[34] != 0 || reply[35] != 0) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 60;
+    put16(request, 2, 2, little);
+    put32(request, 4, graphics, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 54;
+    put32(request, 4, pixmap, little);
+    if (!write_all(descriptor, request))
+        return false;
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 42;
+        reply[0] == 1 && get16(reply, 2, little) == 50;
 }
 
 bool

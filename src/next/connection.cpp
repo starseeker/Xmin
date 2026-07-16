@@ -10,6 +10,7 @@
 #include <cstring>
 #include <fcntl.h>
 #include <limits>
+#include <new>
 #include <poll.h>
 #include <string_view>
 #include <unistd.h>
@@ -1734,6 +1735,105 @@ Connection::handle_fill_rectangles(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_put_image(const RequestContext &context)
+{
+    if (context.request.size() < 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    const auto destination_x = reader.u16();
+    const auto destination_y = reader.u16();
+    const auto left_pad = reader.u8();
+    const auto depth = reader.u8();
+    if (!drawable_id || !graphics_id || !width || !height ||
+        !destination_x || !destination_y || !left_pad || !depth ||
+        !reader.skip(2)) {
+        return malformed("truncated PutImage request");
+    }
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context, context.opcode,
+                          context.sequence, *graphics_id);
+    if (context.data != 2)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if (*left_pad != 0)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    if (*width == 0 || *height == 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence);
+    if (*depth != surface->depth() || graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+
+    const std::size_t bits_per_pixel = *depth == 1
+        ? 1
+        : (*depth == 8 ? 8 : 32);
+    const auto row_bits = checked_multiply(
+        static_cast<std::size_t>(*width), bits_per_pixel);
+    const auto rounded_bits = row_bits
+        ? checked_add(*row_bits, std::size_t{7})
+        : std::optional<std::size_t>{};
+    const auto stride = rounded_bits
+        ? padded_to_four(*rounded_bits / 8)
+        : std::optional<std::size_t>{};
+    const auto image_size = stride
+        ? checked_multiply(*stride, static_cast<std::size_t>(*height))
+        : std::optional<std::size_t>{};
+    const auto expected_size = image_size
+        ? checked_add(std::size_t{24}, *image_size)
+        : std::optional<std::size_t>{};
+    if (!expected_size || context.request.size() != *expected_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    const auto *image = context.request.data() + 24;
+    const bool least_significant_bit_first =
+        host_byte_order() == ByteOrder::little;
+    const std::int32_t target_x = signed_word(*destination_x);
+    const std::int32_t target_y = signed_word(*destination_y);
+    for (std::uint32_t row = 0; row < *height; ++row) {
+        const auto *row_data = image + static_cast<std::size_t>(row) * *stride;
+        WireReader pixels(row_data, *stride, host_byte_order());
+        for (std::uint32_t column = 0; column < *width; ++column) {
+            std::uint32_t pixel = 0;
+            if (*depth == 1) {
+                const auto byte = row_data[column / 8];
+                const unsigned bit = least_significant_bit_first
+                    ? column & 7U
+                    : 7U - (column & 7U);
+                pixel = (byte >> bit) & 1U;
+            }
+            else if (*depth == 8) {
+                pixel = row_data[column];
+            }
+            else {
+                const auto value = pixels.u32();
+                if (!value)
+                    return malformed("truncated ZPixmap scanline");
+                pixel = *value;
+            }
+            surface->draw_pixel(target_x + static_cast<std::int32_t>(column),
+                                target_y + static_cast<std::int32_t>(row),
+                                pixel, graphics->function,
+                                graphics->plane_mask);
+        }
+    }
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_image(const RequestContext &context)
 {
     if (context.request.size() != 20)
@@ -1755,9 +1855,6 @@ Connection::handle_get_image(const RequestContext &context)
     if (context.data != 2)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, context.data);
-    if (surface->depth() != 24 && surface->depth() != 32)
-        return send_error(context.order, bad_match, context.opcode,
-                          context.sequence);
     const std::int32_t image_x = signed_word(*x);
     const std::int32_t image_y = signed_word(*y);
     if (*width == 0 || *height == 0 || image_x < 0 || image_y < 0 ||
@@ -1767,12 +1864,61 @@ Connection::handle_get_image(const RequestContext &context)
                           context.sequence);
     }
 
-    WireWriter image(host_byte_order());
+    const std::size_t bits_per_pixel = surface->depth() == 1
+        ? 1
+        : (surface->depth() == 8 ? 8 : 32);
+    const auto row_bits = checked_multiply(
+        static_cast<std::size_t>(*width), bits_per_pixel);
+    const auto rounded_bits = row_bits
+        ? checked_add(*row_bits, std::size_t{7})
+        : std::optional<std::size_t>{};
+    const auto stride = rounded_bits
+        ? padded_to_four(*rounded_bits / 8)
+        : std::optional<std::size_t>{};
+    const auto image_size = stride
+        ? checked_multiply(*stride, static_cast<std::size_t>(*height))
+        : std::optional<std::size_t>{};
+    if (!image_size || *image_size > maximum_buffered_output - 32)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    std::vector<std::uint8_t> image;
+    try {
+        image.assign(*image_size, 0);
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    const bool least_significant_byte_first =
+        host_byte_order() == ByteOrder::little;
     for (std::uint32_t row = 0; row < *height; ++row) {
         for (std::uint32_t column = 0; column < *width; ++column) {
-            image.u32(surface->pixel(
+            const std::uint32_t pixel = surface->pixel(
                 static_cast<std::uint16_t>(image_x + column),
-                static_cast<std::uint16_t>(image_y + row)) & *plane_mask);
+                static_cast<std::uint16_t>(image_y + row)) & *plane_mask;
+            const std::size_t row_offset =
+                static_cast<std::size_t>(row) * *stride;
+            if (surface->depth() == 1) {
+                const unsigned bit = least_significant_byte_first
+                    ? column & 7U
+                    : 7U - (column & 7U);
+                image[row_offset + column / 8] |=
+                    static_cast<std::uint8_t>((pixel & 1U) << bit);
+            }
+            else if (surface->depth() == 8) {
+                image[row_offset + column] =
+                    static_cast<std::uint8_t>(pixel);
+            }
+            else {
+                const std::size_t pixel_offset = row_offset + column * 4;
+                for (unsigned index = 0; index < 4; ++index) {
+                    const unsigned shift = least_significant_byte_first
+                        ? index * 8
+                        : (3 - index) * 8;
+                    image[pixel_offset + index] =
+                        static_cast<std::uint8_t>(pixel >> shift);
+                }
+            }
         }
     }
     WireWriter reply(context.order);
@@ -1782,7 +1928,7 @@ Connection::handle_get_image(const RequestContext &context)
     reply.u32(static_cast<std::uint32_t>(image.size() / 4));
     reply.u32(server_.window(*drawable_id) == nullptr ? 0 : root_visual_id);
     reply.pad(20);
-    reply.bytes(image.data());
+    reply.bytes(image);
     return queue(reply.data());
 }
 
@@ -1994,6 +2140,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_copy_area;
         table[opcode_index(CoreOpcode::PolyFillRectangle)] =
             &Connection::handle_fill_rectangles;
+        table[opcode_index(CoreOpcode::PutImage)] =
+            &Connection::handle_put_image;
         table[opcode_index(CoreOpcode::GetImage)] =
             &Connection::handle_get_image;
         table[opcode_index(CoreOpcode::AllocNamedColor)] =

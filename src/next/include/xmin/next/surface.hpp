@@ -34,6 +34,9 @@ public:
     bool resize(std::uint16_t width, std::uint16_t height);
     void fill(const Rectangle &rectangle, std::uint32_t source,
               std::uint8_t function, std::uint32_t plane_mask);
+    void draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
+                    std::uint8_t function,
+                    std::uint32_t plane_mask) noexcept;
     void copy_from(const Surface &source, std::int32_t source_x,
                    std::int32_t source_y, std::int32_t destination_x,
                    std::int32_t destination_y, std::uint32_t width,

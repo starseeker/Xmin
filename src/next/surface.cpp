@@ -156,6 +156,18 @@ Surface::fill(const Rectangle &rectangle, std::uint32_t source,
 }
 
 void
+Surface::draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
+                    std::uint8_t function,
+                    std::uint32_t plane_mask) noexcept
+{
+    if (x < 0 || y < 0 || x >= width_ || y >= height_)
+        return;
+    store(static_cast<std::size_t>(y) * width_ +
+              static_cast<std::size_t>(x),
+          source, function, plane_mask);
+}
+
+void
 Surface::copy_from(const Surface &source, std::int32_t source_x,
                    std::int32_t source_y, std::int32_t destination_x,
                    std::int32_t destination_y, std::uint32_t width,
