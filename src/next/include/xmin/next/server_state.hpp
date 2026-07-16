@@ -314,8 +314,8 @@ public:
     [[nodiscard]] bool set_property(WindowRecord &window, AtomId property,
                                     PropertyValue value);
     void delete_property(WindowRecord &window, AtomId property);
-    void destroy_window(std::uint32_t id);
-    void destroy_subwindows(std::uint32_t id);
+    [[nodiscard]] EventDelivery destroy_window(std::uint32_t id);
+    [[nodiscard]] EventDelivery destroy_subwindows(std::uint32_t id);
     [[nodiscard]] bool reparent_window(std::uint32_t id,
                                        std::uint32_t new_parent,
                                        std::int16_t x, std::int16_t y);
@@ -406,6 +406,7 @@ private:
         const std::uint32_t *windows, std::size_t count, bool mapped);
     [[nodiscard]] FocusState reverted_focus_state(
         std::uint32_t unavailable = 0) const noexcept;
+    void erase_window_tree(std::uint32_t id) noexcept;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;

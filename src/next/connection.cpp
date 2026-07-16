@@ -1119,8 +1119,11 @@ Connection::handle_destroy_window(const RequestContext &context)
     if (server_.window(*id) == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.destroy_window(*id);
-    return Result<void>::success();
+    const auto delivered = server_.destroy_window(*id);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
@@ -1136,8 +1139,11 @@ Connection::handle_destroy_subwindows(const RequestContext &context)
     if (server_.window(*id) == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    server_.destroy_subwindows(*id);
-    return Result<void>::success();
+    const auto delivered = server_.destroy_subwindows(*id);
+    if (delivered == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>

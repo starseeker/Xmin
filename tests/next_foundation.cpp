@@ -424,7 +424,7 @@ test_passive_grabs()
                 "confined passive grab insertion failed")) {
         return false;
     }
-    server.destroy_window(first_owner);
+    static_cast<void>(server.destroy_window(first_owner));
     return expect(server.passive_grabs().empty(),
                   "destroyed confine window retained a passive grab");
 }
@@ -1177,7 +1177,7 @@ test_mapping_lifecycle_events()
             return false;
         }
     }
-    if (!expect(server.set_subwindows_mapped(parent, false) ==
+    if (!expect(server.destroy_subwindows(parent) ==
                     xmin::next::EventDelivery::queue_full &&
                     server.window(child)->mapped &&
                     server.window(sibling)->mapped &&
@@ -1185,7 +1185,7 @@ test_mapping_lifecycle_events()
                         xmin::next::FocusKind::window &&
                     server.input().focus.window == child &&
                     server.input().focus.revert_to == 2,
-                "mapping transaction escaped an atomic queue failure")) {
+                "destruction escaped an atomic lifecycle queue failure")) {
         return false;
     }
     std::size_t queued_count = 0;
@@ -1194,15 +1194,34 @@ test_mapping_lifecycle_events()
         if (!expect(queued != nullptr &&
                         std::holds_alternative<
                             xmin::next::ClientMessageEvent>(*queued),
-                    "mapping failure left a partial lifecycle event")) {
+                    "destroy failure left a partial lifecycle event")) {
             return false;
         }
         server.pop_event(owner);
         ++queued_count;
     }
-    return expect(
-        queued_count + 3 == xmin::next::maximum_pending_events_per_client,
-        "mapping failure changed the preexisting event count");
+    if (!expect(
+            queued_count + 3 ==
+                xmin::next::maximum_pending_events_per_client,
+            "destroy failure changed the preexisting event count") ||
+        !expect(server.destroy_window(child) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.window(child) == nullptr &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::window &&
+                    server.input().focus.window == parent &&
+                    focus(10, 0, child) && focus(9, 2, parent) &&
+                    crossing(8, 0, child, 5, 5) &&
+                    crossing(7, 2, parent, 10, 10) &&
+                    !server.has_pending_event(owner),
+                "destroy lifecycle transition is wrong")) {
+        return false;
+    }
+    return expect(server.destroy_subwindows(parent) ==
+                      xmin::next::EventDelivery::no_recipient &&
+                      server.window(sibling) == nullptr &&
+                      server.window(parent)->children.empty(),
+                  "DestroySubwindows retained an unreachable child");
 }
 
 bool
@@ -1456,7 +1475,7 @@ test_window_tree_mutations()
                 "window reparenting back to its owner failed")) {
         return false;
     }
-    server.destroy_subwindows(owner);
+    static_cast<void>(server.destroy_subwindows(owner));
     return expect(server.window(owner + 1) == nullptr,
                   "DestroySubwindows retained a child") &&
         expect(server.window(owner) != nullptr,

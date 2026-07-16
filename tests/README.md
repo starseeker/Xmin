@@ -69,8 +69,8 @@ focus/ancestor propagation, do-not-propagate masks, active/passive grab routing,
 ancestor/descendant/nonlinear crossing paths with atomic queue-failure rollback and
 automatic-grab first-press/final-release transitions, plus both-endian explicit focus
 paths, `PointerRoot`/`NotifyPointer` side-runs, and atomic focus queue-failure rollback,
-plus legacy-oracle map/unmap focus-reversion and stationary-pointer crossings and
-all-or-nothing multi-subwindow mapping rollback under queue pressure,
+plus legacy-oracle map/unmap/destroy focus-reversion and stationary-pointer crossings
+and all-or-nothing multi-subwindow destruction rollback under queue pressure,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

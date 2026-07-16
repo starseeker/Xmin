@@ -142,8 +142,10 @@ notifications, including `NotifyPointer` runs along the current pointer path.  D
 mapping mutations now plan stationary-pointer crossings and focus reversion as one
 atomic event/state transaction for `MapWindow`, `UnmapWindow`, `MapSubwindows`, and
 `UnmapSubwindows`, including rollback when any recipient queue lacks capacity.  Delayed
-scheduling, destroy/reparent lifecycle events, active-grab invalidation on view loss,
-and repeat timers remain later vertical slices.
+scheduling, destruction now composes that transition with no-fail subtree erasure, and
+the same external oracle verifies its focus/crossing order against both servers.
+Reparent lifecycle events, active-grab invalidation on view loss, and repeat timers
+remain later vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with

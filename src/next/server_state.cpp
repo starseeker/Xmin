@@ -1739,17 +1739,31 @@ ServerState::delete_property(WindowRecord &candidate, AtomId property)
     candidate.properties.erase(found);
 }
 
-void
+EventDelivery
 ServerState::destroy_window(std::uint32_t id)
 {
     if (id == root_window_id)
-        return;
+        return EventDelivery::no_recipient;
     auto found = windows_.find(id);
     if (found == windows_.end())
+        return EventDelivery::no_recipient;
+
+    const EventDelivery delivery = set_window_mapped(found->second, false);
+    if (delivery == EventDelivery::queue_full)
+        return delivery;
+    erase_window_tree(id);
+    return delivery;
+}
+
+void
+ServerState::erase_window_tree(std::uint32_t id) noexcept
+{
+    auto found = windows_.find(id);
+    if (found == windows_.end() || id == root_window_id)
         return;
 
     while (!found->second.children.empty())
-        destroy_window(found->second.children.back());
+        erase_window_tree(found->second.children.back());
 
     revert_focus_from(id);
     if (input_.pointer_grab &&
@@ -1782,14 +1796,18 @@ ServerState::destroy_window(std::uint32_t id)
     invalidate_scene();
 }
 
-void
+EventDelivery
 ServerState::destroy_subwindows(std::uint32_t id)
 {
     auto *parent = window(id);
     if (parent == nullptr)
-        return;
+        return EventDelivery::no_recipient;
+    const EventDelivery delivery = set_subwindows_mapped(id, false);
+    if (delivery == EventDelivery::queue_full)
+        return delivery;
     while (!parent->children.empty())
-        destroy_window(parent->children.back());
+        erase_window_tree(parent->children.back());
+    return delivery;
 }
 
 bool
@@ -1977,8 +1995,15 @@ ServerState::disconnect_client(std::uint32_t owner)
     for (const auto id : colormaps)
         static_cast<void>(erase_colormap(id));
     const auto windows = resources_.owned_by(owner, ResourceKind::window);
-    for (const auto id : windows)
-        destroy_window(id);
+    for (const auto id : windows) {
+        if (destroy_window(id) != EventDelivery::queue_full)
+            continue;
+        auto *candidate = window(id);
+        if (candidate != nullptr)
+            candidate->mapped = false;
+        revert_focus_from(id);
+        erase_window_tree(id);
+    }
     static_cast<void>(resources_.erase_owner(owner));
 }
 
