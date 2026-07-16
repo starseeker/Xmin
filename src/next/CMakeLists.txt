@@ -3,6 +3,7 @@ add_library(xmin_next_core STATIC
   clock.cpp
   color.cpp
   connection.cpp
+  composite_protocol.cpp
   cursor_protocol.cpp
   damage_protocol.cpp
   display_socket.cpp

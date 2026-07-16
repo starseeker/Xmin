@@ -119,7 +119,8 @@
       "name": "Composite",
       "xml": "composite.xml",
       "version": "0.4",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "DAMAGE",

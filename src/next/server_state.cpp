@@ -525,9 +525,21 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
 std::shared_ptr<Surface>
 ServerState::adopt_surface(Surface surface)
 {
+    return adopt_replacement_surface(std::move(surface), 0);
+}
+
+std::shared_ptr<Surface>
+ServerState::adopt_replacement_surface(
+    Surface surface, std::size_t released_bytes)
+{
     const std::size_t bytes = surface.storage_bytes();
-    if (surface_budget_->bytes > maximum_server_surface_bytes - bytes)
+    const std::size_t credit = std::min(
+        released_bytes, surface_budget_->bytes);
+    if (bytes > maximum_server_surface_bytes ||
+        surface_budget_->bytes - credit >
+            maximum_server_surface_bytes - bytes) {
         return {};
+    }
     surface_budget_->bytes += bytes;
     try {
         auto allocation = std::make_shared<ManagedSurface>(
@@ -547,22 +559,40 @@ ServerState::resize_window_surface(WindowRecord &candidate,
 {
     if (!candidate.surface)
         return true;
-    const auto pixels = checked_multiply(static_cast<std::size_t>(width),
-                                         static_cast<std::size_t>(height));
-    const auto bytes = pixels
-        ? checked_multiply(*pixels, sizeof(std::uint32_t))
-        : std::optional<std::size_t>{};
-    if (!bytes || *bytes > maximum_surface_bytes)
+    auto replacement = Surface::create(
+        width, height, candidate.surface->depth());
+    if (!replacement)
         return false;
-    const std::size_t old_bytes = candidate.surface->storage_bytes();
-    if (surface_budget_->bytes - old_bytes >
-        maximum_server_surface_bytes - *bytes)
+    replacement->copy_from(
+        *candidate.surface, 0, 0, 0, 0, width, height, 3, 0xffffffffU);
+    const bool retained = std::any_of(
+        pixmaps_.begin(), pixmaps_.end(),
+        [&candidate](const auto &entry) {
+            return entry.second.surface == candidate.surface;
+        });
+    auto managed = adopt_replacement_surface(
+        std::move(*replacement),
+        retained ? 0 : candidate.surface->storage_bytes());
+    if (!managed)
         return false;
-    if (!candidate.surface->resize(width, height))
-        return false;
-    surface_budget_->bytes = surface_budget_->bytes - old_bytes + *bytes;
+    replace_window_surface(candidate, std::move(managed));
     invalidate_scene();
     return true;
+}
+
+void
+ServerState::replace_window_surface(
+    WindowRecord &candidate, std::shared_ptr<Surface> replacement) noexcept
+{
+    for (auto &entry : render_pictures_) {
+        auto *drawable = std::get_if<RenderDrawableSource>(
+            &entry.second->source);
+        if (drawable != nullptr && !drawable->pixmap &&
+            drawable->drawable == candidate.id) {
+            drawable->surface = replacement;
+        }
+    }
+    candidate.surface = std::move(replacement);
 }
 
 PixmapRecord *
@@ -902,6 +932,198 @@ ServerState::damage_render_picture(std::uint32_t picture)
         : damage_drawable(drawable->drawable);
 }
 
+bool
+ServerState::composite_window_redirected(std::uint32_t id) const noexcept
+{
+    const auto *candidate = window(id);
+    if (candidate == nullptr)
+        return false;
+    return std::any_of(
+        composite_redirects_.begin(), composite_redirects_.end(),
+        [candidate, id](const CompositeRedirect &redirect) {
+            return (!redirect.subwindows && redirect.window == id) ||
+                (redirect.subwindows &&
+                 redirect.window == candidate->parent);
+        });
+}
+
+bool
+ServerState::composite_window_manually_redirected(
+    std::uint32_t id) const noexcept
+{
+    const auto *candidate = window(id);
+    if (candidate == nullptr)
+        return false;
+    return std::any_of(
+        composite_redirects_.begin(), composite_redirects_.end(),
+        [candidate, id](const CompositeRedirect &redirect) {
+            return redirect.update == 1 &&
+                ((!redirect.subwindows && redirect.window == id) ||
+                 (redirect.subwindows &&
+                  redirect.window == candidate->parent));
+        });
+}
+
+CompositeUpdate
+ServerState::redirect_window(
+    std::uint32_t owner, std::uint32_t id, bool subwindows,
+    std::uint8_t update)
+{
+    const auto *candidate = window(id);
+    if (candidate == nullptr || update > 1 ||
+        (!subwindows &&
+         (id == root_window_id || candidate->surface == nullptr))) {
+        return CompositeUpdate::invalid;
+    }
+    if (update == 1) {
+        const bool conflict = std::any_of(
+            composite_redirects_.begin(), composite_redirects_.end(),
+            [this, candidate, id, subwindows](
+                const CompositeRedirect &redirect) {
+                if (redirect.update != 1)
+                    return false;
+                if (!subwindows) {
+                    return (!redirect.subwindows && redirect.window == id) ||
+                        (redirect.subwindows &&
+                         redirect.window == candidate->parent);
+                }
+                if (redirect.subwindows && redirect.window == id)
+                    return true;
+                if (redirect.subwindows)
+                    return false;
+                const auto *redirected = window(redirect.window);
+                return redirected != nullptr &&
+                    redirected->parent == id;
+            });
+        if (conflict)
+            return CompositeUpdate::access_denied;
+    }
+    if (composite_redirects_.size() >= maximum_composite_redirects)
+        return CompositeUpdate::resource_exhausted;
+    try {
+        composite_redirects_.push_back(
+            CompositeRedirect{owner, id, update, subwindows});
+    }
+    catch (const std::bad_alloc &) {
+        return CompositeUpdate::resource_exhausted;
+    }
+    invalidate_scene();
+    return CompositeUpdate::updated;
+}
+
+CompositeUpdate
+ServerState::unredirect_window(
+    std::uint32_t owner, std::uint32_t id, bool subwindows,
+    std::uint8_t update)
+{
+    const auto found = std::find_if(
+        composite_redirects_.begin(), composite_redirects_.end(),
+        [owner, id, subwindows, update](const CompositeRedirect &redirect) {
+            return redirect.owner == owner && redirect.window == id &&
+                redirect.subwindows == subwindows &&
+                redirect.update == update;
+        });
+    if (found == composite_redirects_.end())
+        return CompositeUpdate::invalid;
+    const std::size_t removed = static_cast<std::size_t>(
+        std::distance(composite_redirects_.begin(), found));
+    const auto remains_redirected = [this, removed](
+                                          std::uint32_t window_id) {
+        const auto *candidate = window(window_id);
+        if (candidate == nullptr)
+            return false;
+        for (std::size_t index = 0;
+             index < composite_redirects_.size(); ++index) {
+            if (index == removed)
+                continue;
+            const auto &redirect = composite_redirects_[index];
+            if ((!redirect.subwindows &&
+                 redirect.window == window_id) ||
+                (redirect.subwindows &&
+                 redirect.window == candidate->parent)) {
+                return true;
+            }
+        }
+        return false;
+    };
+    std::vector<std::pair<std::uint32_t, std::shared_ptr<Surface>>>
+        replacements;
+    const auto prepare_replacement = [this, &replacements,
+                                      &remains_redirected](
+                                         std::uint32_t window_id) {
+        auto *candidate = window(window_id);
+        if (candidate == nullptr || !candidate->surface ||
+            remains_redirected(window_id)) {
+            return true;
+        }
+        const bool named = std::any_of(
+            pixmaps_.begin(), pixmaps_.end(),
+            [candidate](const auto &entry) {
+                return entry.second.surface == candidate->surface;
+            });
+        if (!named)
+            return true;
+        auto copied = Surface::create(
+            candidate->surface->width(), candidate->surface->height(),
+            candidate->surface->depth());
+        if (!copied)
+            return false;
+        copied->copy_from(
+            *candidate->surface, 0, 0, 0, 0,
+            candidate->surface->width(), candidate->surface->height(),
+            3, 0xffffffffU);
+        auto managed = adopt_surface(std::move(*copied));
+        if (!managed)
+            return false;
+        try {
+            replacements.emplace_back(window_id, std::move(managed));
+        }
+        catch (const std::bad_alloc &) {
+            return false;
+        }
+        return true;
+    };
+    if (subwindows) {
+        const auto *parent = window(id);
+        if (parent == nullptr)
+            return CompositeUpdate::invalid;
+        for (const auto child : parent->children) {
+            if (!prepare_replacement(child))
+                return CompositeUpdate::resource_exhausted;
+        }
+    }
+    else if (!prepare_replacement(id)) {
+        return CompositeUpdate::resource_exhausted;
+    }
+    composite_redirects_.erase(found);
+    for (auto &replacement : replacements) {
+        auto *candidate = window(replacement.first);
+        if (candidate != nullptr)
+            replace_window_surface(*candidate, std::move(replacement.second));
+    }
+    invalidate_scene();
+    return CompositeUpdate::updated;
+}
+
+CompositeUpdate
+ServerState::name_window_pixmap(
+    std::uint32_t window_id, std::uint32_t pixmap_id,
+    std::uint32_t owner)
+{
+    const auto *candidate = window(window_id);
+    if (candidate == nullptr || candidate->surface == nullptr ||
+        map_state(window_id) != 2 ||
+        !composite_window_redirected(window_id) ||
+        resource_exists(pixmap_id)) {
+        return CompositeUpdate::invalid;
+    }
+    if (resource_limit_reached(owner))
+        return CompositeUpdate::resource_exhausted;
+    return add_pixmap({pixmap_id, candidate->surface}, owner)
+        ? CompositeUpdate::updated
+        : CompositeUpdate::resource_exhausted;
+}
+
 GraphicsContextRecord *
 ServerState::graphics_context(std::uint32_t id)
 {
@@ -1197,6 +1419,8 @@ ServerState::composite_window(std::uint32_t id, std::int64_t parent_x,
 {
     const auto *candidate = window(id);
     if (candidate == nullptr || !candidate->mapped || !composited_root_)
+        return;
+    if (composite_window_manually_redirected(id))
         return;
 
     const std::int64_t outer_left = parent_x + candidate->x;
@@ -1833,7 +2057,7 @@ ServerState::resize_randr_screen(RandrState candidate,
         return RandrUpdate::queue_full;
     }
 
-    root->surface = std::move(managed_root);
+    replace_window_surface(*root, std::move(managed_root));
     composited_root_ = std::move(managed_composited);
     root->width = width;
     root->height = height;
@@ -4176,6 +4400,13 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
                 return entry.window == id;
             }),
         randr_.subscriptions.end());
+    composite_redirects_.erase(
+        std::remove_if(
+            composite_redirects_.begin(), composite_redirects_.end(),
+            [id](const CompositeRedirect &entry) {
+                return entry.window == id;
+            }),
+        composite_redirects_.end());
     for (auto save_set = save_sets_.begin(); save_set != save_sets_.end();) {
         auto &entries = save_set->second;
         entries.erase(
@@ -4816,6 +5047,32 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto damages = resources_.owned_by(owner, ResourceKind::damage);
     for (const auto id : damages)
         static_cast<void>(erase_damage(id));
+    while (true) {
+        const auto redirect = std::find_if(
+            composite_redirects_.begin(), composite_redirects_.end(),
+            [owner](const CompositeRedirect &entry) {
+                return entry.owner == owner;
+            });
+        if (redirect == composite_redirects_.end())
+            break;
+        const CompositeRedirect removing = *redirect;
+        const auto removed = unredirect_window(
+            owner, removing.window, removing.subwindows,
+            removing.update);
+        if (removed != CompositeUpdate::updated) {
+            const auto stale = std::find_if(
+                composite_redirects_.begin(), composite_redirects_.end(),
+                [&removing](const CompositeRedirect &entry) {
+                    return entry.owner == removing.owner &&
+                        entry.window == removing.window &&
+                        entry.update == removing.update &&
+                        entry.subwindows == removing.subwindows;
+                });
+            if (stale != composite_redirects_.end())
+                composite_redirects_.erase(stale);
+            invalidate_scene();
+        }
+    }
     const auto regions =
         resources_.owned_by(owner, ResourceKind::xfixes_region);
     for (const auto id : regions)

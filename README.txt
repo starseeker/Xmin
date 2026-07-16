@@ -132,7 +132,8 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
-SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, RANDR 1.6, and DAMAGE 1.1.
+SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, RANDR 1.6, DAMAGE 1.1,
+and Composite 0.4.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -175,6 +176,13 @@ surface identity, so future named-pixmap aliases observe the same storage.  Raw,
 delta, bounding-box, and non-empty reporting share canonical region algebra with
 SHAPE and XFIXES; notification enqueue and accumulated-region updates commit
 atomically, and drawable destruction or client disconnect removes stale objects.
+Composite implements redirect ownership, manual/automatic exclusion, border-clip
+regions, and named window pixmaps directly over the window tree and shared surfaces.
+Named pixmaps retain border-free content storage across resize, unredirect, window
+destruction, and client teardown; live window RENDER pictures are rebound when the
+window receives copy-on-write storage.  The root scene omits manually redirected
+hierarchies.  Overlay-window requests return `BadMatch` because the product profile
+deliberately has no overlay plane or hidden overlay window.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

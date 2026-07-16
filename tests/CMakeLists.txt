@@ -320,6 +320,37 @@ if(TARGET Xmin::run)
         set_tests_properties(xmin.xcb-damage-oracle
           PROPERTIES TIMEOUT 20
         )
+
+        add_executable(xmin_xcb_composite_state
+          integration/xcb_composite_state.c
+        )
+        target_compile_features(xmin_xcb_composite_state PRIVATE c_std_11)
+        target_include_directories(xmin_xcb_composite_state PRIVATE
+          "${PROJECT_BINARY_DIR}/generated"
+        )
+        target_link_libraries(xmin_xcb_composite_state PRIVATE
+          PkgConfig::XMIN_TEST_XCB_EXTENSIONS
+          "${XMIN_TEST_XCB_LIBRARY}"
+        )
+        xmin_enable_warnings(xmin_xcb_composite_state)
+        add_test(NAME xmin.next-xcb-composite-state
+          COMMAND Xmin::run
+            --server $<TARGET_FILE:xmin_next>
+            --screen 96x80x24
+            -- $<TARGET_FILE:xmin_xcb_composite_state>
+        )
+        set_tests_properties(xmin.next-xcb-composite-state
+          PROPERTIES TIMEOUT 20
+        )
+        add_test(NAME xmin.xcb-composite-oracle
+          COMMAND Xmin::run
+            --server $<TARGET_FILE:xmin_server>
+            --screen 96x80x24
+            -- $<TARGET_FILE:xmin_xcb_composite_state>
+        )
+        set_tests_properties(xmin.xcb-composite-oracle
+          PROPERTIES TIMEOUT 20
+        )
       endif()
     endif()
   endif()

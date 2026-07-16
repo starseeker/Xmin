@@ -3558,6 +3558,7 @@ test_randr_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
     constexpr std::uint32_t observer = 0x00400000;
+    constexpr std::uint32_t root_picture = owner + 1;
     xmin::next::ServerState server(64, 48);
     if (!expect(server.register_client(owner) &&
                     server.register_client(observer),
@@ -3565,6 +3566,14 @@ test_randr_state()
         return false;
     }
     server.note_client_sequence(observer, 41);
+    if (!expect(server.add_render_picture(
+                    {root_picture, xmin::next::render_xrgb32_format,
+                     xmin::next::RenderDrawableSource{
+                         xmin::next::root_window_id}, {}},
+                    owner),
+                "RANDR root picture setup failed")) {
+        return false;
+    }
     if (!expect(server.select_randr_input(
                     observer, xmin::next::root_window_id,
                     1U | 2U | 4U | 8U | 64U) ==
@@ -3640,6 +3649,19 @@ test_randr_state()
                         60 &&
                     server.valid(),
                 "RANDR framebuffer resize was not atomic")) {
+        return false;
+    }
+    const auto *resized_picture = server.render_picture(root_picture);
+    const auto *resized_drawable = resized_picture == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RenderDrawableSource>(
+              &resized_picture->source);
+    if (!expect(resized_drawable != nullptr &&
+                    resized_drawable->surface ==
+                        server.window(xmin::next::root_window_id)->surface &&
+                    resized_drawable->surface->width() == 80 &&
+                    resized_drawable->surface->height() == 60,
+                "RANDR resize retained a stale root RENDER surface")) {
         return false;
     }
     event = server.next_event(observer);
@@ -3838,6 +3860,156 @@ test_damage_state()
 }
 
 bool
+test_composite_state()
+{
+    constexpr std::uint32_t redirector = 0x00200000;
+    constexpr std::uint32_t owner = 0x00400000;
+    constexpr std::uint32_t window_id = owner + 1;
+    constexpr std::uint32_t pixmap_id = redirector + 1;
+    constexpr std::uint32_t picture_id = owner + 2;
+    xmin::next::ServerState server(16, 12);
+    if (!expect(server.register_client(redirector) &&
+                    server.register_client(owner),
+                "Composite client registration failed")) {
+        return false;
+    }
+    auto *root = server.window(xmin::next::root_window_id);
+    root->surface->fill(
+        {0, 0, 16, 12}, 0x000000ffU, 3, 0xffffffffU);
+
+    auto created = xmin::next::Surface::create(4, 3, 24);
+    if (!expect(created.has_value(),
+                "Composite window surface allocation failed")) {
+        return false;
+    }
+    created->fill({0, 0, 4, 3}, 0x00ff0000U, 3, 0xffffffffU);
+    xmin::next::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::next::root_window_id;
+    window.x = 2;
+    window.y = 1;
+    window.width = 4;
+    window.height = 3;
+    window.mapped = true;
+    window.surface = server.adopt_surface(std::move(*created));
+    if (!expect(window.surface != nullptr &&
+                    server.add_window(std::move(window), owner),
+                "Composite window insertion failed") ||
+        !expect(server.readable_surface(xmin::next::root_window_id)->
+                        pixel(2, 1) == 0x00ff0000U,
+                "unredirected window was absent from the scene")) {
+        return false;
+    }
+
+    if (!expect(server.redirect_window(
+                    redirector, window_id, false, 1) ==
+                    xmin::next::CompositeUpdate::updated &&
+                    server.composite_window_manually_redirected(window_id),
+                "manual Composite redirection failed") ||
+        !expect(server.readable_surface(xmin::next::root_window_id)->
+                        pixel(2, 1) == 0x000000ffU,
+                "manual Composite redirection remained in the scene") ||
+        !expect(server.redirect_window(
+                    redirector, window_id, false, 0) ==
+                    xmin::next::CompositeUpdate::updated,
+                "automatic redirection did not coexist with manual state") ||
+        !expect(server.redirect_window(owner, window_id, false, 1) ==
+                    xmin::next::CompositeUpdate::access_denied,
+                "second manual Composite redirect was accepted")) {
+        return false;
+    }
+
+    if (!expect(server.name_window_pixmap(
+                    window_id, pixmap_id, redirector) ==
+                    xmin::next::CompositeUpdate::updated,
+                "Composite named pixmap creation failed") ||
+        !expect(server.add_render_picture(
+                    {picture_id, xmin::next::render_xrgb32_format,
+                     xmin::next::RenderDrawableSource{window_id}, {}},
+                    owner),
+                "Composite resize picture setup failed") ||
+        !expect(server.unredirect_window(
+                    redirector, window_id, false, 1) ==
+                    xmin::next::CompositeUpdate::updated &&
+                    !server.composite_window_manually_redirected(window_id),
+                "manual Composite unredirect failed")) {
+        return false;
+    }
+
+    auto *stored = server.window(window_id);
+    const auto *named_before = server.pixmap(pixmap_id)->surface.get();
+    if (!expect(server.resize_window_surface(*stored, 6, 5),
+                "Composite copy-on-write resize failed")) {
+        return false;
+    }
+    stored->width = 6;
+    stored->height = 5;
+    const auto *picture = server.render_picture(picture_id);
+    const auto *drawable = picture == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RenderDrawableSource>(&picture->source);
+    if (!expect(server.pixmap(pixmap_id)->surface.get() == named_before &&
+                    server.pixmap(pixmap_id)->surface->width() == 4 &&
+                    server.pixmap(pixmap_id)->surface->height() == 3 &&
+                    server.pixmap(pixmap_id)->surface->pixel(0, 0) ==
+                        0x00ff0000U,
+                "window resize mutated its named Composite pixmap") ||
+        !expect(stored->surface.get() != named_before &&
+                    stored->surface->width() == 6 &&
+                    stored->surface->height() == 5 &&
+                    drawable != nullptr &&
+                    drawable->surface == stored->surface,
+                "window resize did not rebind its live RENDER picture")) {
+        return false;
+    }
+    stored->surface->fill(
+        {0, 0, 6, 5}, 0x0000ff00U, 3, 0xffffffffU);
+    server.invalidate_scene();
+    if (!expect(server.pixmap(pixmap_id)->surface->pixel(0, 0) ==
+                    0x00ff0000U,
+                "new window writes escaped into a named pixmap")) {
+        return false;
+    }
+
+    if (!expect(server.redirect_window(
+                    redirector, xmin::next::root_window_id, true, 1) ==
+                    xmin::next::CompositeUpdate::updated &&
+                    server.composite_window_manually_redirected(window_id),
+                "Composite subwindow redirection failed") ||
+        !expect(server.redirect_window(owner, window_id, false, 1) ==
+                    xmin::next::CompositeUpdate::access_denied,
+                "direct manual redirect bypassed parent subwindow state") ||
+        !expect(server.unredirect_window(
+                    redirector, xmin::next::root_window_id, true, 1) ==
+                    xmin::next::CompositeUpdate::updated,
+                "Composite subwindow unredirect failed") ||
+        !expect(server.unredirect_window(
+                    redirector, xmin::next::root_window_id, true, 1) ==
+                    xmin::next::CompositeUpdate::invalid,
+                "duplicate Composite unredirect succeeded")) {
+        return false;
+    }
+
+    if (!expect(server.unredirect_window(
+                    redirector, window_id, false, 0) ==
+                    xmin::next::CompositeUpdate::updated &&
+                    server.redirect_window(
+                        redirector, window_id, false, 1) ==
+                    xmin::next::CompositeUpdate::updated,
+                "Composite disconnect setup failed")) {
+        return false;
+    }
+    server.disconnect_client(redirector);
+    return expect(!server.composite_window_redirected(window_id) &&
+                      server.pixmap(pixmap_id) == nullptr &&
+                      server.window(window_id) != nullptr &&
+                      server.render_picture(picture_id) != nullptr &&
+                      server.readable_surface(xmin::next::root_window_id)->
+                              pixel(2, 1) == 0x0000ff00U,
+                  "Composite redirect or named pixmap survived disconnect");
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -3903,6 +4075,7 @@ main()
             test_window_tree_mutations() && test_sync_state() &&
             test_xfixes_state() && test_randr_state() &&
             test_damage_state() &&
+            test_composite_state() &&
             test_colormap_state() &&
             test_result()
         ? 0

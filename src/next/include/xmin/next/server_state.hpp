@@ -46,6 +46,7 @@ constexpr std::size_t maximum_randr_monitors = 64;
 constexpr std::size_t maximum_randr_output_properties = 256;
 constexpr std::size_t maximum_randr_filter_parameters = 64;
 constexpr std::size_t maximum_damage_objects = 4096;
+constexpr std::size_t maximum_composite_redirects = 4096;
 constexpr std::uint32_t randr_crtc_id = 0x00000200;
 constexpr std::uint32_t randr_output_id = 0x00000201;
 constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
@@ -168,6 +169,20 @@ enum class DamageUpdate {
     invalid,
     resource_exhausted,
     queue_full,
+};
+
+struct CompositeRedirect {
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::uint8_t update = 0;
+    bool subwindows = false;
+};
+
+enum class CompositeUpdate {
+    updated,
+    invalid,
+    access_denied,
+    resource_exhausted,
 };
 
 struct CursorImage {
@@ -569,6 +584,18 @@ public:
     [[nodiscard]] DamageUpdate subtract_damage(
         std::uint32_t id, const Region *repair, Region *parts);
     [[nodiscard]] DamageUpdate damage_render_picture(std::uint32_t picture);
+    [[nodiscard]] CompositeUpdate redirect_window(
+        std::uint32_t owner, std::uint32_t window, bool subwindows,
+        std::uint8_t update);
+    [[nodiscard]] CompositeUpdate unredirect_window(
+        std::uint32_t owner, std::uint32_t window, bool subwindows,
+        std::uint8_t update);
+    [[nodiscard]] bool composite_window_redirected(
+        std::uint32_t window) const noexcept;
+    [[nodiscard]] bool composite_window_manually_redirected(
+        std::uint32_t window) const noexcept;
+    [[nodiscard]] CompositeUpdate name_window_pixmap(
+        std::uint32_t window, std::uint32_t pixmap, std::uint32_t owner);
     [[nodiscard]] GraphicsContextRecord *graphics_context(std::uint32_t id);
     [[nodiscard]] const GraphicsContextRecord *
     graphics_context(std::uint32_t id) const;
@@ -780,6 +807,7 @@ private:
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
     std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
     std::unordered_map<std::uint32_t, DamageRecord> damages_;
+    std::vector<CompositeRedirect> composite_redirects_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
@@ -831,6 +859,10 @@ private:
     [[nodiscard]] bool apply_damage(
         DamageRecord &damage, const Region &added,
         std::vector<PlannedEvent> &events) const;
+    void replace_window_surface(
+        WindowRecord &window, std::shared_ptr<Surface> replacement) noexcept;
+    [[nodiscard]] std::shared_ptr<Surface> adopt_replacement_surface(
+        Surface surface, std::size_t released_bytes);
     [[nodiscard]] bool append_randr_events(
         const RandrState &candidate, std::uint16_t width,
         std::uint16_t height, std::uint16_t notify_mask,

@@ -272,7 +272,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 10> extensions{{
+    constexpr std::array<std::string_view, 11> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -283,6 +283,7 @@ extension_list_payload()
         "XFIXES",
         "RANDR",
         "DAMAGE",
+        "Composite",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -300,7 +301,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 10 && get16(reply, 2, little) == sequence &&
+        reply[1] == 11 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3650,6 +3651,72 @@ check_damage(int descriptor, bool little, std::uint32_t resource_base)
 }
 
 bool
+check_composite(int descriptor, bool little)
+{
+    constexpr std::uint8_t composite_opcode = 138;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "Composite", 1,
+                         composite_opcode, reply)) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = composite_opcode; // only QueryVersion is legal initially
+    request[1] = 1;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 1 || reply[10] != composite_opcode) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = composite_opcode;
+    put16(request, 2, 3, little);
+    put32(request, 8, 4, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get32(reply, 8, little) != 0 || get32(reply, 12, little) != 4) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = composite_opcode;
+    request[1] = 1; // the root cannot be redirected directly
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 8 ||
+        get16(reply, 2, little) != 4 ||
+        get16(reply, 8, little) != 1 || reply[10] != composite_opcode) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = composite_opcode;
+    request[1] = 7; // overlay machinery is deliberately unsupported
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 8 ||
+        get16(reply, 2, little) != 5 ||
+        get32(reply, 4, little) != root_window ||
+        get16(reply, 8, little) != 7 || reply[10] != composite_opcode) {
+        return false;
+    }
+    request[1] = 8; // ReleaseOverlayWindow is equally explicit
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 0 && reply[1] == 8 &&
+        get16(reply, 2, little) == 6 &&
+        get32(reply, 4, little) == root_window &&
+        get16(reply, 8, little) == 8 && reply[10] == composite_opcode;
+}
+
+bool
 run_randr_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3675,6 +3742,22 @@ run_damage_case(const char *server, bool little)
     const bool passed = send_setup(child.socket, little, true, 11) &&
         check_setup_success(child.socket, little, resource_base) &&
         check_damage(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
+run_composite_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_composite(child.socket, little);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);
@@ -3883,6 +3966,11 @@ main(int argc, char **argv)
     if (!run_damage_case(argv[1], native) ||
         !run_damage_case(argv[1], !native)) {
         std::cerr << "DAMAGE extension case failed\n";
+        return 1;
+    }
+    if (!run_composite_case(argv[1], native) ||
+        !run_composite_case(argv[1], !native)) {
+        std::cerr << "Composite extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

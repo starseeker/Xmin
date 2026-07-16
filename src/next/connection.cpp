@@ -6351,6 +6351,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_randr(context);
         case ExtensionKind::damage:
             return handle_damage(context);
+        case ExtensionKind::composite:
+            return handle_composite(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

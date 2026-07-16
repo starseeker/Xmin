@@ -92,6 +92,11 @@ all DAMAGE 1.1 requests through a generated-libxcb oracle against both servers,
 including explicit and core-rendering damage, accumulated-region subtraction,
 typed notifications, exact extension errors, shared-surface aliases, atomic
 queue-pressure rollback, resource teardown, and raw native/opposite-endian framing,
+all Composite 0.4 requests through typed state tests and a generated-libxcb oracle
+against both servers, including automatic/manual window and subwindow redirects,
+manual exclusion from the root scene, border-clip regions, named-pixmap lifetime,
+resize/unredirect copy-on-write, RENDER rebinding, disconnect cleanup, exact errors,
+raw native/opposite-endian framing, and explicit overlay `BadMatch` behavior,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and
