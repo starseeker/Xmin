@@ -17,7 +17,8 @@ namespace {
 
 constexpr std::string_view auth_name = "MIT-MAGIC-COOKIE-1";
 constexpr std::string_view cookie_hex = "000102030405060708090a0b0c0d0e0f";
-constexpr std::uint32_t root_window = 1;
+constexpr std::uint32_t pointer_root = 1;
+constexpr std::uint32_t root_window = 0x00000100;
 
 struct Child {
     pid_t process = -1;
@@ -469,7 +470,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 1 || get16(reply, 2, little) != 27 ||
-        get32(reply, 8, little) != root_window) {
+        get32(reply, 8, little) != pointer_root) {
         return false;
     }
 
@@ -1266,14 +1267,58 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    request.assign(24, 0);
+    request[0] = 41; // WarpPointer to an absolute root position
+    put16(request, 2, 6, little);
+    put32(request, 8, root_window, little);
+    put16(request, 20, 7, little);
+    put16(request, 22, 9, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 38; // QueryPointer observes the warp
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 101 ||
+        get16(reply, 16, little) != 7 || get16(reply, 18, little) != 9 ||
+        get16(reply, 20, little) != 7 || get16(reply, 22, little) != 9) {
+        return false;
+    }
+
+    request.assign(24, 0);
+    request[0] = 41; // source rectangle excludes the current pointer
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 100, little);
+    put16(request, 14, 100, little);
+    put16(request, 16, 1, little);
+    put16(request, 18, 1, little);
+    put16(request, 20, 20, little);
+    put16(request, 22, 20, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 38; // excluded warp was a no-op
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 103 ||
+        get16(reply, 16, little) != 7 || get16(reply, 18, little) != 9) {
+        return false;
+    }
+
     request.assign(16, 0);
-    request[0] = 39; // no motion history before input is injected
+    request[0] = 39; // no retained motion history
     put16(request, 2, 4, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
         reply.size() != 32 || reply[0] != 1 ||
-        get16(reply, 2, little) != 100 || get32(reply, 8, little) != 0) {
+        get16(reply, 2, little) != 104 || get32(reply, 8, little) != 0) {
         return false;
     }
 
@@ -1283,7 +1328,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
         reply.size() != 40 || reply[0] != 1 ||
-        get16(reply, 2, little) != 101 || get32(reply, 4, little) != 2) {
+        get16(reply, 2, little) != 105 || get32(reply, 4, little) != 2) {
         return false;
     }
     for (std::size_t index = 8; index < reply.size(); ++index) {
@@ -1291,11 +1336,38 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
             return false;
     }
 
+    request.assign(12, 0);
+    request[0] = 42; // focus the actual root, not PointerRoot
+    request[1] = 2;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = 43;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 2 ||
+        get16(reply, 2, little) != 107 ||
+        get32(reply, 8, little) != root_window) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 42; // restore PointerRoot focus
+    put16(request, 2, 3, little);
+    put32(request, 4, pointer_root, little);
+    if (!write_all(descriptor, request))
+        return false;
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 102;
+        reply[0] == 1 && reply[1] == 0 &&
+        get16(reply, 2, little) == 109 &&
+        get32(reply, 8, little) == pointer_root;
 }
 
 bool
@@ -1344,7 +1416,7 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
     request[0] = 43; // GetInputFocus proves recovery after BadLength
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 1 || get16(reply, 2, little) != 5 ||
-        get32(reply, 8, little) != root_window) {
+        get32(reply, 8, little) != pointer_root) {
         return false;
     }
 

@@ -2011,6 +2011,116 @@ Connection::handle_translate_coordinates(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_warp_pointer(const RequestContext &context)
+{
+    if (context.request.size() != 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 20, context.order);
+    const auto source_id = reader.u32();
+    const auto destination_id = reader.u32();
+    const auto source_x = reader.u16();
+    const auto source_y = reader.u16();
+    const auto source_width = reader.u16();
+    const auto source_height = reader.u16();
+    const auto destination_x = reader.u16();
+    const auto destination_y = reader.u16();
+    if (!source_id || !destination_id || !source_x || !source_y ||
+        !source_width || !source_height || !destination_x || !destination_y) {
+        return malformed("truncated WarpPointer request");
+    }
+
+    const WindowRecord *destination = nullptr;
+    if (*destination_id != 0) {
+        destination = server_.window(*destination_id);
+        if (destination == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *destination_id);
+        }
+    }
+    const WindowRecord *source = nullptr;
+    if (*source_id != 0) {
+        source = server_.window(*source_id);
+        if (source == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *source_id);
+        }
+    }
+
+    auto &input = server_.input();
+    if (source != nullptr) {
+        const auto origin = server_.absolute_position(source->id);
+        const std::int64_t left = origin.first + signed_word(*source_x);
+        const std::int64_t top = origin.second + signed_word(*source_y);
+        const std::int64_t right = left + *source_width;
+        const std::int64_t bottom = top + *source_height;
+        const std::int64_t border = source->border_width;
+        const bool inside_visible_window = source->id == root_window_id ||
+            (server_.map_state(source->id) == 2 &&
+             input.pointer_x >= origin.first - border &&
+             input.pointer_x < origin.first + source->width + border &&
+             input.pointer_y >= origin.second - border &&
+             input.pointer_y < origin.second + source->height + border);
+        if (!inside_visible_window || input.pointer_x < left ||
+            input.pointer_y < top ||
+            (*source_width != 0 && input.pointer_x > right) ||
+            (*source_height != 0 && input.pointer_y > bottom)) {
+            return Result<void>::success();
+        }
+    }
+
+    std::int64_t x = input.pointer_x;
+    std::int64_t y = input.pointer_y;
+    if (destination != nullptr) {
+        const auto origin = server_.absolute_position(destination->id);
+        x = origin.first;
+        y = origin.second;
+    }
+    x += signed_word(*destination_x);
+    y += signed_word(*destination_y);
+    input.pointer_x = static_cast<std::int32_t>(std::clamp<std::int64_t>(
+        x, 0, static_cast<std::int64_t>(server_.width()) - 1));
+    input.pointer_y = static_cast<std::int32_t>(std::clamp<std::int64_t>(
+        y, 0, static_cast<std::int64_t>(server_.height()) - 1));
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_set_input_focus(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 2)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto focus_id = reader.u32();
+    const auto time = reader.u32();
+    if (!focus_id || !time)
+        return malformed("truncated SetInputFocus request");
+
+    FocusKind kind = FocusKind::window;
+    if (*focus_id == 0)
+        kind = FocusKind::none;
+    else if (*focus_id == pointer_root_id)
+        kind = FocusKind::pointer_root;
+    else {
+        if (server_.window(*focus_id) == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *focus_id);
+        }
+        if (server_.map_state(*focus_id) != 2) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+        }
+    }
+    static_cast<void>(server_.set_input_focus(
+        kind, *focus_id, context.data, *time));
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_create_pixmap(const RequestContext &context)
 {
     if (context.request.size() != 16)
@@ -3437,10 +3547,10 @@ Connection::handle_get_input_focus(const RequestContext &context)
                           context.sequence);
     WireWriter reply(context.order);
     reply.u8(1);
-    reply.u8(0); // RevertToNone
+    reply.u8(server_.input().focus.revert_to);
     reply.u16(context.sequence);
     reply.u32(0);
-    reply.u32(root_window_id);
+    reply.u32(server_.input().focus.wire_id());
     reply.pad(20);
     return queue(reply.data());
 }
@@ -3572,6 +3682,10 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_get_motion_events;
         table[opcode_index(CoreOpcode::TranslateCoordinates)] =
             &Connection::handle_translate_coordinates;
+        table[opcode_index(CoreOpcode::WarpPointer)] =
+            &Connection::handle_warp_pointer;
+        table[opcode_index(CoreOpcode::SetInputFocus)] =
+            &Connection::handle_set_input_focus;
         table[opcode_index(CoreOpcode::CreatePixmap)] =
             &Connection::handle_create_pixmap;
         table[opcode_index(CoreOpcode::FreePixmap)] =

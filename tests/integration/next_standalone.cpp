@@ -25,7 +25,8 @@
 namespace {
 
 constexpr std::string_view auth_name = "MIT-MAGIC-COOKIE-1";
-constexpr std::uint32_t root_window = 1;
+constexpr std::uint32_t pointer_root = 1;
+constexpr std::uint32_t root_window = 0x00000100;
 
 class Fd {
 public:
@@ -412,7 +413,7 @@ synchronize(int descriptor, bool little, std::uint16_t sequence)
     std::vector<std::uint8_t> reply(32);
     return read_exact(descriptor, reply) && reply[0] == 1 &&
         get16(reply, 2, little) == sequence &&
-        get32(reply, 8, little) == root_window;
+        get32(reply, 8, little) == pointer_root;
 }
 
 bool

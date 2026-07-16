@@ -281,6 +281,8 @@ ServerState::set_window_mapped(WindowRecord &candidate, bool mapped) noexcept
     if (candidate.mapped == mapped)
         return;
     candidate.mapped = mapped;
+    if (!mapped)
+        revert_focus_from(candidate.id);
     invalidate_scene();
 }
 
@@ -388,6 +390,29 @@ ServerState::advance_time() noexcept
     ++current_time_;
     if (current_time_ == 0)
         current_time_ = 1;
+}
+
+FocusUpdate
+ServerState::set_input_focus(FocusKind kind, std::uint32_t window_id,
+                             std::uint8_t revert_to,
+                             std::uint32_t time) noexcept
+{
+    const std::uint32_t effective_time = time == 0 ? current_time_ : time;
+    const auto later_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) > 0;
+    };
+    const auto earlier_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) < 0;
+    };
+    if (later_than(effective_time, current_time_) ||
+        earlier_than(effective_time, input_.focus.changed_at)) {
+        return FocusUpdate::ignored;
+    }
+    input_.focus.kind = kind;
+    input_.focus.window = kind == FocusKind::window ? window_id : 0;
+    input_.focus.changed_at = effective_time;
+    input_.focus.revert_to = revert_to;
+    return FocusUpdate::updated;
 }
 
 std::uint32_t
@@ -588,6 +613,7 @@ ServerState::destroy_window(std::uint32_t id)
     while (!found->second.children.empty())
         destroy_window(found->second.children.back());
 
+    revert_focus_from(id);
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
     for (const auto &property : found->second.properties)
@@ -661,6 +687,10 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     }
     candidate->x = x;
     candidate->y = y;
+    if (input_.focus.kind == FocusKind::window &&
+        map_state(input_.focus.window) != 2) {
+        revert_focus_from(id);
+    }
     invalidate_scene();
     return true;
 }
@@ -675,12 +705,43 @@ ServerState::set_subwindows_mapped(std::uint32_t id, bool mapped)
     for (const auto child : parent->children) {
         auto *candidate = window(child);
         if (candidate != nullptr && candidate->mapped != mapped) {
-            candidate->mapped = mapped;
+            set_window_mapped(*candidate, mapped);
             changed = true;
         }
     }
     if (changed)
         invalidate_scene();
+}
+
+void
+ServerState::revert_focus_from(std::uint32_t unavailable) noexcept
+{
+    auto &focus = input_.focus;
+    if (focus.kind != FocusKind::window ||
+        (focus.window != unavailable &&
+         !is_descendant(focus.window, unavailable))) {
+        return;
+    }
+    if (focus.revert_to == 0) {
+        focus.kind = FocusKind::none;
+        focus.window = 0;
+        return;
+    }
+    if (focus.revert_to == 1) {
+        focus.kind = FocusKind::pointer_root;
+        focus.window = 0;
+        return;
+    }
+
+    const auto *candidate = window(focus.window);
+    std::uint32_t parent = candidate == nullptr ? 0 : candidate->parent;
+    while (parent != 0 && map_state(parent) != 2) {
+        const auto *ancestor = window(parent);
+        parent = ancestor == nullptr ? 0 : ancestor->parent;
+    }
+    focus.revert_to = 0;
+    focus.window = parent;
+    focus.kind = parent == 0 ? FocusKind::none : FocusKind::window;
 }
 
 void

@@ -179,6 +179,36 @@ test_shared_server_state()
         return false;
     }
 
+    auto *stored_parent = server.window(first_owner);
+    auto *stored_child = server.window(second_owner);
+    server.set_window_mapped(*stored_parent, true);
+    server.set_window_mapped(*stored_child, true);
+    server.advance_time();
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, second_owner, 2, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "window focus update failed") ||
+        !expect(server.set_input_focus(
+                    xmin::next::FocusKind::none, 0, 0, 1) ==
+                    xmin::next::FocusUpdate::ignored,
+                "stale focus timestamp was accepted")) {
+        return false;
+    }
+    server.set_window_mapped(*stored_child, false);
+    if (!expect(server.input().focus.kind == xmin::next::FocusKind::window &&
+                    server.input().focus.window == first_owner &&
+                    server.input().focus.revert_to == 0,
+                "parent focus reversion failed")) {
+        return false;
+    }
+    server.set_window_mapped(*stored_child, true);
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, second_owner, 1, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "pointer-root reversion setup failed")) {
+        return false;
+    }
+
     const auto selection = server.atoms().intern("XMIN_SELECTION");
     server.advance_time();
     if (!expect(server.set_selection_owner(
@@ -247,7 +277,9 @@ test_shared_server_state()
                        ->event_masks.count(first_owner) == 0,
                "disconnect retained an event selection") &&
         expect(server.server_grab_owner() == 0,
-               "disconnect retained a server grab");
+               "disconnect retained a server grab") &&
+        expect(server.input().focus.kind == xmin::next::FocusKind::pointer_root,
+               "destroyed focus window did not revert to pointer root");
 }
 
 bool

@@ -104,6 +104,8 @@ private:
     Result<void> handle_query_pointer(const RequestContext &context);
     Result<void> handle_get_motion_events(const RequestContext &context);
     Result<void> handle_translate_coordinates(const RequestContext &context);
+    Result<void> handle_warp_pointer(const RequestContext &context);
+    Result<void> handle_set_input_focus(const RequestContext &context);
     Result<void> handle_create_pixmap(const RequestContext &context);
     Result<void> handle_free_pixmap(const RequestContext &context);
     Result<void> handle_create_graphics_context(

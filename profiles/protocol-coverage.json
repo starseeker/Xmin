@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "800c0aa76534972e3ee29e6e0ef901ea1bdd5387aa2f1c6d553490296c283199",
+    "policy_sha256": "7fc214077dc644a909df8dc33cc90c6a95c6865bd1b34e58716562cf1d9876c6",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -419,14 +419,14 @@
       "name": "WarpPointer",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 42,
       "name": "SetInputFocus",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 43,

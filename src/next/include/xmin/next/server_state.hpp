@@ -17,7 +17,8 @@
 
 namespace xmin::next {
 
-constexpr std::uint32_t root_window_id = 1;
+constexpr std::uint32_t pointer_root_id = 1;
+constexpr std::uint32_t root_window_id = 0x00000100;
 constexpr std::uint32_t default_colormap_id = 2;
 constexpr std::uint32_t root_visual_id = 3;
 constexpr std::uint32_t client_resource_mask = 0x001fffff;
@@ -98,11 +99,34 @@ struct SelectionRecord {
     std::uint32_t changed_at = 0;
 };
 
+enum class FocusKind : std::uint8_t {
+    none,
+    pointer_root,
+    window,
+};
+
+struct FocusState {
+    FocusKind kind = FocusKind::pointer_root;
+    std::uint32_t window = 0;
+    std::uint32_t changed_at = 1;
+    std::uint8_t revert_to = 0;
+
+    [[nodiscard]] std::uint32_t wire_id() const noexcept
+    {
+        if (kind == FocusKind::none)
+            return 0;
+        if (kind == FocusKind::pointer_root)
+            return pointer_root_id;
+        return window;
+    }
+};
+
 struct InputState {
     std::int32_t pointer_x = 0;
     std::int32_t pointer_y = 0;
     std::uint16_t modifier_button_mask = 0;
     std::array<std::uint8_t, 32> pressed_keys{};
+    FocusState focus;
 };
 
 enum class SelectionUpdate {
@@ -115,6 +139,11 @@ enum class EventDelivery {
     delivered,
     no_recipient,
     queue_full,
+};
+
+enum class FocusUpdate {
+    updated,
+    ignored,
 };
 
 class ServerState {
@@ -205,6 +234,9 @@ public:
     }
     [[nodiscard]] InputState &input() noexcept { return input_; }
     [[nodiscard]] const InputState &input() const noexcept { return input_; }
+    [[nodiscard]] FocusUpdate set_input_focus(
+        FocusKind kind, std::uint32_t window, std::uint8_t revert_to,
+        std::uint32_t time) noexcept;
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
@@ -235,6 +267,7 @@ private:
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     void clear_selections_for_window(std::uint32_t window);
+    void revert_focus_from(std::uint32_t window) noexcept;
     void composite_scene();
     void composite_window(std::uint32_t id, std::int64_t parent_x,
                           std::int64_t parent_y, std::int64_t clip_left,

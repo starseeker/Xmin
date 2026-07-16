@@ -135,6 +135,7 @@ main(void)
     xcb_query_pointer_reply_t *pointer = NULL;
     xcb_get_motion_events_reply_t *motion = NULL;
     xcb_query_keymap_reply_t *keymap = NULL;
+    xcb_get_input_focus_reply_t *focus = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
@@ -424,6 +425,110 @@ main(void)
 
         if (memcmp(keymap->keys, clear_keymap, sizeof(clear_keymap)) != 0)
             goto cleanup;
+    }
+
+    stage = "warping the pointer with source constraints";
+    if (!checked(connection,
+                 xcb_warp_pointer_checked(
+                     connection, child, screen->root, 0, 0, 0, 0, 1, 1),
+                 "WarpPointer outside source window")) {
+        goto cleanup;
+    }
+    free(pointer);
+    pointer = xcb_query_pointer_reply(
+        connection, xcb_query_pointer(connection, screen->root), &error);
+    if (error != NULL || pointer == NULL ||
+        pointer->root_x != screen->width_in_pixels / 2 ||
+        pointer->root_y != screen->height_in_pixels / 2)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_warp_pointer_checked(
+                     connection, XCB_NONE, child, 0, 0, 0, 0, 3, 4),
+                 "WarpPointer into child")) {
+        goto cleanup;
+    }
+    free(pointer);
+    pointer = xcb_query_pointer_reply(
+        connection, xcb_query_pointer(connection, child), &error);
+    if (error != NULL || pointer == NULL ||
+        pointer->root_x != translated->dst_x + 3 ||
+        pointer->root_y != translated->dst_y + 4 ||
+        pointer->win_x != 3 || pointer->win_y != 4)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_warp_pointer_checked(
+                     connection, XCB_NONE, XCB_NONE, 0, 0, 0, 0,
+                     -100, -100),
+                 "relative WarpPointer clamp")) {
+        goto cleanup;
+    }
+    free(pointer);
+    pointer = xcb_query_pointer_reply(
+        connection, xcb_query_pointer(connection, screen->root), &error);
+    if (error != NULL || pointer == NULL || pointer->root_x != 0 ||
+        pointer->root_y != 0 || pointer->child != XCB_NONE)
+        goto cleanup;
+
+    stage = "updating input focus and applying parent reversion";
+    focus = xcb_get_input_focus_reply(
+        connection, xcb_get_input_focus(connection), &error);
+    if (error != NULL || focus == NULL ||
+        focus->focus != XCB_INPUT_FOCUS_POINTER_ROOT ||
+        focus->revert_to != XCB_INPUT_FOCUS_NONE)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, child,
+                     XCB_CURRENT_TIME),
+                 "SetInputFocus child")) {
+        goto cleanup;
+    }
+    free(focus);
+    focus = xcb_get_input_focus_reply(
+        connection, xcb_get_input_focus(connection), &error);
+    if (error != NULL || focus == NULL || focus->focus != child ||
+        focus->revert_to != XCB_INPUT_FOCUS_PARENT)
+        goto cleanup;
+    if (!checked(connection, xcb_unmap_window_checked(connection, child),
+                 "Unmap focused child")) {
+        goto cleanup;
+    }
+    free(focus);
+    focus = xcb_get_input_focus_reply(
+        connection, xcb_get_input_focus(connection), &error);
+    if (error != NULL || focus == NULL || focus->focus != parent ||
+        focus->revert_to != XCB_INPUT_FOCUS_NONE ||
+        !checked_error(
+            connection,
+            xcb_set_input_focus_checked(
+                connection, XCB_INPUT_FOCUS_NONE, child, XCB_CURRENT_TIME),
+            XCB_MATCH, "SetInputFocus unviewable child") ||
+        !checked(connection, xcb_map_window_checked(connection, child),
+                 "Remap focused child") ||
+        !checked_error(
+            connection,
+            xcb_set_input_focus_checked(
+                connection, XCB_INPUT_FOCUS_FOLLOW_KEYBOARD, child,
+                XCB_CURRENT_TIME),
+            XCB_VALUE, "SetInputFocus invalid revert mode") ||
+        !checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, screen->root,
+                     XCB_CURRENT_TIME),
+                 "SetInputFocus actual root")) {
+        goto cleanup;
+    }
+    free(focus);
+    focus = xcb_get_input_focus_reply(
+        connection, xcb_get_input_focus(connection), &error);
+    if (error != NULL || focus == NULL || focus->focus != screen->root ||
+        focus->revert_to != XCB_INPUT_FOCUS_PARENT ||
+        !checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_NONE,
+                     XCB_INPUT_FOCUS_POINTER_ROOT, XCB_CURRENT_TIME),
+                 "Restore pointer-root focus")) {
+        goto cleanup;
     }
 
     stage = "copying pixmap pixels into a window";
@@ -845,6 +950,7 @@ cleanup:
         xcb_flush(connection);
     }
     free(error);
+    free(focus);
     free(keymap);
     free(motion);
     free(pointer);
