@@ -62,7 +62,8 @@
       "name": "XTEST",
       "xml": "xtest.xml",
       "version": "2.2",
-      "contract": "required"
+      "contract": "required",
+      "next_partial_opcodes": [0, 1, 2, 3]
     },
     {
       "name": "BIG-REQUESTS",

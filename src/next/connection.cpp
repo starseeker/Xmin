@@ -2,6 +2,7 @@
 
 #include "xmin/next/checked.hpp"
 #include "xmin/next/color.hpp"
+#include "xmin/next/extension_registry.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
 
 #include <algorithm>
@@ -92,6 +93,28 @@ key_is_pressed(const InputState &input, std::uint8_t keycode) noexcept
 {
     return (input.pressed_keys[keycode >> 3] &
             (1U << (keycode & 7U))) != 0;
+}
+
+void
+refresh_modifier_button_mask(InputState &input) noexcept
+{
+    std::uint16_t state = 0;
+    for (std::size_t group = 0; group < 8; ++group) {
+        for (std::size_t index = 0;
+             index < input.modifier_keys_per_group; ++index) {
+            const std::uint8_t keycode = input.modifier_map[
+                group * input.modifier_keys_per_group + index];
+            if (keycode != 0 && key_is_pressed(input, keycode)) {
+                state |= static_cast<std::uint16_t>(1U << group);
+                break;
+            }
+        }
+    }
+    for (std::size_t button = 1; button <= 5; ++button) {
+        if (input.pressed_buttons.test(button))
+            state |= static_cast<std::uint16_t>(1U << (button + 7));
+    }
+    input.modifier_button_mask = state;
 }
 
 std::int32_t
@@ -614,14 +637,15 @@ Connection::process_setup_authentication()
 Result<void>
 Connection::send_error(ByteOrder order, std::uint8_t code,
                        std::uint8_t opcode, std::uint16_t sequence,
-                       std::uint32_t bad_value)
+                       std::uint32_t bad_value,
+                       std::uint16_t minor_opcode)
 {
     WireWriter reply(order);
     reply.u8(0);
     reply.u8(code);
     reply.u16(sequence);
     reply.u32(bad_value);
-    reply.u16(0);
+    reply.u16(minor_opcode);
     reply.u8(opcode);
     reply.pad(21);
     return queue(reply.data());
@@ -4623,14 +4647,18 @@ Connection::handle_query_extension(const RequestContext &context)
     if (!padded_name || context.request.size() != 8 + *padded_name)
         return send_error(context.order, bad_length, context.opcode,
                           context.sequence);
+    const std::string_view name{
+        reinterpret_cast<const char *>(context.request.data() + 8),
+        *name_size};
+    const auto *extension = extension_by_name(name);
 
     WireWriter reply(context.order);
     reply.u8(1);
     reply.u8(0);
     reply.u16(context.sequence);
     reply.u32(0);
-    reply.u8(0); // not yet advertised by Xmin-next
-    reply.u8(0);
+    reply.u8(extension == nullptr ? 0 : 1);
+    reply.u8(extension == nullptr ? 0 : extension->major_opcode);
     reply.u8(0);
     reply.u8(0);
     reply.pad(20);
@@ -4645,11 +4673,150 @@ Connection::handle_list_extensions(const RequestContext &context)
                           context.sequence);
     WireWriter reply(context.order);
     reply.u8(1);
-    reply.u8(0);
+    reply.u8(static_cast<std::uint8_t>(extension_registry.size()));
     reply.u16(context.sequence);
-    reply.u32(0);
+    std::size_t payload_size = 0;
+    for (const auto &extension : extension_registry)
+        payload_size += 1 + extension.name.size();
+    const auto padded_size = padded_to_four(payload_size);
+    if (!padded_size)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    reply.u32(static_cast<std::uint32_t>(*padded_size / 4));
     reply.pad(24);
+    for (const auto &extension : extension_registry) {
+        reply.u8(static_cast<std::uint8_t>(extension.name.size()));
+        reply.bytes(extension.name);
+    }
+    reply.pad(*padded_size - payload_size);
     return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_xtest(const RequestContext &context)
+{
+    switch (context.data) {
+    case 0: { // GetVersion
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        if (!reader.u8() || !reader.skip(1) || !reader.u16())
+            return malformed("truncated XTEST GetVersion request");
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(xtest_extension.major_version);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u16(xtest_extension.minor_version);
+        reply.pad(22);
+        return queue(reply.data());
+    }
+    case 1: { // CompareCursor
+        if (context.request.size() != 12)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 8, context.order);
+        const auto window = reader.u32();
+        const auto cursor = reader.u32();
+        if (!window || !cursor)
+            return malformed("truncated XTEST CompareCursor request");
+        if (server_.window(*window) == nullptr)
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *window, context.data);
+        if (*cursor > 1)
+            return send_error(context.order, bad_cursor, context.opcode,
+                              context.sequence, *cursor, context.data);
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(*cursor == 1 ? 1 : 0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.pad(24);
+        return queue(reply.data());
+    }
+    case 2: { // FakeInput
+        if (context.request.size() != 36)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 32, context.order);
+        const auto type = reader.u8();
+        const auto detail = reader.u8();
+        if (!type || !detail || !reader.skip(2) || !reader.u32())
+            return malformed("truncated XTEST FakeInput request");
+        const auto root = reader.u32();
+        if (!root || !reader.skip(8))
+            return malformed("truncated XTEST FakeInput root");
+        const auto root_x_wire = reader.u16();
+        const auto root_y_wire = reader.u16();
+        if (!root_x_wire || !root_y_wire || !reader.skip(7))
+            return malformed("truncated XTEST FakeInput coordinates");
+        const auto device = reader.u8();
+        if (!device)
+            return malformed("truncated XTEST FakeInput device");
+        if (*root != 0 && *root != root_window_id)
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *root, context.data);
+        if (*device != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *device, context.data);
+
+        auto &input = server_.input();
+        if (*type == 2 || *type == 3) {
+            if (*detail < minimum_keycode || *detail > maximum_keycode)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *detail, context.data);
+            const std::uint8_t mask = static_cast<std::uint8_t>(
+                1U << (*detail & 7U));
+            auto &keys = input.pressed_keys[*detail >> 3];
+            if (*type == 2)
+                keys |= mask;
+            else
+                keys &= static_cast<std::uint8_t>(~mask);
+            refresh_modifier_button_mask(input);
+            return Result<void>::success();
+        }
+        if (*type == 4 || *type == 5) {
+            if (*detail < 1 || *detail > input.pointer_map.size())
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *detail, context.data);
+            input.pressed_buttons.set(*detail, *type == 4);
+            refresh_modifier_button_mask(input);
+            return Result<void>::success();
+        }
+        if (*type == 6) {
+            if (*detail > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *detail, context.data);
+            std::int32_t x = signed_word(*root_x_wire);
+            std::int32_t y = signed_word(*root_y_wire);
+            if (*detail == 1) {
+                x += input.pointer_x;
+                y += input.pointer_y;
+            }
+            input.pointer_x = std::clamp<std::int32_t>(
+                x, 0, static_cast<std::int32_t>(server_.width()) - 1);
+            input.pointer_y = std::clamp<std::int32_t>(
+                y, 0, static_cast<std::int32_t>(server_.height()) - 1);
+            return Result<void>::success();
+        }
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *type, context.data);
+    }
+    case 3: { // GrabControl
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        const std::uint8_t impervious = context.request[4];
+        if (impervious > 1)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, impervious, context.data);
+        return Result<void>::success();
+    }
+    default:
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
 }
 
 Result<void>
@@ -4661,6 +4828,8 @@ Connection::handle_no_operation(const RequestContext &)
 Result<void>
 Connection::dispatch(const RequestContext &context)
 {
+    if (context.opcode == xtest_extension.major_opcode)
+        return handle_xtest(context);
     static const std::array<RequestHandler, 128> handlers = [] {
         std::array<RequestHandler, 128> table{};
         table[opcode_index(CoreOpcode::CreateWindow)] =

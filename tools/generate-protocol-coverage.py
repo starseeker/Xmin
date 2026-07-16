@@ -137,6 +137,7 @@ def main() -> None:
             )
         xml_path = args.xml_directory / extension["xml"]
         compatibility = set(extension.get("compatibility_opcodes", []))
+        next_partial = set(extension.get("next_partial_opcodes", []))
         requests = requests_from_xml(xml_path)
         if not requests:
             raise SystemExit(f"{extension['name']} defines no requests")
@@ -146,7 +147,11 @@ def main() -> None:
                 else contract
             )
             request["legacy_status"] = "implemented"
-            request["next_status"] = "not_yet_implemented"
+            request["next_status"] = (
+                "partial_vertical_slice"
+                if request["opcode"] in next_partial
+                else "not_yet_implemented"
+            )
         extensions.append({
             "name": extension["name"],
             "version": extension["version"],

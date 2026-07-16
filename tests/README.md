@@ -63,6 +63,7 @@ generated core keysyms plus mutable keysym/modifier/repeat/button mappings and f
 controls, including both-endian dynamic-width keymap updates, atomic invalid-update
 rejection, mapping-busy replies, per-client `MappingNotify` sequencing, and silent bell
 validation,
+stable XTEST discovery/versioning and both-endian key/button/motion state injection,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

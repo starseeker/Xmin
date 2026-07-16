@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "205d1363ba7ffac908b7ba083ef9e5e1c61014fb517f7b1e821704b84eaa3190",
+    "policy_sha256": "02a13b15681598c60f6f0d4bd9e252e105036a7dd9284b27e812259fea7379ce",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -1557,28 +1557,28 @@
           "name": "GetVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "partial_vertical_slice"
         },
         {
           "opcode": 1,
           "name": "CompareCursor",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "partial_vertical_slice"
         },
         {
           "opcode": 2,
           "name": "FakeInput",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "partial_vertical_slice"
         },
         {
           "opcode": 3,
           "name": "GrabControl",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "partial_vertical_slice"
         }
       ]
     },

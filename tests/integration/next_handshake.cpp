@@ -1693,8 +1693,12 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
     request.assign(4, 0);
     request[0] = 99; // ListExtensions
     put16(request, 2, 1, little);
-    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 1 || get16(reply, 2, little) != 3 || reply[1] != 0) {
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 ||
+        get16(reply, 2, little) != 3 || reply[1] != 1 ||
+        reply[32] != 5 ||
+        std::memcmp(reply.data() + 33, "XTEST", 5) != 0) {
         return false;
     }
 
@@ -1728,6 +1732,167 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
 
     request[0] = 127; // NoOperation
     return write_all(descriptor, request);
+}
+
+bool
+check_xtest(int descriptor, bool little)
+{
+    constexpr std::string_view extension = "XTEST";
+    std::vector<std::uint8_t> request(
+        8 + ((extension.size() + 3) & ~std::size_t{3}), 0);
+    request[0] = 98; // QueryExtension
+    put16(request, 2, static_cast<std::uint16_t>(request.size() / 4), little);
+    put16(request, 4, static_cast<std::uint16_t>(extension.size()), little);
+    std::memcpy(request.data() + 8, extension.data(), extension.size());
+    std::vector<std::uint8_t> reply;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 1 ||
+        reply[8] != 1 || reply[9] != 128) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 128; // XTEST GetVersion
+    put16(request, 2, 2, little);
+    request[4] = 2;
+    put16(request, 6, 2, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 2 ||
+        get16(reply, 2, little) != 2 || get16(reply, 8, little) != 2) {
+        return false;
+    }
+
+    const auto fake_input = [little](std::uint8_t type, std::uint8_t detail,
+                                     std::int16_t x = 0,
+                                     std::int16_t y = 0) {
+        std::vector<std::uint8_t> fake(36, 0);
+        fake[0] = 128;
+        fake[1] = 2;
+        put16(fake, 2, 9, little);
+        fake[4] = type;
+        fake[5] = detail;
+        put16(fake, 24, static_cast<std::uint16_t>(x), little);
+        put16(fake, 26, static_cast<std::uint16_t>(y), little);
+        return fake;
+    };
+
+    request = fake_input(2, 96); // KeyPress
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 44; // QueryKeymap
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || get16(reply, 2, little) != 4 ||
+        reply[20] != 1) {
+        return false;
+    }
+
+    request = fake_input(99, 0); // invalid event type
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 5 || get16(reply, 8, little) != 2 ||
+        reply[10] != 128) {
+        return false;
+    }
+
+    request = fake_input(3, 96); // KeyRelease
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 44;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || get16(reply, 2, little) != 7 ||
+        reply[20] != 0) {
+        return false;
+    }
+
+    request = fake_input(6, 0, 17, 19); // absolute MotionNotify
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 38; // QueryPointer
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 9 || get16(reply, 16, little) != 17 ||
+        get16(reply, 18, little) != 19) {
+        return false;
+    }
+
+    request = fake_input(4, 1); // ButtonPress
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 38;
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 11 ||
+        get16(reply, 24, little) != 0x0100) {
+        return false;
+    }
+
+    request = fake_input(5, 1); // ButtonRelease
+    if (!write_all(descriptor, request))
+        return false;
+    request = fake_input(6, 0, 160, 120); // restore pointer center
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 38;
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 14 ||
+        get16(reply, 16, little) != 160 ||
+        get16(reply, 18, little) != 120 ||
+        get16(reply, 24, little) != 0) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 128; // XTEST GrabControl rejects non-boolean values
+    request[1] = 3;
+    put16(request, 2, 2, little);
+    request[4] = 2;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 15 || get16(reply, 8, little) != 3) {
+        return false;
+    }
+    request[4] = 1;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = 128; // XTEST CompareCursor(Current)
+    request[1] = 1;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && reply[1] == 1 &&
+        get16(reply, 2, little) == 17;
+}
+
+bool
+run_xtest_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_xtest(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
 }
 
 bool
@@ -1786,6 +1951,11 @@ main(int argc, char **argv)
     }
     if (!run_success_case(argv[1], !native, false)) {
         std::cerr << "opposite-order setup/request case failed\n";
+        return 1;
+    }
+    if (!run_xtest_case(argv[1], native) ||
+        !run_xtest_case(argv[1], !native)) {
+        std::cerr << "XTEST state injection case failed\n";
         return 1;
     }
     if (!run_rejected_case(argv[1], false)) {

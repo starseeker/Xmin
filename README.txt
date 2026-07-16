@@ -127,6 +127,10 @@ validate their signed percentage while remaining deliberately silent.  Typed foc
 distinguishes the protocol's `PointerRoot` sentinel from the server-owned root XID,
 honors request timestamps,
 and applies parent/none/pointer-root reversion when windows become unavailable.
+The first constexpr extension-registry entry advertises XTEST 2.2 at a stable opcode.
+Its typed request path negotiates versions, validates cursor/grab-control requests, and
+feeds immediate core key, button, and absolute/relative motion injection into the shared
+input snapshot; delayed scheduling and routed input events remain later vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with

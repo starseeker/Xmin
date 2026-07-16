@@ -15,6 +15,9 @@ python3 tools/generate-protocol-coverage.py \
 
 The generated header is a normal committed C++17 input; Python is not needed by
 configure or build.
+Extension policy entries may list `next_partial_opcodes`; the coverage generator records
+those requests as implemented vertical slices while leaving the extension's remaining
+requests explicitly pending.
 
 `capture-next-core-keymap.c` converts the legacy oracle's core view of the pinned
 `xmin-us.xkb` map and input defaults into the committed C++17 keymap header.  It is

@@ -218,6 +218,24 @@ if(TARGET Xmin::run)
             -- $<TARGET_FILE:xmin_xcb_extensions>
         )
         set_tests_properties(xmin.xcb-extensions PROPERTIES TIMEOUT 20)
+
+        add_executable(xmin_xcb_xtest_state integration/xcb_xtest_state.c)
+        target_compile_features(xmin_xcb_xtest_state PRIVATE c_std_11)
+        target_include_directories(xmin_xcb_xtest_state PRIVATE
+          "${PROJECT_BINARY_DIR}/generated"
+        )
+        target_link_libraries(xmin_xcb_xtest_state PRIVATE
+          PkgConfig::XMIN_TEST_XCB_EXTENSIONS
+          "${XMIN_TEST_XCB_LIBRARY}"
+        )
+        xmin_enable_warnings(xmin_xcb_xtest_state)
+        add_test(NAME xmin.xcb-xtest-state
+          COMMAND Xmin::run
+            --server $<TARGET_FILE:xmin_server>
+            --screen 96x80x24
+            -- $<TARGET_FILE:xmin_xcb_xtest_state>
+        )
+        set_tests_properties(xmin.xcb-xtest-state PROPERTIES TIMEOUT 20)
       endif()
     endif()
   endif()

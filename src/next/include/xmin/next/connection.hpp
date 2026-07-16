@@ -171,10 +171,12 @@ private:
     Result<void> handle_query_keymap(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
+    Result<void> handle_xtest(const RequestContext &context);
     Result<void> handle_no_operation(const RequestContext &context);
     Result<void> send_error(ByteOrder order, std::uint8_t code,
                             std::uint8_t opcode, std::uint16_t sequence,
-                            std::uint32_t bad_value = 0);
+                            std::uint32_t bad_value = 0,
+                            std::uint16_t minor_opcode = 0);
 
     UniqueFd socket_;
     ServerConfig config_;
