@@ -185,6 +185,9 @@ private:
     Result<void> handle_render(const RequestContext &context);
     Result<void> handle_xfixes(const RequestContext &context);
     Result<void> handle_randr(const RequestContext &context);
+    Result<void> handle_damage(const RequestContext &context);
+    Result<void> finish_draw(const RequestContext &context,
+                             std::uint32_t drawable);
     Result<void> update_shape(
         const RequestContext &context, WindowRecord &window,
         std::uint8_t operation, std::uint8_t kind,
@@ -212,6 +215,7 @@ private:
     std::uint8_t xfixes_major_version_ = 0;
     std::uint32_t randr_major_version_ = 1;
     std::uint16_t randr_minor_version_ = 0;
+    std::uint32_t damage_major_version_ = 0;
     std::uint32_t xfixes_disconnect_mode_ = 0;
     bool resume_sync_input_ = false;
     bool prepared_ = false;

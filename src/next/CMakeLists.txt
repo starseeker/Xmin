@@ -4,6 +4,7 @@ add_library(xmin_next_core STATIC
   color.cpp
   connection.cpp
   cursor_protocol.cpp
+  damage_protocol.cpp
   display_socket.cpp
   property_data.cpp
   randr_protocol.cpp

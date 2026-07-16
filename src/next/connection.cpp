@@ -539,6 +539,24 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *damage = std::get_if<DamageNotifyEvent>(&event)) {
+        writer.u8(damage_extension.first_event);
+        writer.u8(damage->level);
+        writer.u16(damage->sequence);
+        writer.u32(damage->drawable);
+        writer.u32(damage->damage);
+        writer.u32(damage->timestamp);
+        writer.i16(damage->area_x);
+        writer.i16(damage->area_y);
+        writer.u16(damage->area_width);
+        writer.u16(damage->area_height);
+        writer.i16(damage->geometry_x);
+        writer.i16(damage->geometry_y);
+        writer.u16(damage->geometry_width);
+        writer.u16(damage->geometry_height);
+        return writer.data();
+    }
+
     if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
         writer.u8(input->type);
         writer.u8(input->detail);
@@ -3263,8 +3281,23 @@ Connection::handle_clear_area(const RequestContext &context)
             *height == 0 ? static_cast<std::uint32_t>(remaining_height)
                          : *height},
         window->background_pixel, 3, 0xffffffffU);
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *id);
+}
+
+Result<void>
+Connection::finish_draw(const RequestContext &context,
+                        std::uint32_t drawable)
+{
+    const auto updated = server_.damage_drawable(drawable);
+    if (updated == DamageUpdate::invalid)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, drawable);
+    if (updated == DamageUpdate::resource_exhausted ||
+        updated == DamageUpdate::queue_full) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return drain_pending_events();
 }
 
 Result<void>
@@ -3310,8 +3343,7 @@ Connection::handle_copy_area(const RequestContext &context)
                            signed_word(*destination_y), *width, *height,
                            graphics->function, graphics->plane_mask,
                            graphics->clip());
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *destination_id);
 }
 
 Result<void>
@@ -3363,8 +3395,7 @@ Connection::handle_copy_plane(const RequestContext &context)
         signed_word(*destination_x), signed_word(*destination_y), *width,
         *height, *bit_plane, graphics->foreground, graphics->background,
         graphics->function, graphics->plane_mask, graphics->clip());
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *destination_id);
 }
 
 Result<void>
@@ -3419,8 +3450,7 @@ Connection::handle_poly_points(const RequestContext &context)
                             graphics->function, graphics->plane_mask,
                             graphics->clip());
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -3475,8 +3505,7 @@ Connection::handle_poly_lines(const RequestContext &context)
         previous_y = current_y;
         first = false;
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -3517,8 +3546,7 @@ Connection::handle_poly_segments(const RequestContext &context)
                            graphics->foreground, graphics->function,
                            graphics->plane_mask, graphics->clip());
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -3577,8 +3605,7 @@ Connection::handle_poly_rectangles(const RequestContext &context)
             }
         }
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -3618,8 +3645,7 @@ Connection::handle_fill_rectangles(const RequestContext &context)
                       graphics->foreground, graphics->function,
                       graphics->plane_mask, graphics->clip());
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -3717,8 +3743,7 @@ Connection::handle_put_image(const RequestContext &context)
                                 graphics->plane_mask, graphics->clip());
         }
     }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return finish_draw(context, *drawable_id);
 }
 
 Result<void>
@@ -6324,6 +6349,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_xfixes(context);
         case ExtensionKind::randr:
             return handle_randr(context);
+        case ExtensionKind::damage:
+            return handle_damage(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

@@ -272,7 +272,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 9> extensions{{
+    constexpr std::array<std::string_view, 10> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -282,6 +282,7 @@ extension_list_payload()
         "RENDER",
         "XFIXES",
         "RANDR",
+        "DAMAGE",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -299,7 +300,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 9 && get16(reply, 2, little) == sequence &&
+        reply[1] == 10 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3566,6 +3567,89 @@ check_randr(int descriptor, bool little)
 }
 
 bool
+check_damage(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t damage_opcode = 137;
+    constexpr std::uint8_t damage_event = 71;
+    constexpr std::uint8_t damage_error = 142;
+    const std::uint32_t damage = resource_base;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "DAMAGE", 1,
+                         damage_opcode, reply, damage_event,
+                         damage_error)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = damage_opcode; // only QueryVersion is legal initially
+    request[1] = 2;
+    put16(request, 2, 2, little);
+    put32(request, 4, damage, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 2 || reply[10] != damage_opcode) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = damage_opcode;
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little);
+    put32(request, 8, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get32(reply, 8, little) != 1 || get32(reply, 12, little) != 1) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = damage_opcode;
+    request[1] = 1; // Create NonEmpty damage on the root
+    put16(request, 2, 4, little);
+    put32(request, 4, damage, little);
+    put32(request, 8, root_window, little);
+    request[12] = 3;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != damage_event || reply[1] != 3 ||
+        get16(reply, 2, little) != 4 ||
+        get32(reply, 4, little) != root_window ||
+        get32(reply, 8, little) != damage ||
+        get16(reply, 16, little) != 0 || get16(reply, 18, little) != 0 ||
+        get16(reply, 20, little) != 320 ||
+        get16(reply, 22, little) != 240 ||
+        get16(reply, 24, little) != 0 || get16(reply, 26, little) != 0 ||
+        get16(reply, 28, little) != 320 ||
+        get16(reply, 30, little) != 240) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = damage_opcode;
+    request[1] = 3; // Subtract all accumulated damage
+    put16(request, 2, 4, little);
+    put32(request, 4, damage, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = damage_opcode;
+    request[1] = 2;
+    put16(request, 2, 2, little);
+    put32(request, 4, damage, little);
+    if (!write_all(descriptor, request) || !write_all(descriptor, request) ||
+        !read_reply(descriptor, reply) || reply[0] != 0 ||
+        reply[1] != damage_error || get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != damage ||
+        get16(reply, 8, little) != 2 || reply[10] != damage_opcode) {
+        return false;
+    }
+    return true;
+}
+
+bool
 run_randr_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3575,6 +3659,22 @@ run_randr_case(const char *server, bool little)
     const bool passed = send_setup(child.socket, little, true, 11) &&
         check_setup_success(child.socket, little, resource_base) &&
         check_randr(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
+run_damage_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_damage(child.socket, little, resource_base);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);
@@ -3778,6 +3878,11 @@ main(int argc, char **argv)
     if (!run_randr_case(argv[1], native) ||
         !run_randr_case(argv[1], !native)) {
         std::cerr << "RANDR extension case failed\n";
+        return 1;
+    }
+    if (!run_damage_case(argv[1], native) ||
+        !run_damage_case(argv[1], !native)) {
+        std::cerr << "DAMAGE extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

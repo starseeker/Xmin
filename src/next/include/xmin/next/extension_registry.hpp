@@ -17,6 +17,7 @@ enum class ExtensionKind : std::uint8_t {
     render,
     xfixes,
     randr,
+    damage,
 };
 
 struct ExtensionInfo {
@@ -48,8 +49,10 @@ inline constexpr ExtensionInfo xfixes_extension{
     "XFIXES", 135, 67, 136, 6, 0, ExtensionKind::xfixes};
 inline constexpr ExtensionInfo randr_extension{
     "RANDR", 136, 69, 138, 1, 6, ExtensionKind::randr};
+inline constexpr ExtensionInfo damage_extension{
+    "DAMAGE", 137, 71, 142, 1, 1, ExtensionKind::damage};
 
-inline constexpr std::array<ExtensionInfo, 9> extension_registry{{
+inline constexpr std::array<ExtensionInfo, 10> extension_registry{{
     big_requests_extension,
     xc_misc_extension,
     generic_event_extension,
@@ -59,6 +62,7 @@ inline constexpr std::array<ExtensionInfo, 9> extension_registry{{
     render_extension,
     xfixes_extension,
     randr_extension,
+    damage_extension,
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

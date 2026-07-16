@@ -111,6 +111,22 @@ struct RandrNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct DamageNotifyEvent {
+    std::uint8_t level = 0;
+    std::uint32_t drawable = 0;
+    std::uint32_t damage = 0;
+    std::uint32_t timestamp = 0;
+    std::int16_t area_x = 0;
+    std::int16_t area_y = 0;
+    std::uint16_t area_width = 0;
+    std::uint16_t area_height = 0;
+    std::int16_t geometry_x = 0;
+    std::int16_t geometry_y = 0;
+    std::uint16_t geometry_width = 0;
+    std::uint16_t geometry_height = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -157,7 +173,8 @@ using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
     ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
-    RandrScreenChangeNotifyEvent, RandrNotifyEvent, CoreInputEvent,
+    RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,
+    CoreInputEvent,
     CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next

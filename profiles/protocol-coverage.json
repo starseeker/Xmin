@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "e93c19083ae5786891cd74a77563bc7e7ff446beda8ff2a11a0dba198a4ba09f",
+    "policy_sha256": "8dbfe5f91bf7e19c0f29739ae8f94d4ed81c4a38154dea84de7fbd0687d828e1",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -2833,35 +2833,35 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Create",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Destroy",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 3,
           "name": "Subtract",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "Add",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

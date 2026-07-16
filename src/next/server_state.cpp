@@ -602,9 +602,304 @@ ServerState::erase_pixmap(std::uint32_t id)
     const auto found = pixmaps_.find(id);
     if (found == pixmaps_.end())
         return false;
+    for (auto iterator = damages_.begin(); iterator != damages_.end();) {
+        if (iterator->second.drawable != id) {
+            ++iterator;
+            continue;
+        }
+        static_cast<void>(resources_.erase(iterator->first));
+        iterator = damages_.erase(iterator);
+    }
     pixmaps_.erase(found);
     static_cast<void>(resources_.erase(id));
     return true;
+}
+
+DamageRecord *
+ServerState::damage(std::uint32_t id)
+{
+    const auto found = damages_.find(id);
+    return found == damages_.end() ? nullptr : &found->second;
+}
+
+const DamageRecord *
+ServerState::damage(std::uint32_t id) const
+{
+    const auto found = damages_.find(id);
+    return found == damages_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::append_damage_notifications(
+    const DamageRecord &record, const Region &reported,
+    bool full_area, std::vector<PlannedEvent> &events) const
+{
+    const auto *surface = drawable_surface(record.drawable);
+    if (surface == nullptr)
+        return true;
+    const auto position = window(record.drawable)
+        ? absolute_position(record.drawable)
+        : std::pair<std::int32_t, std::int32_t>{0, 0};
+    const Rectangle complete{
+        0, 0, surface->width(), surface->height()};
+    const std::size_t rectangle_count = full_area
+        ? 1
+        : reported.rectangles().size();
+    if (rectangle_count > maximum_pending_events - events.size())
+        return false;
+    try {
+        events.reserve(events.size() + rectangle_count);
+        for (std::size_t index = 0; index < rectangle_count; ++index) {
+            const Rectangle &area = full_area
+                ? complete
+                : reported.rectangles()[index];
+            events.emplace_back(
+                record.owner,
+                DamageNotifyEvent{
+                    static_cast<std::uint8_t>(
+                        record.level |
+                        (index + 1 < rectangle_count ? 0x80U : 0U)),
+                    record.drawable, record.id, current_time_,
+                    wire_coordinate(area.x), wire_coordinate(area.y),
+                    wire_size(area.width), wire_size(area.height),
+                    wire_coordinate(position.first),
+                    wire_coordinate(position.second),
+                    surface->width(), surface->height()});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::apply_damage(
+    DamageRecord &record, const Region &added,
+    std::vector<PlannedEvent> &events) const
+{
+    const auto *surface = drawable_surface(record.drawable);
+    if (surface == nullptr)
+        return true;
+    Region bounds;
+    if (!Region::canonicalize(
+            {Rectangle{0, 0, surface->width(), surface->height()}}, bounds)) {
+        return false;
+    }
+    Region clipped;
+    if (!Region::combine(
+            RegionOperation::intersect, added, bounds, clipped)) {
+        return false;
+    }
+    if (clipped.empty())
+        return true;
+
+    Region reported;
+    bool notify = false;
+    bool full_area = false;
+    if (record.level == 0) {
+        reported = clipped;
+        notify = true;
+    }
+    else if (record.level == 1) {
+        if (!Region::combine(
+                RegionOperation::subtract, clipped, record.accumulated,
+                reported)) {
+            return false;
+        }
+        notify = !reported.empty();
+    }
+
+    const bool was_empty = record.accumulated.empty();
+    const Rectangle old_extents = record.accumulated.extents();
+    Region accumulated;
+    if (!Region::combine(
+            RegionOperation::unite, record.accumulated, clipped,
+            accumulated)) {
+        return false;
+    }
+    record.accumulated = std::move(accumulated);
+
+    if (record.level == 2) {
+        const Rectangle extents = record.accumulated.extents();
+        notify = old_extents.x != extents.x || old_extents.y != extents.y ||
+            old_extents.width != extents.width ||
+            old_extents.height != extents.height;
+        if (notify && !Region::canonicalize({extents}, reported))
+            return false;
+    }
+    else if (record.level == 3) {
+        notify = was_empty;
+        full_area = true;
+        reported = record.accumulated;
+    }
+    return !notify || append_damage_notifications(
+        record, reported, full_area, events);
+}
+
+DamageUpdate
+ServerState::add_damage(DamageRecord added, std::uint32_t owner)
+{
+    if (damages_.size() >= maximum_damage_objects)
+        return DamageUpdate::resource_exhausted;
+    if (drawable_surface(added.drawable) == nullptr ||
+        resource_exists(added.id)) {
+        return DamageUpdate::invalid;
+    }
+    added.owner = owner;
+    const std::uint32_t id = added.id;
+    std::vector<PlannedEvent> events;
+    if (window(added.drawable) != nullptr) {
+        Region initial;
+        const auto *surface = drawable_surface(added.drawable);
+        if (!Region::canonicalize(
+                {Rectangle{0, 0, surface->width(), surface->height()}},
+                initial) ||
+            !apply_damage(added, initial, events)) {
+            return DamageUpdate::resource_exhausted;
+        }
+    }
+    if (!resources_.insert(id, ResourceKind::damage, owner))
+        return DamageUpdate::invalid;
+    try {
+        if (!damages_.emplace(id, std::move(added)).second) {
+            static_cast<void>(resources_.erase(id));
+            return DamageUpdate::invalid;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return DamageUpdate::resource_exhausted;
+    }
+    if (!queue_events_atomically(events)) {
+        damages_.erase(id);
+        static_cast<void>(resources_.erase(id));
+        return DamageUpdate::queue_full;
+    }
+    return DamageUpdate::updated;
+}
+
+bool
+ServerState::erase_damage(std::uint32_t id)
+{
+    if (damages_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+DamageUpdate
+ServerState::damage_drawable(std::uint32_t drawable, const Region *region)
+{
+    invalidate_scene();
+    const auto *surface = drawable_surface(drawable);
+    if (surface == nullptr)
+        return DamageUpdate::invalid;
+    if (damages_.empty())
+        return DamageUpdate::updated;
+    Region complete;
+    if (region == nullptr &&
+        !Region::canonicalize(
+            {Rectangle{0, 0, surface->width(), surface->height()}},
+            complete)) {
+        return DamageUpdate::resource_exhausted;
+    }
+    const Region &added = region == nullptr ? complete : *region;
+    std::vector<std::pair<std::uint32_t, DamageRecord>> revised;
+    std::vector<PlannedEvent> events;
+    try {
+        revised.reserve(damages_.size());
+        for (const auto &entry : damages_) {
+            if (drawable_surface(entry.second.drawable) != surface)
+                continue;
+            DamageRecord candidate = entry.second;
+            if (!apply_damage(candidate, added, events))
+                return DamageUpdate::resource_exhausted;
+            revised.emplace_back(entry.first, std::move(candidate));
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return DamageUpdate::resource_exhausted;
+    }
+    if (!queue_events_atomically(events))
+        return DamageUpdate::queue_full;
+    for (auto &entry : revised)
+        damages_.at(entry.first) = std::move(entry.second);
+    return DamageUpdate::updated;
+}
+
+DamageUpdate
+ServerState::subtract_damage(
+    std::uint32_t id, const Region *repair, Region *parts)
+{
+    const auto found = damages_.find(id);
+    if (found == damages_.end())
+        return DamageUpdate::invalid;
+    if (found->second.level == 0)
+        return DamageUpdate::updated;
+    try {
+        DamageRecord candidate = found->second;
+        Region revised_parts;
+        if (repair != nullptr) {
+            if (parts != nullptr &&
+                !Region::combine(
+                    RegionOperation::intersect, candidate.accumulated,
+                    *repair, revised_parts)) {
+                return DamageUpdate::resource_exhausted;
+            }
+            Region remaining;
+            if (!Region::combine(
+                    RegionOperation::subtract, candidate.accumulated,
+                    *repair, remaining)) {
+                return DamageUpdate::resource_exhausted;
+            }
+            candidate.accumulated = std::move(remaining);
+        }
+        else {
+            if (parts != nullptr)
+                revised_parts = candidate.accumulated;
+            Region empty;
+            if (!Region::canonicalize({}, empty))
+                return DamageUpdate::resource_exhausted;
+            candidate.accumulated = std::move(empty);
+        }
+
+        std::vector<PlannedEvent> events;
+        if (!candidate.accumulated.empty()) {
+            Region reported = candidate.accumulated;
+            if (candidate.level == 2 &&
+                !Region::canonicalize(
+                    {candidate.accumulated.extents()}, reported)) {
+                return DamageUpdate::resource_exhausted;
+            }
+            if (!append_damage_notifications(
+                    candidate, reported, candidate.level == 3, events)) {
+                return DamageUpdate::resource_exhausted;
+            }
+        }
+        if (!queue_events_atomically(events))
+            return DamageUpdate::queue_full;
+        found->second = std::move(candidate);
+        if (parts != nullptr)
+            *parts = std::move(revised_parts);
+        return DamageUpdate::updated;
+    }
+    catch (const std::bad_alloc &) {
+        return DamageUpdate::resource_exhausted;
+    }
+}
+
+DamageUpdate
+ServerState::damage_render_picture(std::uint32_t picture)
+{
+    const auto *candidate = render_picture(picture);
+    if (candidate == nullptr)
+        return DamageUpdate::invalid;
+    const auto *drawable = std::get_if<RenderDrawableSource>(
+        &candidate->source);
+    return drawable == nullptr
+        ? DamageUpdate::invalid
+        : damage_drawable(drawable->drawable);
 }
 
 GraphicsContextRecord *
@@ -3896,6 +4191,14 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
     }
     for (const auto &property : found->second.properties)
         property_bytes_ -= property.second.data.size();
+    for (auto damage = damages_.begin(); damage != damages_.end();) {
+        if (damage->second.drawable != id) {
+            ++damage;
+            continue;
+        }
+        static_cast<void>(resources_.erase(damage->first));
+        damage = damages_.erase(damage);
+    }
     for (auto picture = render_pictures_.begin();
          picture != render_pictures_.end();) {
         const auto *drawable = std::get_if<RenderDrawableSource>(
@@ -4510,6 +4813,9 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto cursors = resources_.owned_by(owner, ResourceKind::cursor);
     for (const auto id : cursors)
         static_cast<void>(erase_cursor(id));
+    const auto damages = resources_.owned_by(owner, ResourceKind::damage);
+    for (const auto id : damages)
+        static_cast<void>(erase_damage(id));
     const auto regions =
         resources_.owned_by(owner, ResourceKind::xfixes_region);
     for (const auto id : regions)

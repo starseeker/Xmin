@@ -277,7 +277,7 @@ Connection::handle_render(const RequestContext &context)
                                    std::uint32_t value = 0) {
         switch (status) {
         case RenderStatus::success:
-            return Result<void>::success();
+            return drain_pending_events();
         case RenderStatus::bad_picture:
             return error(bad_picture, value);
         case RenderStatus::bad_format:

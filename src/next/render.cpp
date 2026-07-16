@@ -445,6 +445,19 @@ render_operator_valid(std::uint8_t operation) noexcept
 }
 
 RenderStatus
+RenderEngine::finish_draw(std::uint32_t picture)
+{
+    const auto updated = server_.damage_render_picture(picture);
+    if (updated == DamageUpdate::invalid)
+        return RenderStatus::bad_drawable;
+    if (updated == DamageUpdate::resource_exhausted ||
+        updated == DamageUpdate::queue_full) {
+        return RenderStatus::bad_alloc;
+    }
+    return RenderStatus::success;
+}
+
+RenderStatus
 RenderEngine::composite(
     std::uint8_t operation, std::uint32_t source, std::uint32_t mask,
     std::uint32_t destination, std::int32_t source_x,
@@ -478,8 +491,7 @@ RenderEngine::composite(
         mask_image ? mask_image->get() : nullptr, destination_image->get(),
         source_x, source_y, mask_x, mask_y, destination_x, destination_y,
         static_cast<int>(width), static_cast<int>(height));
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(destination);
 }
 
 RenderStatus
@@ -513,8 +525,7 @@ RenderEngine::fill_rectangles(
             rectangle.x, rectangle.y, static_cast<int>(rectangle.width),
             static_cast<int>(rectangle.height));
     }
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(destination);
 }
 
 RenderStatus
@@ -587,8 +598,7 @@ RenderEngine::composite_trapezoids(
             pixman_mask_format(effective_mask_format), source_x, source_y,
             0, 0, static_cast<int>(converted.size()), converted.data());
     }
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(destination);
 }
 
 RenderStatus
@@ -659,8 +669,7 @@ RenderEngine::composite_triangles(
             pixman_mask_format(effective_mask_format), source_x, source_y,
             0, 0, static_cast<int>(converted.size()), converted.data());
     }
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(destination);
 }
 
 RenderStatus
@@ -824,8 +833,7 @@ RenderEngine::composite_glyphs(
                 placement.glyph->info.width,
                 placement.glyph->info.height);
         }
-        server_.invalidate_scene();
-        return RenderStatus::success;
+        return finish_draw(destination);
     }
 
     std::int64_t left = std::numeric_limits<std::int32_t>::max();
@@ -910,8 +918,7 @@ RenderEngine::composite_glyphs(
         0, 0, static_cast<std::int32_t>(left),
         static_cast<std::int32_t>(top), static_cast<int>(width),
         static_cast<int>(height));
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(destination);
 }
 
 RenderStatus
@@ -943,8 +950,7 @@ RenderEngine::add_traps(
     pixman_add_traps(
         destination_image->get(), x_offset, y_offset,
         static_cast<int>(converted.size()), converted.data());
-    server_.invalidate_scene();
-    return RenderStatus::success;
+    return finish_draw(picture);
 }
 
 RenderStatus

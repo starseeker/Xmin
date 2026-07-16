@@ -45,6 +45,7 @@ constexpr std::size_t maximum_randr_modes = 256;
 constexpr std::size_t maximum_randr_monitors = 64;
 constexpr std::size_t maximum_randr_output_properties = 256;
 constexpr std::size_t maximum_randr_filter_parameters = 64;
+constexpr std::size_t maximum_damage_objects = 4096;
 constexpr std::uint32_t randr_crtc_id = 0x00000200;
 constexpr std::uint32_t randr_output_id = 0x00000201;
 constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
@@ -152,6 +153,21 @@ struct RandrState {
     std::unordered_map<AtomId, RandrOutputProperty> output_properties;
     std::unordered_map<AtomId, RandrMonitor> monitors;
     std::vector<RandrSubscription> subscriptions;
+};
+
+struct DamageRecord {
+    std::uint32_t id = 0;
+    std::uint32_t owner = 0;
+    std::uint32_t drawable = 0;
+    std::uint8_t level = 0;
+    Region accumulated;
+};
+
+enum class DamageUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
+    queue_full,
 };
 
 struct CursorImage {
@@ -543,6 +559,16 @@ public:
     [[nodiscard]] const PixmapRecord *pixmap(std::uint32_t id) const;
     [[nodiscard]] bool add_pixmap(PixmapRecord pixmap, std::uint32_t owner);
     [[nodiscard]] bool erase_pixmap(std::uint32_t id);
+    [[nodiscard]] DamageRecord *damage(std::uint32_t id);
+    [[nodiscard]] const DamageRecord *damage(std::uint32_t id) const;
+    [[nodiscard]] DamageUpdate add_damage(DamageRecord damage,
+                                          std::uint32_t owner);
+    [[nodiscard]] bool erase_damage(std::uint32_t id);
+    [[nodiscard]] DamageUpdate damage_drawable(
+        std::uint32_t drawable, const Region *region = nullptr);
+    [[nodiscard]] DamageUpdate subtract_damage(
+        std::uint32_t id, const Region *repair, Region *parts);
+    [[nodiscard]] DamageUpdate damage_render_picture(std::uint32_t picture);
     [[nodiscard]] GraphicsContextRecord *graphics_context(std::uint32_t id);
     [[nodiscard]] const GraphicsContextRecord *
     graphics_context(std::uint32_t id) const;
@@ -753,6 +779,7 @@ private:
     ResourceRegistry resources_;
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
     std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
+    std::unordered_map<std::uint32_t, DamageRecord> damages_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
@@ -798,6 +825,12 @@ private:
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     [[nodiscard]] bool queue_events_atomically(
         const std::vector<PlannedEvent> &events);
+    [[nodiscard]] bool append_damage_notifications(
+        const DamageRecord &damage, const Region &reported,
+        bool full_area, std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] bool apply_damage(
+        DamageRecord &damage, const Region &added,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] bool append_randr_events(
         const RandrState &candidate, std::uint16_t width,
         std::uint16_t height, std::uint16_t notify_mask,

@@ -3665,6 +3665,179 @@ test_randr_state()
 }
 
 bool
+test_damage_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t pixmap_id = owner + 1;
+    constexpr std::uint32_t alias_id = owner + 2;
+    constexpr std::uint32_t damage_id = owner + 3;
+    constexpr std::uint32_t window_id = owner + 4;
+    constexpr std::uint32_t window_damage_id = owner + 5;
+    constexpr std::uint32_t bounding_damage_id = owner + 6;
+    xmin::next::ServerState server(32, 24);
+    if (!expect(server.register_client(owner),
+                "DAMAGE client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 29);
+
+    auto created = xmin::next::Surface::create(12, 10, 24);
+    if (!expect(created.has_value(), "DAMAGE surface allocation failed"))
+        return false;
+    auto shared = server.adopt_surface(std::move(*created));
+    if (!expect(shared != nullptr &&
+                    server.add_pixmap({pixmap_id, shared}, owner) &&
+                    server.add_pixmap({alias_id, shared}, owner),
+                "DAMAGE shared drawable insertion failed") ||
+        !expect(server.add_damage(
+                    {damage_id, owner, pixmap_id, 3, {}}, owner) ==
+                    xmin::next::DamageUpdate::updated,
+                "DAMAGE object insertion failed") ||
+        !expect(!server.has_pending_event(owner),
+                "pixmap DAMAGE object emitted initial damage")) {
+        return false;
+    }
+
+    xmin::next::Region changed;
+    const std::vector<xmin::next::Rectangle> rectangles{{2, 3, 5, 4}};
+    if (!expect(xmin::next::Region::canonicalize(rectangles, changed),
+                "DAMAGE region canonicalization failed") ||
+        !expect(server.damage_drawable(alias_id, &changed) ==
+                    xmin::next::DamageUpdate::updated,
+                "DAMAGE did not follow shared surface identity")) {
+        return false;
+    }
+    const auto *event = server.next_event(owner);
+    const auto *notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::DamageNotifyEvent>(event);
+    if (!expect(notify != nullptr && notify->sequence == 29 &&
+                    notify->drawable == pixmap_id &&
+                    notify->damage == damage_id && notify->level == 3 &&
+                    notify->area_x == 0 && notify->area_y == 0 &&
+                    notify->area_width == 12 &&
+                    notify->area_height == 10 &&
+                    notify->geometry_width == 12 &&
+                    notify->geometry_height == 10,
+                "DAMAGE notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    xmin::next::Region parts;
+    if (!expect(server.subtract_damage(damage_id, nullptr, &parts) ==
+                    xmin::next::DamageUpdate::updated &&
+                    parts.rectangles().size() == 1 &&
+                    parts.extents().x == 2 && parts.extents().y == 3 &&
+                    parts.extents().width == 5 &&
+                    parts.extents().height == 4,
+                "DAMAGE Subtract did not transfer accumulated state")) {
+        return false;
+    }
+
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.broadcast_mapping_notify(1, 96, 1),
+                    "DAMAGE queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.damage_drawable(pixmap_id, &changed) ==
+                    xmin::next::DamageUpdate::queue_full,
+                "full event queue accepted a DAMAGE update") ||
+        !expect(server.damage(damage_id) != nullptr &&
+                    server.damage(damage_id)->accumulated.empty(),
+                "failed DAMAGE notification partially committed state")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+
+    xmin::next::Region disjoint;
+    const std::vector<xmin::next::Rectangle> disjoint_rectangles{
+        {0, 0, 2, 2}, {8, 7, 2, 2}};
+    xmin::next::Region repair;
+    const std::vector<xmin::next::Rectangle> repair_rectangles{
+        {0, 0, 1, 1}};
+    if (!expect(server.erase_damage(damage_id),
+                "DAMAGE object cleanup failed") ||
+        !expect(server.add_damage(
+                    {bounding_damage_id, owner, pixmap_id, 2, {}}, owner) ==
+                    xmin::next::DamageUpdate::updated &&
+                    xmin::next::Region::canonicalize(
+                        disjoint_rectangles, disjoint) &&
+                    server.damage_drawable(pixmap_id, &disjoint) ==
+                        xmin::next::DamageUpdate::updated,
+                "bounding-box DAMAGE setup failed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    if (!expect(xmin::next::Region::canonicalize(
+                    repair_rectangles, repair) &&
+                    server.subtract_damage(
+                        bounding_damage_id, &repair, nullptr) ==
+                        xmin::next::DamageUpdate::updated,
+                "bounding-box DAMAGE subtraction failed")) {
+        return false;
+    }
+    event = server.next_event(owner);
+    notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::DamageNotifyEvent>(event);
+    if (!expect(notify != nullptr && notify->level == 2 &&
+                    (notify->level & 0x80U) == 0 &&
+                    notify->area_x == 0 && notify->area_y == 0 &&
+                    notify->area_width == 10 && notify->area_height == 9,
+                "DAMAGE Subtract split a bounding-box notification")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    xmin::next::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::next::root_window_id;
+    window.width = 7;
+    window.height = 6;
+    auto window_surface = xmin::next::Surface::create(7, 6, 24);
+    if (!expect(window_surface.has_value(),
+                "DAMAGE window surface allocation failed")) {
+        return false;
+    }
+    window.surface = server.adopt_surface(std::move(*window_surface));
+    if (!expect(window.surface != nullptr &&
+                    server.add_window(std::move(window), owner),
+                "DAMAGE window insertion failed") ||
+        !expect(server.add_damage(
+                    {window_damage_id, owner, window_id, 2, {}}, owner) ==
+                    xmin::next::DamageUpdate::updated,
+                "window DAMAGE object insertion failed")) {
+        return false;
+    }
+    event = server.next_event(owner);
+    notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::DamageNotifyEvent>(event);
+    if (!expect(notify != nullptr && notify->drawable == window_id &&
+                    notify->area_width == 7 && notify->area_height == 6,
+                "window DAMAGE object omitted initial full damage")) {
+        return false;
+    }
+    server.pop_event(owner);
+    if (!expect(server.destroy_window(window_id) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.damage(window_damage_id) == nullptr,
+                "drawable destruction retained its DAMAGE object")) {
+        return false;
+    }
+
+    server.disconnect_client(owner);
+    return expect(server.damage(damage_id) == nullptr &&
+                      server.pixmap(pixmap_id) == nullptr &&
+                      server.pixmap(alias_id) == nullptr,
+                  "DAMAGE resources survived owner disconnect");
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -3729,6 +3902,7 @@ main()
             test_scene_composition() && test_shape_state() &&
             test_window_tree_mutations() && test_sync_state() &&
             test_xfixes_state() && test_randr_state() &&
+            test_damage_state() &&
             test_colormap_state() &&
             test_result()
         ? 0

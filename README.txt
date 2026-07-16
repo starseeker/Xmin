@@ -132,7 +132,7 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
-SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, and RANDR 1.6.
+SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, RANDR 1.6, and DAMAGE 1.1.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -169,6 +169,12 @@ transactions.  The legacy 1.0 and current wire layouts are both versioned per
 client and encode properties canonically across byte orders.  The provider graph
 is deliberately empty, every provider operation reports `BadProvider`, and DRM
 lease creation reports `BadMatch` instead of claiming unsupported hardware state.
+DAMAGE implements every 1.1 request as a bounded view of the shared drawable
+mutation path.  Core and RENDER writes update typed per-client damage objects by
+surface identity, so future named-pixmap aliases observe the same storage.  Raw,
+delta, bounding-box, and non-empty reporting share canonical region algebra with
+SHAPE and XFIXES; notification enqueue and accumulated-region updates commit
+atomically, and drawable destruction or client disconnect removes stale objects.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

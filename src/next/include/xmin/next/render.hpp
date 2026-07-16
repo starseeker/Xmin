@@ -255,6 +255,7 @@ public:
         std::uint16_t &height, std::vector<std::uint32_t> &pixels);
 
 private:
+    [[nodiscard]] RenderStatus finish_draw(std::uint32_t picture);
     ServerState &server_;
 };
 

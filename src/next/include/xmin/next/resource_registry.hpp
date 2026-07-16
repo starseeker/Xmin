@@ -21,6 +21,7 @@ enum class ResourceKind {
     cursor,
     xfixes_region,
     xfixes_barrier,
+    damage,
 };
 
 struct ResourceRecord {

@@ -88,6 +88,10 @@ including screen resources and dynamic resize, output/CRTC/mode lifecycle,
 properties and pending values, gamma, transforms, panning, primary output, monitor
 topology, exact extension errors, an explicitly empty provider/lease profile, and
 raw native/opposite-endian 1.0/1.6 framing,
+all DAMAGE 1.1 requests through a generated-libxcb oracle against both servers,
+including explicit and core-rendering damage, accumulated-region subtraction,
+typed notifications, exact extension errors, shared-surface aliases, atomic
+queue-pressure rollback, resource teardown, and raw native/opposite-endian framing,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and
