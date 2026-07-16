@@ -18,6 +18,12 @@ multi-byte core geometry request, private launcher authentication, concurrent dy
 display allocation, stale-lock recovery, and complete signal-driven launcher cleanup
 of its command, authority state, lock, and socket. It also covers an indirect
 fixed-function GLX render/swap/readback. The
+`xmin.control-automation` gate additionally uses the private bundled XCB subset to
+start a named target window, focus it, inject precise pointer and keyboard events,
+including delayed clicks and a stepped modified drag, wait for DAMAGE quiescence,
+verify both per-window and root PPM pixels, send
+`WM_DELETE_WINDOW`, and confirm clean application exit. It does not discover or link
+host X11 client libraries. The
 indirect GLX test also binds different-sized draw/read windows, verifies `glReadPixels`
 uses the read window, verifies rendering and swap target the draw window, and proves
 that a single-buffered indirect `glFlush` presents without a context switch. It also

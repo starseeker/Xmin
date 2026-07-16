@@ -1,3 +1,4 @@
+#define GL_GLEXT_PROTOTYPES 1
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
 
@@ -96,6 +97,15 @@ main(void)
         set_swap_interval(display, glx_window, 0);
     }
     glViewport(0, 0, 64, 64);
+    {
+        const GLenum back = GL_BACK_LEFT;
+
+        glDrawBuffer(GL_BACK);
+        glDrawBuffers(1, &back);
+        glReadBuffer(GL_BACK);
+        if (glGetError() != GL_NO_ERROR)
+            goto cleanup;
+    }
     glClearColor(0.0F, 1.0F, 0.0F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT);
     glXSwapBuffers(display, glx_window);

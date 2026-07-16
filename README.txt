@@ -75,6 +75,12 @@ MIT-MAGIC-COOKIE-1 authority file from the OS cryptographic random source, expor
 reservations are lock-protected and tested with simultaneous launchers.  Lifecycle
 tests also cover stale-lock recovery and signal-driven removal of the child, private
 authority state, display lock, and Unix socket.
+The companion `xminctl` executable is a self-contained automation client built from
+a private static libxcb subset.  It authenticates to the local display, recursively
+discovers windows, controls their state and geometry, injects pointer/keyboard input
+through XTEST, waits for DAMAGE quiescence, and captures root or individual-window
+pixels directly as P6 PPM.  The convenience `xmincapture.sh` produces a desktop and
+per-window capture set without host `xwd`, `xwininfo`, Xlib, or libxcb.
 Authenticated XCB integration tests exercise real RENDER opaque/alpha composition,
 A8 trapezoids and uploaded glyphs with pixel readback, RANDR topology and output
 properties, exact configured extension advertisement, BIG-REQUESTS/Generic Event/

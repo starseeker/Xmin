@@ -4,6 +4,39 @@ manifest_version = 1
 # the exact archive, checksum, retained paths, license location, and local patches.
 
 [[source]]
+name = "libxcb"
+revision = "1.17.0"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "libxcb-1.17.0.tar.xz"
+sha256 = "599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55"
+status = "partial"
+local_path = "third_party/libxcb"
+retained_paths = [
+  "xcb.h, xcbext.h, and the six connection/request core sources needed by xcb_connect_to_fd",
+  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
+]
+license_paths = ["LICENSES/libxcb/COPYING"]
+patches = []
+importer = "tools/import-libxcb.sh"
+generator = "libxcb 1.17.0 c_client.py with xcb-proto 1.17.0"
+
+[[source]]
+name = "xcb-proto"
+revision = "1.17.0"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-proto-1.17.0.tar.xz"
+sha256 = "2c1bacd2110f4799f74de6ebb714b94cf6f80fb112316b1219480fd22562148c"
+status = "generation-only"
+local_path = "third_party/libxcb/include/xcb"
+retained_paths = [
+  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
+]
+license_paths = ["LICENSES/xcb-proto/COPYING"]
+patches = []
+importer = "tools/import-libxcb.sh"
+generator = "libxcb 1.17.0 c_client.py"
+
+[[source]]
 name = "xorg-server"
 revision = "21.1.23"
 url = "https://www.x.org/releases/individual/xserver/"

@@ -91,6 +91,11 @@ configure_file(
   "${PROJECT_BINARY_DIR}/generated/pixman/pixman-config.h"
   @ONLY
 )
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/libxcb-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/libxcb/config.h"
+  @ONLY
+)
 set(PIXMAN_VERSION_MAJOR 0)
 set(PIXMAN_VERSION_MINOR 46)
 set(PIXMAN_VERSION_MICRO 2)
@@ -111,6 +116,12 @@ if(XMIN_BUILD_TESTS)
 endif()
 
 if(XMIN_ENABLE_INSTALL)
+  install(
+    PROGRAMS xmincapture.sh
+    DESTINATION "${CMAKE_INSTALL_BINDIR}"
+    RENAME xmincapture
+    COMPONENT Runtime
+  )
   install(
     FILES README.txt DESIGN.md BUILDING.md
     TYPE DOC

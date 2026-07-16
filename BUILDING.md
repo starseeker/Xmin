@@ -64,6 +64,13 @@ windows, resize without rebinding, GLXPixmap presentation, double-buffered swap,
 flush/readback. Both GLX paths select BGRA or ARGB OSMesa storage to match the host X
 image byte order. Broader toolkit and application acceptance remains.
 
+The installed `xminctl` client completes the baseline headless automation path. It
+uses a private static subset of libxcb, opens Xmin's local socket with the launcher's
+MIT cookie, discovers named windows recursively, controls focus/geometry/mapping,
+injects pointer and US-keymap keyboard input with XTEST, waits for rendering to
+quiesce with DAMAGE, and captures root or individual window pixels as P6 PPM. Its
+end-to-end test uses no host X11 client library or X11 utility.
+
 Qt 5/6 Gui and GTK 3 are optional test-only dependencies. If their development
 packages are installed, configuration automatically adds `xmin.qt5-raster`,
 `xmin.qt6-raster`, `xmin.qt5-opengl`, `xmin.qt6-opengl`, and/or
@@ -117,6 +124,52 @@ When GLX is enabled it also prepends the package-relative `lib/xmin` directory t
 launched process's loader path, selecting the bundled `libGL.so.1` without modifying
 the host installation.
 
+For applications that load the host's separate `libGLX.so.0`, use the repository
+helper to preload Xmin's complete GL/GLX client bridge into the application child:
+
+```sh
+./xminlaunch.sh --build-dir ./.build --screen 1280x800x24 -- ./your-opengl-app
+```
+
+The helper delegates authenticated display allocation and cleanup to `xmin-run`, but
+applies `LD_PRELOAD` and `LD_LIBRARY_PATH` only to the application. To inspect a live
+display, drive an application, and capture its desktop plus named windows, launch a
+shell and use the bundled controller:
+
+```sh
+./xminlaunch.sh --build-dir ./.build --screen 1280x800x24 -- bash
+# Start one or more graphical programs in this shell.
+"$XMIN_CONTROL" wait-window "Application title"
+"$XMIN_CONTROL" activate "Application title"
+"$XMIN_CONTROL" click --delay 50 "Application title" 100 80
+"$XMIN_CONTROL" key-down ctrl
+"$XMIN_CONTROL" mouse-drag --steps 8 --delay 20 \
+  "Application title" 100 80 160 120
+"$XMIN_CONTROL" key-up ctrl
+"$XMIN_CONTROL" type --delay 10 "hello"
+"$XMIN_CONTROL" key ctrl+s
+"$XMIN_CONTROL" wait-stable "Application title"
+"$XMIN_CONTROL" capture-window "Application title" window.ppm
+"$XMIN_CONTROL" capture-root desktop.ppm
+./xmincapture.sh ./xmin-capture
+```
+
+`xminlaunch.sh` exports `XMIN_CONTROL`, so the same form works from a supervisor
+program or shell. `xmincapture.sh` creates PPMs plus a `windows.tsv` inventory.
+Neither command requires `xwd`, `xwininfo`, ImageMagick, Xlib, or a system libxcb.
+`xminctl --help` lists the complete command set. Window selectors accept `root`, a
+numeric window ID, or an exact/substr WM name; numeric IDs are preferable when titles
+are ambiguous.
+
+The configured default screen is 1280x1024x24. `--screen WIDTHxHEIGHTxDEPTH`
+selects a different framebuffer for each launch without rebuilding. RANDR may shrink
+the reported screen inside that initial framebuffer, but the startup size is its
+maximum; start a new Xmin instance to grow it. Keep each dimension at or below 32767,
+and keep the 32-bit framebuffer allocation below 2 GiB (roughly
+`width * height * 4`). For example, 8192x8192x24 uses about 256 MiB and
+16384x16384x24 uses about 1 GiB. These are protocol/legacy-fb safety bounds, not a
+1280x900 product limit.
+
 To start an isolated test display explicitly:
 
 ```sh
@@ -158,6 +211,7 @@ src/
   glx/                  OSMesa-backed server-side GLX integration
   client/glx/           separately shipped GL/GLX/OSMesa client bridge
   launcher/             integrated authenticated process launcher
+  control/              self-contained window/input/capture client (`xminctl`)
   support/              Xmin-owned adapters, launcher, and portability code
   server/               thin executable wrapper around the DIX server lifecycle
 data/fonts/             generated embedded core fonts
@@ -207,6 +261,10 @@ sh tools/import-xorg.sh \
   /path/to/libXau-1.0.12 \
   /path/to/libxkbfile-1.2.0 \
   /path/to/xkeyboard-config-2.47
+
+sh tools/import-libxcb.sh \
+  /path/to/libxcb-1.17.0 \
+  /path/to/xcb-proto-1.17.0
 ```
 
 The script copies an explicit allowlist for protocol and C sources. Private X server
@@ -232,6 +290,9 @@ core and Unix socket backend, while libXau contributes only its reader and dispo
 The importer also applies the patches recorded in `UPSTREAM.toml`. These headers will
 be reduced after all selected server components compile. Never edit imported files in
 place without recording a reproducible patch in the corresponding manifest entry.
+The separate libxcb importer retains only the connection core and bindings needed by
+`xminctl`; it generates the committed bindings during import, while the normal build
+remains offline and has no Python requirement.
 
 The refresh command also uses maintenance-time `xkbcomp` 1.5.0 to compile the
 allowlisted `data/xkb/xmin-us.xkb` recipe against xkeyboard-config 2.47. It converts

@@ -60,11 +60,37 @@ main(void)
         0
     };
     static const char vertex_source[] =
-        "#version 110\n"
-        "void main() { gl_Position = gl_Vertex; }\n";
+        "#version 120\n"
+        "struct Nested { vec4 color; };\n"
+        "struct Params { mat4 vertexTransform; mat3 textureTransform; "
+        "float opacity; int swizzle; Nested nested; };\n"
+        "uniform Params params;\n"
+        "void main() { gl_Position = params.vertexTransform * gl_Vertex; }\n";
     static const char fragment_source[] =
-        "#version 110\n"
-        "void main() { gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0); }\n";
+        "#version 120\n"
+        "struct Nested { vec4 color; };\n"
+        "struct Params { mat4 vertexTransform; mat3 textureTransform; "
+        "float opacity; int swizzle; Nested nested; };\n"
+        "uniform Params params;\n"
+        "void main() {\n"
+        "    if (params.swizzle == 0)\n"
+        "        gl_FragData[0] = vec4(params.nested.color.rgb * "
+        "params.opacity, 1.0);\n"
+        "    else\n"
+        "        gl_FragData[0] = params.nested.color.bgra;\n"
+        "}\n";
+    static const GLfloat mat4_identity[16] = {
+        1.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F,
+        0.0F, 0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 0.0F, 1.0F
+    };
+    static const GLfloat mat3_identity[9] = {
+        1.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F,
+        0.0F, 0.0F, 1.0F
+    };
+    static const GLfloat uniform_color[4] = { 0.0F, 1.0F, 0.0F, 1.0F };
     GLXFBConfig *configs;
     GLXFBConfig config = NULL;
     GLXContext context = NULL;
@@ -75,6 +101,11 @@ main(void)
     GLuint fragment = 0;
     GLuint program = 0;
     GLuint texture = 0;
+    GLint vertex_transform_location = -1;
+    GLint texture_transform_location = -1;
+    GLint opacity_location = -1;
+    GLint swizzle_location = -1;
+    GLint color_location = -1;
     GLint linked = 0;
     unsigned char pixel[4] = { 0 };
     unsigned char draw_pixel[4] = { 0 };
@@ -136,10 +167,28 @@ main(void)
         goto cleanup;
     }
 
+    vertex_transform_location =
+        glGetUniformLocation(program, "params.vertexTransform");
+    texture_transform_location =
+        glGetUniformLocation(program, "params.textureTransform");
+    opacity_location = glGetUniformLocation(program, "params.opacity");
+    swizzle_location = glGetUniformLocation(program, "params.swizzle");
+    color_location = glGetUniformLocation(program, "params.nested.color");
+    if (vertex_transform_location < 0 || texture_transform_location < 0 ||
+        opacity_location < 0 || swizzle_location < 0 || color_location < 0)
+        goto cleanup;
+
     glViewport(0, 0, 64, 64);
     glClearColor(1.0F, 0.0F, 0.0F, 1.0F);
     glClear(GL_COLOR_BUFFER_BIT);
     glUseProgram(program);
+    glUniformMatrix4fv(vertex_transform_location, 1, GL_FALSE,
+                       mat4_identity);
+    glUniformMatrix3fv(texture_transform_location, 1, GL_FALSE,
+                       mat3_identity);
+    glUniform1f(opacity_location, 1.0F);
+    glUniform1i(swizzle_location, 0);
+    glUniform4fv(color_location, 1, uniform_color);
     glBegin(GL_TRIANGLES);
     glVertex2f(-1.0F, -1.0F);
     glVertex2f(1.0F, -1.0F);

@@ -8,6 +8,7 @@ add_subdirectory(xkb)
 add_subdirectory(extensions)
 add_subdirectory(hw/vfb)
 add_subdirectory(support)
+add_subdirectory(control)
 
 if(XMIN_BUILD_LAUNCHER)
   add_subdirectory(launcher)

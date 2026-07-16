@@ -61,6 +61,40 @@ if(TARGET Xmin::run)
   )
   set_tests_properties(xmin.launcher-signal-cleanup PROPERTIES TIMEOUT 30)
 
+  if(TARGET Xmin::ctl)
+    add_executable(xminctl_target
+      integration/xminctl_target.c
+      "${PROJECT_SOURCE_DIR}/src/control/xmin_xcb_connect.c"
+    )
+    target_compile_features(xminctl_target PRIVATE c_std_11)
+    target_include_directories(xminctl_target PRIVATE
+      "${PROJECT_SOURCE_DIR}/src/control"
+    )
+    target_compile_definitions(xminctl_target PRIVATE _POSIX_C_SOURCE=200809L)
+    target_link_libraries(xminctl_target PRIVATE
+      Xmin::xcb
+      Xmin::xau
+      Xmin::xorgproto
+    )
+    xmin_enable_warnings(xminctl_target)
+
+    add_executable(xminctl_integration integration/xminctl_integration.c)
+    target_compile_features(xminctl_integration PRIVATE c_std_11)
+    target_compile_definitions(xminctl_integration PRIVATE
+      _POSIX_C_SOURCE=200809L
+    )
+    xmin_enable_warnings(xminctl_integration)
+    add_test(NAME xmin.control-automation
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 160x120x24
+        -- $<TARGET_FILE:xminctl_integration>
+           $<TARGET_FILE:xminctl>
+           $<TARGET_FILE:xminctl_target>
+    )
+    set_tests_properties(xmin.control-automation PROPERTIES TIMEOUT 30)
+  endif()
+
   # XCB is the transport used by Qt's xcb platform plugin. Keep this client
   # test optional and entirely outside the installed target graph.
   find_path(XMIN_TEST_XCB_INCLUDE_DIR xcb/xcb.h)

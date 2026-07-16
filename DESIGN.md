@@ -1,7 +1,7 @@
 # Xmin: minimal self-contained X11 server design
 
-Status: functional self-contained 2D server, authenticated launcher, OSMesa-backed
-indirect GLX server, and initial software-direct OpenGL 2.0 client bridge; broader
+Status: functional self-contained 2D server, authenticated launcher and automation
+client, OSMesa-backed indirect GLX server, and initial software-direct OpenGL 2.0 client bridge; broader
 toolkit/application acceptance remains. Optional Qt 5/6 and GTK 3 CTest gates are
 present and activate when those external development packages are available, July
 2026.
@@ -15,17 +15,20 @@ font stack, OpenGL implementation, device drivers, or graphics hardware.
 The normal release is a relocatable package containing:
 
 1. `Xmin`, with the X11 server, modern server extensions, software 2D renderer,
-   fonts, keyboard map, and authentication support compiled in; and
-2. if OpenGL 2.0 support is enabled, a companion client-side GLX software bridge
+   fonts, keyboard map, and authentication support compiled in;
+2. `xminctl`, a private-XCB automation client for windows, XTEST input, DAMAGE
+   synchronization, and PPM capture; and
+3. if OpenGL 2.0 support is enabled, a companion client-side GLX software bridge
    using the project's OSMesa implementation.
 
 The second artifact is necessary because direct OpenGL calls execute in the client
 process.  It is still part of this project and requires no system installation.
 
-The server does **not** need `libX11`, `libxcb`, or the client libraries named after
+The server executable does **not** need `libX11`, `libxcb`, or the client libraries named after
 X extensions.  Applications already use those libraries to encode X11 requests.
 This project must instead compile the corresponding **server-side protocol
-implementations** into `Xmin`.
+implementations** into `Xmin`. `xminctl` separately embeds a deliberately small,
+static client-side libxcb subset; no XCB ABI is exposed by the server or package.
 
 ### Goals
 
@@ -74,6 +77,12 @@ implementations** into `Xmin`.
   |          vfb DDX -> in-memory framebuffer          |
   +----------------------------------------------------+
 ```
+
+An automation supervisor runs under `xmin-run` alongside the application and invokes
+`xminctl` over a second authenticated connection. The controller sends normal XTEST
+device events, uses DAMAGE to avoid fixed post-action sleeps, and reads drawable
+pixels with core GetImage (using COMPOSITE named pixmaps for individual windows when
+available). P6 PPM is the baseline dependency-free capture format.
 
 The DIX layer owns clients, resources, windows, drawables, properties, selections,
 events, grabs, and core protocol dispatch.  The MI and `fb` layers implement
@@ -287,6 +296,8 @@ local patch list in a machine-readable manifest.
 | [xtrans](https://www.x.org/releases/individual/lib/) | 1.6.0 | Local X socket transport. |
 | [libXfont2](https://www.x.org/releases/individual/lib/) | 2.0.8 | Minimal built-in core fonts only. |
 | [libXau](https://www.x.org/releases/individual/lib/) | 1.0.12 | Small authority-file parser subset only. |
+| [libxcb](https://www.x.org/releases/individual/xcb/) | 1.17.0 | Private static connection core and generated bindings for `xminctl`; not linked into `Xmin`. |
+| [xcb-proto](https://www.x.org/releases/individual/xcb/) | 1.17.0 | Import-time generation input for the committed `xminctl` bindings. |
 | [libxkbfile](https://www.x.org/releases/individual/lib/) | 1.2.0 | Headers/code only if still needed after embedded-map refactoring. |
 | [xkeyboard-config](https://www.x.org/releases/individual/data/xkeyboard-config/) | 2.47 | Source-maintenance input used to generate the embedded US map, not a runtime component. |
 | [starseeker/osmesa](https://github.com/starseeker/osmesa) | `986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c` | Static OpenGL 2.0 software renderer. |

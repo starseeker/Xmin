@@ -106,6 +106,42 @@ xmin_add_component(xau
   PUBLIC_INCLUDE_DIRS "${CMAKE_CURRENT_SOURCE_DIR}/libXau/include"
   PUBLIC_LIBRARIES Xmin::xorgproto
 )
+
+# A private, static XCB subset for Xmin's own automation client.  Connection
+# setup is intentionally supplied by project code, so generic TCP/display
+# parsing and libXau lookup do not enter this component.
+set(xmin_libxcb_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/libxcb")
+set(xmin_libxcb_sources
+  src/xcb_conn.c
+  src/xcb_out.c
+  src/xcb_in.c
+  src/xcb_ext.c
+  src/xcb_xid.c
+  src/xcb_list.c
+  src/xproto.c
+  src/bigreq.c
+  src/xc_misc.c
+  src/render.c
+  src/shape.c
+  src/xfixes.c
+  src/damage.c
+  src/composite.c
+  src/xtest.c
+)
+list(TRANSFORM xmin_libxcb_sources PREPEND "${xmin_libxcb_source_dir}/")
+xmin_add_component(xcb
+  UPSTREAM
+  TYPE STATIC
+  SOURCES ${xmin_libxcb_sources}
+  PRIVATE_DEFINITIONS HAVE_CONFIG_H=1
+  PRIVATE_INCLUDE_DIRS
+    "${xmin_libxcb_source_dir}/include/xcb"
+    "${xmin_libxcb_source_dir}/src"
+    "${PROJECT_BINARY_DIR}/generated/libxcb"
+  PUBLIC_INCLUDE_DIRS "${xmin_libxcb_source_dir}/include"
+  PUBLIC_LIBRARIES Threads::Threads
+)
+
 set(xmin_xfont2_source_dir "${CMAKE_CURRENT_SOURCE_DIR}/libXfont2")
 set(xmin_xfont2_sources
   src/stubs/atom.c
