@@ -1,9 +1,10 @@
 # Preserve the broad upstream X server boundaries. These subdirectories expose
-# stable Xmin:: component targets that the final executable links as logic arrives.
+# stable Xmin:: component targets linked into the server executable.
 add_subdirectory(dix)
 add_subdirectory(os)
 add_subdirectory(mi)
 add_subdirectory(fb)
+add_subdirectory(xkb)
 add_subdirectory(extensions)
 add_subdirectory(hw/vfb)
 add_subdirectory(support)

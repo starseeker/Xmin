@@ -12,15 +12,23 @@ function(xmin_normalize_tristate variable)
 endfunction()
 
 option(XMIN_BUILD_GLX
-  "Prepare the OSMesa-backed server GLX and client bridge components" ON)
+  "Build embedded OSMesa, indirect server GLX, and bundled client libGL" ON)
 option(XMIN_ENABLE_TCP
   "Enable the TCP transport (the normal build is local-socket only)" OFF)
 option(XMIN_BUILD_LAUNCHER
-  "Build the integrated authenticated child launcher when implemented" ON)
+  "Build the authenticated xmin-run child launcher" ON)
 option(XMIN_BUILD_TESTS "Build Xmin's self-tests" ${PROJECT_IS_TOP_LEVEL})
+option(XMIN_REQUIRE_TOOLKIT_TESTS
+  "Fail configuration unless Qt 5/6 and GTK 3 acceptance tests are available" OFF)
 option(XMIN_ENABLE_INSTALL "Generate install rules" ${PROJECT_IS_TOP_LEVEL})
 option(XMIN_WARNINGS_AS_ERRORS
   "Treat warnings in project-owned code as errors" OFF)
+
+if(XMIN_REQUIRE_TOOLKIT_TESTS AND NOT XMIN_BUILD_TESTS)
+  message(FATAL_ERROR
+    "XMIN_REQUIRE_TOOLKIT_TESTS requires XMIN_BUILD_TESTS=ON."
+  )
+endif()
 
 set(XMIN_ENABLE_MITSHM "AUTO" CACHE STRING
   "Build MIT-SHM support when the platform provides SysV shared memory")
@@ -46,4 +54,3 @@ if(NOT XMIN_DEFAULT_DEPTH MATCHES "^(1|8|15|16|24|30)$")
     "XMIN_DEFAULT_DEPTH must be one of 1, 8, 15, 16, 24, or 30."
   )
 endif()
-

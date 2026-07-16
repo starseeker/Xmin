@@ -1,0 +1,536 @@
+diff --git a/third_party/osmesa/include/OSMesa/osmesa.h b/third_party/osmesa/include/OSMesa/osmesa.h
+--- a/third_party/osmesa/include/OSMesa/osmesa.h
++++ b/third_party/osmesa/include/OSMesa/osmesa.h
+@@ -168,6 +168,22 @@
+ GLAPI GLboolean GLAPIENTRY
+ OSMesaMakeCurrent(OSMesaContext ctx, void *buffer, GLenum type,
+ 		  GLsizei width, GLsizei height);
++
++
++/*
++ * Xmin extension: bind distinct draw and read image buffers to one context.
++ * The draw and read buffers use the context format and the same component
++ * type, but may have different dimensions. This mirrors the separate
++ * drawable arguments of glXMakeContextCurrent without requiring DRI. The
++ * read buffer is tightly packed; OSMESA_ROW_LENGTH continues to describe
++ * only the draw buffer.
++ */
++GLAPI GLboolean GLAPIENTRY
++OSMesaMakeCurrentSeparate(OSMesaContext ctx,
++			  void *drawBuffer, GLsizei drawWidth,
++			  GLsizei drawHeight,
++			  void *readBuffer, GLsizei readWidth,
++			  GLsizei readHeight, GLenum type);
+ 
+ 
+ 
+diff --git a/third_party/osmesa/src/drivers/osmesa/osmesa.c b/third_party/osmesa/src/drivers/osmesa/osmesa.c
+--- a/third_party/osmesa/src/drivers/osmesa/osmesa.c
++++ b/third_party/osmesa/src/drivers/osmesa/osmesa.c
+@@ -63,6 +63,8 @@
+     GLvisual *gl_visual;		/*< Describes the buffers */
+     struct gl_renderbuffer *rb;  /*< The user's colorbuffer */
+     GLframebuffer *gl_buffer;	/*< The framebuffer, containing user's rb */
++    struct gl_renderbuffer *read_rb; /*< Separate user read colorbuffer */
++    GLframebuffer *read_buffer; /*< Framebuffer containing read_rb */
+     GLenum format;		/*< User-specified context format */
+     GLint userRowLength;		/*< user-specified number of pixels per row */
+     GLint rInd, gInd, bInd, aInd;/*< index offsets for RGBA formats */
+@@ -78,6 +80,40 @@
+ {
+     /* Just cast, since we're using structure containment */
+     return (OSMesaContext) ctx;
++}
++
++
++static INLINE GLvoid *
++osmesa_span_row(OSMesaContext osmesa, struct gl_renderbuffer *rb, GLint y)
++{
++    GLint bytes_per_component;
++    GLint components;
++    GLint row_length;
++    GLint row;
++
++    if (osmesa->format == OSMESA_RGB_565) {
++	bytes_per_component = 2;
++	components = 1;
++    } else {
++	if (rb->DataType == GL_UNSIGNED_BYTE)
++	    bytes_per_component = 1;
++	else if (rb->DataType == GL_UNSIGNED_SHORT)
++	    bytes_per_component = 2;
++	else
++	    bytes_per_component = 4;
++	if (osmesa->format == OSMESA_COLOR_INDEX)
++	    components = 1;
++	else if (osmesa->format == OSMESA_RGB || osmesa->format == OSMESA_BGR)
++	    components = 3;
++	else
++	    components = 4;
++    }
++
++    row_length = rb == osmesa->rb && osmesa->userRowLength ?
++	osmesa->userRowLength : (GLint) rb->Width;
++    row = osmesa->yup ? y : (GLint) rb->Height - y - 1;
++    return (GLubyte *) rb->Data +
++	(size_t) row * row_length * components * bytes_per_component;
+ }
+ 
+ 
+@@ -187,7 +223,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + 4 * (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = VALUE[RCOMP];  \
+@@ -212,7 +248,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + 4 * (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = VALUE[RCOMP];  \
+@@ -237,7 +273,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLfloat *P = (GLfloat *) osmesa->rowaddr[Y] + 4 * (X)
++   GLfloat *P = (GLfloat *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = MAX2((VALUE[RCOMP]), 0.0F); \
+@@ -263,7 +299,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + 4 * (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = VALUE[RCOMP];  \
+@@ -288,7 +324,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + 4 * (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = VALUE[RCOMP];  \
+@@ -313,7 +349,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLfloat *P = (GLfloat *) osmesa->rowaddr[Y] + 4 * (X)
++   GLfloat *P = (GLfloat *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = MAX2((VALUE[RCOMP]), 0.0F); \
+@@ -339,7 +375,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + 4 * (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[1] = VALUE[RCOMP];  \
+@@ -364,7 +400,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + 4 * (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[1] = VALUE[RCOMP];  \
+@@ -389,7 +425,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLfloat *P = (GLfloat *) osmesa->rowaddr[Y] + 4 * (X)
++   GLfloat *P = (GLfloat *) osmesa_span_row(osmesa, rb, Y) + 4 * (X)
+ #define INC_PIXEL_PTR(P) P += 4
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[1] = MAX2((VALUE[RCOMP]), 0.0F); \
+@@ -415,7 +451,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + 3 * (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = VALUE[RCOMP];  \
+@@ -434,7 +470,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + 3 * (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = VALUE[RCOMP];  \
+@@ -453,7 +489,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLfloat *P = (GLfloat *) osmesa->rowaddr[Y] + 3 * (X)
++   GLfloat *P = (GLfloat *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[0] = MAX2((VALUE[RCOMP]), 0.0F); \
+@@ -473,7 +509,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + 3 * (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = VALUE[RCOMP];  \
+@@ -492,7 +528,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + 3 * (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = VALUE[RCOMP];  \
+@@ -511,7 +547,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLfloat *P = (GLfloat *) osmesa->rowaddr[Y] + 3 * (X)
++   GLfloat *P = (GLfloat *) osmesa_span_row(osmesa, rb, Y) + 3 * (X)
+ #define INC_PIXEL_PTR(P) P += 3
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    DST[2] = MAX2((VALUE[RCOMP]), 0.0F); \
+@@ -531,7 +567,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLushort *P = (GLushort *) osmesa->rowaddr[Y] + (X)
++   GLushort *P = (GLushort *) osmesa_span_row(osmesa, rb, Y) + (X)
+ #define INC_PIXEL_PTR(P) P += 1
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    *DST = ( (((VALUE[RCOMP]) & 0xf8) << 8) | (((VALUE[GCOMP]) & 0xfc) << 3) | ((VALUE[BCOMP]) >> 3) )
+@@ -550,7 +586,7 @@
+ #define SPAN_VARS \
+    const OSMesaContext osmesa = OSMESA_CONTEXT(ctx);
+ #define INIT_PIXEL_PTR(P, X, Y) \
+-   GLubyte *P = (GLubyte *) osmesa->rowaddr[Y] + (X)
++   GLubyte *P = (GLubyte *) osmesa_span_row(osmesa, rb, Y) + (X)
+ #define INC_PIXEL_PTR(P) P += 1
+ #define STORE_PIXEL(DST, X, Y, VALUE) \
+    *DST = VALUE[0]
+@@ -1445,11 +1481,35 @@
+ 	    free(osmesa);
+ 	    return NULL;
+ 	}
++	osmesa->read_buffer = _mesa_create_framebuffer(osmesa->gl_visual);
++	if (!osmesa->read_buffer) {
++	    _mesa_unreference_framebuffer(&osmesa->gl_buffer);
++	    _mesa_destroy_visual(osmesa->gl_visual);
++	    _mesa_free_context_data(&osmesa->mesa);
++	    free(osmesa);
++	    return NULL;
++	}
+ 
+ 	/* create front color buffer in user-provided memory (no back buffer) */
+ 	osmesa->rb = new_osmesa_renderbuffer(&osmesa->mesa, format, type);
++	osmesa->read_rb = new_osmesa_renderbuffer(&osmesa->mesa, format, type);
++	if (!osmesa->rb || !osmesa->read_rb) {
++	    if (osmesa->rb)
++		_mesa_reference_renderbuffer(&osmesa->rb, NULL);
++	    if (osmesa->read_rb)
++		_mesa_reference_renderbuffer(&osmesa->read_rb, NULL);
++	    _mesa_unreference_framebuffer(&osmesa->read_buffer);
++	    _mesa_unreference_framebuffer(&osmesa->gl_buffer);
++	    _mesa_destroy_visual(osmesa->gl_visual);
++	    _mesa_free_context_data(&osmesa->mesa);
++	    free(osmesa);
++	    return NULL;
++	}
+ 	_mesa_add_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT, osmesa->rb);
++	_mesa_add_renderbuffer(osmesa->read_buffer, BUFFER_FRONT_LEFT,
++			       osmesa->read_rb);
+ 	assert(osmesa->rb->RefCount == 2);
++	assert(osmesa->read_rb->RefCount == 2);
+ 
+ 	_mesa_add_soft_renderbuffers(osmesa->gl_buffer,
+ 				     GL_FALSE, /* color */
+@@ -1458,6 +1518,13 @@
+ 				     osmesa->gl_visual->haveAccumBuffer,
+ 				     GL_FALSE, /* alpha */
+ 				     GL_FALSE /* aux */);
++	_mesa_add_soft_renderbuffers(osmesa->read_buffer,
++				     GL_FALSE, /* color */
++				     osmesa->gl_visual->haveDepthBuffer,
++				     osmesa->gl_visual->haveStencilBuffer,
++				     osmesa->gl_visual->haveAccumBuffer,
++				     GL_FALSE, /* alpha */
++				     GL_FALSE /* aux */);
+ 
+ 	osmesa->format = format;
+ 	osmesa->userRowLength = 0;
+@@ -1478,6 +1545,10 @@
+ 		!_vbo_CreateContext(ctx) ||
+ 		!_tnl_CreateContext(ctx) ||
+ 		!_swsetup_CreateContext(ctx)) {
++		_mesa_reference_renderbuffer(&osmesa->rb, NULL);
++		_mesa_reference_renderbuffer(&osmesa->read_rb, NULL);
++		_mesa_unreference_framebuffer(&osmesa->read_buffer);
++		_mesa_unreference_framebuffer(&osmesa->gl_buffer);
+ 		_mesa_destroy_visual(osmesa->gl_visual);
+ 		_mesa_free_context_data(ctx);
+ 		free(osmesa);
+@@ -1513,6 +1584,8 @@
+     if (osmesa) {
+ 	if (osmesa->rb)
+ 	    _mesa_reference_renderbuffer(&osmesa->rb, NULL);
++	if (osmesa->read_rb)
++	    _mesa_reference_renderbuffer(&osmesa->read_rb, NULL);
+ 
+ 	_swsetup_DestroyContext(&osmesa->mesa);
+ 	_tnl_DestroyContext(&osmesa->mesa);
+@@ -1521,6 +1594,7 @@
+ 
+ 	_mesa_destroy_visual(osmesa->gl_visual);
+ 	_mesa_unreference_framebuffer(&osmesa->gl_buffer);
++	_mesa_unreference_framebuffer(&osmesa->read_buffer);
+ 
+ 	_mesa_free_context_data(&osmesa->mesa);
+ 	free(osmesa);
+@@ -1554,37 +1628,51 @@
+  *          invalid buffer address, invalid type, width<1, height<1,
+  *          width>internal limit or height>internal limit.
+  */
+-GLAPI GLboolean GLAPIENTRY
+-OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
+-		  GLsizei width, GLsizei height)
++static GLboolean
++osmesa_valid_binding(OSMesaContext osmesa, void *buffer, GLenum type,
++		     GLsizei width, GLsizei height)
+ {
+-    /* NULL context + NULL buffer: unbind the current context (mirrors the
+-     * behaviour of wglMakeCurrent(NULL,NULL) / glXMakeCurrent(dpy,None,NULL)).
+-     * This is the only portable way callers can release the current OSMesa
+-     * context without making another one current. */
+-    if (!osmesa && !buffer) {
+-	_mesa_make_current(NULL, NULL, NULL);
+-	return GL_TRUE;
+-    }
+-
+     if (!osmesa || !buffer ||
+ 	width < 1 || height < 1 ||
+-	width > MAX_WIDTH || height > MAX_HEIGHT) {
++	width > MAX_WIDTH || height > MAX_HEIGHT)
+ 	return GL_FALSE;
+-    }
+ 
+-    if (osmesa->format == OSMESA_RGB_565 && type != GL_UNSIGNED_SHORT_5_6_5) {
++    if (osmesa->format == OSMESA_RGB_565 && type != GL_UNSIGNED_SHORT_5_6_5)
+ 	return GL_FALSE;
+-    }
+ 
+-#if 0
+-    if (!(type == GL_UNSIGNED_BYTE ||
+-	  (type == GL_UNSIGNED_SHORT && CHAN_BITS >= 16) ||
+-	  (type == GL_FLOAT && CHAN_BITS == 32))) {
+-	/* i.e. is sizeof(type) * 8 > CHAN_BITS? */
++    return GL_TRUE;
++}
++
++
++static void
++osmesa_prepare_buffer(OSMesaContext osmesa, GLframebuffer *framebuffer,
++		      struct gl_renderbuffer *renderbuffer, void *buffer,
++		      GLenum type, GLsizei width, GLsizei height)
++{
++    renderbuffer->Data = buffer;
++    renderbuffer->DataType = type;
++    renderbuffer->Width = renderbuffer->Height = 0;
++    _mesa_resize_framebuffer(&osmesa->mesa, framebuffer, width, height);
++    framebuffer->Initialized = GL_TRUE;
++}
++
++
++static GLboolean
++osmesa_make_current_buffers(OSMesaContext osmesa,
++			    void *draw_buffer, GLsizei draw_width,
++			    GLsizei draw_height,
++			    void *read_buffer, GLsizei read_width,
++			    GLsizei read_height, GLenum type,
++			    GLboolean separate)
++{
++    GLframebuffer *read_framebuffer = separate ?
++	osmesa->read_buffer : osmesa->gl_buffer;
++
++    if (!osmesa_valid_binding(osmesa, draw_buffer, type,
++			      draw_width, draw_height) ||
++	!osmesa_valid_binding(osmesa, read_buffer, type,
++			      read_width, read_height))
+ 	return GL_FALSE;
+-    }
+-#endif
+ 
+     osmesa_update_state(&osmesa->mesa, 0);
+ 
+@@ -1593,39 +1681,82 @@
+      */
+     _glapi_check_multithread();
+ 
+-    /* Set renderbuffer fields.  Set width/height = 0 to force
+-     * osmesa_renderbuffer_storage() being called by _mesa_resize_framebuffer()
+-     */
+-    osmesa->rb->Data = buffer;
+-    osmesa->rb->DataType = type;
+-    osmesa->rb->Width = osmesa->rb->Height = 0;
++    osmesa_prepare_buffer(osmesa, osmesa->gl_buffer, osmesa->rb,
++			  draw_buffer, type, draw_width, draw_height);
++    if (separate)
++	osmesa_prepare_buffer(osmesa, osmesa->read_buffer, osmesa->read_rb,
++			      read_buffer, type, read_width, read_height);
+ 
+-    /* Set the framebuffer's size.  This causes the
+-     * osmesa_renderbuffer_storage() function to get called.
+-     */
+-    _mesa_resize_framebuffer(&osmesa->mesa, osmesa->gl_buffer, width, height);
+-    osmesa->gl_buffer->Initialized = GL_TRUE; /* XXX TEMPORARY? */
++    _mesa_make_current(&osmesa->mesa, osmesa->gl_buffer, read_framebuffer);
+ 
+-    _mesa_make_current(&osmesa->mesa, osmesa->gl_buffer, osmesa->gl_buffer);
+-
+     /* Remove renderbuffer attachment, then re-add.  This installs the
+      * renderbuffer adaptor/wrapper if needed (for bpp conversion).
+      */
+     _mesa_remove_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT);
+     _mesa_add_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT, osmesa->rb);
+-
++    if (separate) {
++	_mesa_remove_renderbuffer(osmesa->read_buffer, BUFFER_FRONT_LEFT);
++	_mesa_add_renderbuffer(osmesa->read_buffer, BUFFER_FRONT_LEFT,
++			       osmesa->read_rb);
++    }
+ 
+     /* this updates the visual's red/green/blue/alphaBits fields */
+     _mesa_update_framebuffer_visual(osmesa->gl_buffer);
++    if (separate)
++	_mesa_update_framebuffer_visual(osmesa->read_buffer);
+ 
+-    /* update the framebuffer size */
+-    _mesa_resize_framebuffer(&osmesa->mesa, osmesa->gl_buffer, width, height);
++    _mesa_resize_framebuffer(&osmesa->mesa, osmesa->gl_buffer,
++			     draw_width, draw_height);
++    if (separate)
++	_mesa_resize_framebuffer(&osmesa->mesa, osmesa->read_buffer,
++				 read_width, read_height);
++    compute_row_addresses(osmesa);
+ 
+     return GL_TRUE;
+ }
+ 
+ 
++GLAPI GLboolean GLAPIENTRY
++OSMesaMakeCurrent(OSMesaContext osmesa, void *buffer, GLenum type,
++		  GLsizei width, GLsizei height)
++{
++    /* NULL context + NULL buffer: unbind the current context (mirrors the
++     * behaviour of wglMakeCurrent(NULL,NULL) / glXMakeCurrent(dpy,None,NULL)).
++     * This is the only portable way callers can release the current OSMesa
++     * context without making another one current. */
++    if (!osmesa && !buffer) {
++	_mesa_make_current(NULL, NULL, NULL);
++	return GL_TRUE;
++    }
+ 
++    return osmesa_make_current_buffers(osmesa, buffer, width, height,
++			       buffer, width, height, type, GL_FALSE);
++}
++
++
++GLAPI GLboolean GLAPIENTRY
++OSMesaMakeCurrentSeparate(OSMesaContext osmesa,
++			  void *draw_buffer, GLsizei draw_width,
++			  GLsizei draw_height,
++			  void *read_buffer, GLsizei read_width,
++			  GLsizei read_height, GLenum type)
++{
++    if (!osmesa && !draw_buffer && !read_buffer) {
++	_mesa_make_current(NULL, NULL, NULL);
++	return GL_TRUE;
++    }
++    if (draw_buffer == read_buffer && draw_width == read_width &&
++	draw_height == read_height)
++	return OSMesaMakeCurrent(osmesa, draw_buffer, type,
++				 draw_width, draw_height);
++    return osmesa_make_current_buffers(osmesa,
++			       draw_buffer, draw_width, draw_height,
++			       read_buffer, read_width, read_height,
++			       type, GL_TRUE);
++}
++
++
++
+ GLAPI OSMesaContext GLAPIENTRY
+ OSMesaGetCurrentContext(void)
+ {
+@@ -1800,6 +1931,7 @@
+     { "OSMesaCreateContextExt", (OSMESAproc) OSMesaCreateContextExt },
+     { "OSMesaDestroyContext", (OSMESAproc) OSMesaDestroyContext },
+     { "OSMesaMakeCurrent", (OSMESAproc) OSMesaMakeCurrent },
++    { "OSMesaMakeCurrentSeparate", (OSMESAproc) OSMesaMakeCurrentSeparate },
+     { "OSMesaGetCurrentContext", (OSMESAproc) OSMesaGetCurrentContext },
+     { "OSMesaPixelsStore", (OSMESAproc) OSMesaPixelStore },
+     { "OSMesaGetIntegerv", (OSMESAproc) OSMesaGetIntegerv },
+diff --git a/third_party/osmesa/src/main/framebuffer.c b/third_party/osmesa/src/main/framebuffer.c
+--- a/third_party/osmesa/src/main/framebuffer.c
++++ b/third_party/osmesa/src/main/framebuffer.c
+@@ -647,20 +647,30 @@
+ void
+ _mesa_update_framebuffer(GLcontext *ctx)
+ {
+-    struct gl_framebuffer *fb = ctx->DrawBuffer;
++    struct gl_framebuffer *drawFb = ctx->DrawBuffer;
++    struct gl_framebuffer *readFb = ctx->ReadBuffer;
+ 
+     /* Completeness only matters for user-created framebuffers */
+-    if (fb->Name != 0) {
+-	_mesa_test_framebuffer_completeness(ctx, fb);
+-	_mesa_update_framebuffer_visual(fb);
++    if (drawFb->Name != 0) {
++	_mesa_test_framebuffer_completeness(ctx, drawFb);
++	_mesa_update_framebuffer_visual(drawFb);
+     }
+-
+-    update_color_draw_buffers(ctx, fb);
+-    update_color_read_buffer(ctx, fb);
+-    _mesa_update_depth_buffer(ctx, fb, BUFFER_DEPTH);
+-    _mesa_update_stencil_buffer(ctx, fb, BUFFER_STENCIL);
++    if (readFb != drawFb && readFb->Name != 0) {
++	_mesa_test_framebuffer_completeness(ctx, readFb);
++	_mesa_update_framebuffer_visual(readFb);
++    }
+ 
+-    compute_depth_max(fb);
++    update_color_draw_buffers(ctx, drawFb);
++    update_color_read_buffer(ctx, readFb);
++    _mesa_update_depth_buffer(ctx, drawFb, BUFFER_DEPTH);
++    _mesa_update_stencil_buffer(ctx, drawFb, BUFFER_STENCIL);
++    if (readFb != drawFb) {
++	_mesa_update_depth_buffer(ctx, readFb, BUFFER_DEPTH);
++	_mesa_update_stencil_buffer(ctx, readFb, BUFFER_STENCIL);
++	compute_depth_max(readFb);
++    }
++
++    compute_depth_max(drawFb);
+ }
+ 
+ 

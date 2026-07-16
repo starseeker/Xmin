@@ -1,0 +1,103 @@
+--- a/third_party/xorg-server/hw/vfb/InitOutput.c
++++ b/third_party/xorg-server/hw/vfb/InitOutput.c
+@@ -68,9 +68,9 @@
+ #include "glx_extinit.h"
+ #include "randrstr.h"
+ 
+-#define VFB_DEFAULT_WIDTH      1280
+-#define VFB_DEFAULT_HEIGHT     1024
+-#define VFB_DEFAULT_DEPTH        24
++#define VFB_DEFAULT_WIDTH      XMIN_DEFAULT_WIDTH
++#define VFB_DEFAULT_HEIGHT     XMIN_DEFAULT_HEIGHT
++#define VFB_DEFAULT_DEPTH      XMIN_DEFAULT_DEPTH
+ #define VFB_DEFAULT_WHITEPIXEL    1
+ #define VFB_DEFAULT_BLACKPIXEL    0
+ #define VFB_DEFAULT_LINEBIAS      0
+@@ -113,6 +113,12 @@
+     .blackPixel = VFB_DEFAULT_BLACKPIXEL,
+     .whitePixel = VFB_DEFAULT_WHITEPIXEL,
+     .lineBias = VFB_DEFAULT_LINEBIAS,
++#ifdef HAVE_MMAP
++    .mmap_fd = -1,
++#endif
++#ifdef HAS_SHM
++    .shmid = -1,
++#endif
+ };
+ 
+ static Bool vfbPixmapDepths[33];
+@@ -162,7 +168,12 @@
+     switch (fbmemtype) {
+ #ifdef HAVE_MMAP
+     case MMAPPED_FILE_FB:
+-        if (-1 == unlink(pvfb->mmap_file)) {
++        if (pvfb->pXWDHeader != NULL)
++            munmap(pvfb->pXWDHeader, (size_t) pvfb->sizeInBytes);
++        if (pvfb->mmap_fd >= 0)
++            close(pvfb->mmap_fd);
++        if (pvfb->mmap_file[0] != '\0' &&
++            -1 == unlink(pvfb->mmap_file)) {
+             perror("unlink");
+             ErrorF("unlink %s failed, %s",
+                    pvfb->mmap_file, strerror(errno));
+@@ -175,10 +186,15 @@
+ 
+ #ifdef HAS_SHM
+     case SHARED_MEMORY_FB:
+-        if (-1 == shmdt((char *) pvfb->pXWDHeader)) {
++        if (pvfb->pXWDHeader != NULL &&
++            -1 == shmdt((char *) pvfb->pXWDHeader)) {
+             perror("shmdt");
+             ErrorF("shmdt failed, %s", strerror(errno));
+         }
++        if (pvfb->shmid >= 0 && -1 == shmctl(pvfb->shmid, IPC_RMID, NULL)) {
++            perror("shmctl");
++            ErrorF("shmctl IPC_RMID failed, %s", strerror(errno));
++        }
+         break;
+ #else                           /* HAS_SHM */
+     case SHARED_MEMORY_FB:
+@@ -189,6 +205,9 @@
+         free(pvfb->pXWDHeader);
+         break;
+     }
++    pvfb->pXWDHeader = NULL;
++    pvfb->pXWDCmap = NULL;
++    pvfb->pfbMemory = NULL;
+ }
+ 
+ void
+@@ -677,8 +696,8 @@
+         hostname[0] = 0;
+     else
+         hostname[XWD_WINDOW_NAME_LEN - 1] = 0;
+-    sprintf((char *) (pXWDHeader + 1), "Xvfb %s:%s.%d", hostname, display,
+-            pScreen->myNum);
++    snprintf((char *) (pXWDHeader + 1), XWD_WINDOW_NAME_LEN,
++             "Xmin %s:%s.%d", hostname, display, pScreen->myNum);
+ 
+     /* write colormap pixel slot values */
+ 
+@@ -864,10 +883,10 @@
+     char *pbits;
+ 
+     if (dpix == 0)
+-        dpix = 100;
++        dpix = XMIN_DEFAULT_DPI;
+ 
+     if (dpiy == 0)
+-        dpiy = 100;
++        dpiy = XMIN_DEFAULT_DPI;
+ 
+     pvfb->paddedBytesWidth = PixmapBytePad(pvfb->width, pvfb->depth);
+     pvfb->bitsPerPixel = vfbBitsPerPixel(pvfb->depth);
+@@ -982,7 +1001,9 @@
+         vfbPixmapDepths[32] = TRUE;
+     }
+ 
++#ifdef GLXEXT
+     xorgGlxCreateVendor();
++#endif
+ 
+     for (i = 1; i <= 32; i++) {
+         if (vfbPixmapDepths[i]) {

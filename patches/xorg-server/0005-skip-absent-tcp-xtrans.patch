@@ -1,0 +1,11 @@
+--- a/third_party/xorg-server/os/utils.c
++++ b/third_party/xorg-server/os/utils.c
+@@ -651,7 +651,7 @@ VerifyDisplayName(const char *d)
+ }
+ 
+ static const char *defaultNoListenList[] = {
+-#ifndef LISTEN_TCP
++#if !defined(LISTEN_TCP) && !XMIN_LOCAL_ONLY_XTRANS
+     "tcp",
+ #endif
+ #ifndef LISTEN_UNIX

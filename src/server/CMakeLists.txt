@@ -29,10 +29,6 @@ target_link_libraries(xmin_server PRIVATE
   Threads::Threads
 )
 
-if(TARGET Xmin::launcher)
-  target_link_libraries(xmin_server PRIVATE Xmin::launcher)
-endif()
-
 if(TARGET Xmin::glx)
   target_link_libraries(xmin_server PRIVATE Xmin::glx)
 endif()

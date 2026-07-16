@@ -1,0 +1,11 @@
+--- a/third_party/xorg-server/randr/randr.c
++++ b/third_party/xorg-server/randr/randr.c
+@@ -446,7 +446,7 @@ RRExtensionInit(void)
+     RRCrtcInitErrorValue();
+     RROutputInitErrorValue();
+     RRProviderInitErrorValue();
+-#ifdef PANORAMIX
++#ifdef XINERAMA
+     RRXineramaExtensionInit();
+ #endif
+ }

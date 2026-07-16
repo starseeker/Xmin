@@ -301,6 +301,8 @@ extern _X_EXPORT int auditTrailLevel;
 
 extern _X_EXPORT void
 LockServer(void);
+extern _X_EXPORT Bool
+TryLockServer(void);
 extern _X_EXPORT void
 UnlockServer(void);
 

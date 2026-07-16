@@ -1,0 +1,17 @@
+#ifndef XMIN_XFONT_CONFIG_H
+#define XMIN_XFONT_CONFIG_H
+
+/* Configuration for the retained built-in-font subset of libXfont2. */
+#define HAVE_STDINT_H 1
+#define HAVE_FLOAT_H 1
+#cmakedefine HAVE_REALLOCARRAY 1
+#cmakedefine HAVE_STRLCPY 1
+#cmakedefine HAVE_STRLCAT 1
+
+#define XFONT_BUILTINS 1
+#define XMIN_BUILTIN_FONTS_ONLY 1
+
+/* Deliberately absent: FreeType, font servers, filesystem FPEs, and all
+ * compressed-font formats. Xmin embeds already-uncompressed PCF data. */
+
+#endif

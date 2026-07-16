@@ -35,6 +35,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 xmin_configure_platform()
 
+# Xorg's retained static extension registry uses this traditional build
+# define. Keep it tied to the single public Xmin option.
+set(GLXEXT ${XMIN_BUILD_GLX})
+
+if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
+  set(XMIN_X_BYTE_ORDER X_LITTLE_ENDIAN)
+elseif(CMAKE_C_BYTE_ORDER STREQUAL "BIG_ENDIAN")
+  set(XMIN_X_BYTE_ORDER X_BIG_ENDIAN)
+else()
+  message(FATAL_ERROR "Xmin requires a compiler with a detectable byte order")
+endif()
+
 configure_file(
   "${PROJECT_SOURCE_DIR}/cmake/xmin_config.h.in"
   "${PROJECT_BINARY_DIR}/generated/xmin/config.h"
@@ -43,6 +55,21 @@ configure_file(
 configure_file(
   "${PROJECT_SOURCE_DIR}/cmake/dix-config.h.in"
   "${PROJECT_BINARY_DIR}/generated/dix-config.h"
+  @ONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/xkb-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/xkb-config.h"
+  @ONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/xfont-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/xfont2/config.h"
+  @ONLY
+)
+configure_file(
+  "${PROJECT_SOURCE_DIR}/cmake/version-config.h.in"
+  "${PROJECT_BINARY_DIR}/generated/version-config.h"
   @ONLY
 )
 configure_file(
@@ -88,3 +115,9 @@ message(STATUS "  MIT-SHM support:       ${XMIN_HAVE_MITSHM}")
 message(STATUS "  TCP transport:         ${XMIN_ENABLE_TCP}")
 message(STATUS "  Integrated launcher:   ${XMIN_BUILD_LAUNCHER}")
 message(STATUS "  Tests:                 ${XMIN_BUILD_TESTS}")
+if(XMIN_BUILD_TESTS)
+  message(STATUS "  Qt 5 acceptance:       ${XMIN_HAVE_QT5_TESTS}")
+  message(STATUS "  Qt 6 acceptance:       ${XMIN_HAVE_QT6_TESTS}")
+  message(STATUS "  GTK 3 acceptance:      ${XMIN_HAVE_GTK3_TESTS}")
+  message(STATUS "  Require toolkits:      ${XMIN_REQUIRE_TOOLKIT_TESTS}")
+endif()
