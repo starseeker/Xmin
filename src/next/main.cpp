@@ -2,6 +2,7 @@
 #include "xmin/next/connection.hpp"
 #include "xmin/next/display_socket.hpp"
 #include "xmin/next/server.hpp"
+#include "xmin/next/server_state.hpp"
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/xauthority.hpp"
 
@@ -244,8 +245,9 @@ run(int argc, char **argv)
             return fail(
                 std::string("invalid client fd: ") + std::strerror(errno));
         }
+        xmin::next::ServerState state(config.width, config.height);
         xmin::next::Connection connection(
-            UniqueFd(client_fd), std::move(config));
+            UniqueFd(client_fd), std::move(config), state);
         const auto result = connection.serve();
         if (!result) {
             std::cerr << "Xmin-next: " << result.error().message << '\n';

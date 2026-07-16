@@ -214,7 +214,7 @@ read_reply(int descriptor, std::vector<std::uint8_t> &reply)
 }
 
 bool
-check_setup_success(int descriptor, bool little)
+check_setup_success(int descriptor, bool little, std::uint32_t &resource_base)
 {
     std::vector<std::uint8_t> prefix(8);
     if (!read_all(descriptor, prefix) || prefix[0] != 1 ||
@@ -228,12 +228,146 @@ check_setup_success(int descriptor, bool little)
     const auto vendor_size = get16(setup, 16, little);
     const std::size_t root_offset = 32 + ((vendor_size + 3) & ~std::size_t{3}) +
         static_cast<std::size_t>(setup[21]) * 8;
+    resource_base = get32(setup, 4, little);
     return vendor_size == 9 && setup[20] == 1 && setup[21] == 4 &&
         root_offset + 40 <= setup.size() &&
         get32(setup, root_offset, little) == root_window &&
         get16(setup, root_offset + 20, little) == 320 &&
         get16(setup, root_offset + 22, little) == 240 &&
         setup[root_offset + 38] == 24 && setup[root_offset + 39] == 1;
+}
+
+bool
+read_variable_reply(int descriptor, bool little,
+                    std::vector<std::uint8_t> &reply)
+{
+    reply.assign(32, 0);
+    if (!read_all(descriptor, reply))
+        return false;
+    const std::size_t extra =
+        static_cast<std::size_t>(get32(reply, 4, little)) * 4;
+    const std::size_t original_size = reply.size();
+    reply.resize(original_size + extra);
+    if (extra == 0)
+        return true;
+    std::vector<std::uint8_t> tail(extra);
+    if (!read_all(descriptor, tail))
+        return false;
+    std::memcpy(reply.data() + original_size, tail.data(), tail.size());
+    return true;
+}
+
+bool
+check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::string_view atom_name = "XMIN_NEXT_TEST";
+    constexpr std::uint32_t root_visual = 3;
+    constexpr std::uint32_t event_mask = 1U << 17;
+    const std::uint32_t child = resource_base;
+    std::vector<std::uint8_t> request(
+        8 + ((atom_name.size() + 3) & ~std::size_t{3}), 0);
+    request[0] = 16; // InternAtom
+    put16(request, 2, static_cast<std::uint16_t>(request.size() / 4), little);
+    put16(request, 4, static_cast<std::uint16_t>(atom_name.size()), little);
+    std::memcpy(request.data() + 8, atom_name.data(), atom_name.size());
+    std::vector<std::uint8_t> reply;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 9 ||
+        get32(reply, 8, little) <= 68) {
+        return false;
+    }
+    const auto atom = get32(reply, 8, little);
+
+    request.assign(8, 0);
+    request[0] = 17; // GetAtomName
+    put16(request, 2, 2, little);
+    put32(request, 4, atom, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply[0] != 1 ||
+        get16(reply, 2, little) != 10 ||
+        get16(reply, 8, little) != atom_name.size() ||
+        reply.size() < 32 + atom_name.size() ||
+        std::memcmp(reply.data() + 32, atom_name.data(), atom_name.size()) != 0) {
+        return false;
+    }
+
+    request.assign(36, 0);
+    request[0] = 1;  // CreateWindow
+    request[1] = 24; // depth
+    put16(request, 2, 9, little);
+    put32(request, 4, child, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, static_cast<std::uint16_t>(-3), little);
+    put16(request, 14, 5, little);
+    put16(request, 16, 40, little);
+    put16(request, 18, 30, little);
+    put16(request, 20, 2, little);
+    put16(request, 22, 1, little); // InputOutput
+    put32(request, 24, root_visual, little);
+    put32(request, 28, 1U << 11, little); // CWEventMask
+    put32(request, 32, event_mask, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 8; // MapWindow
+    put16(request, 2, 2, little);
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request[0] = 15; // QueryTree(root)
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply[0] != 1 ||
+        get16(reply, 2, little) != 13 || get32(reply, 8, little) != root_window ||
+        get16(reply, 16, little) != 1 || reply.size() != 36 ||
+        get32(reply, 32, little) != child) {
+        return false;
+    }
+
+    request[0] = 3; // GetWindowAttributes
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 44 ||
+        reply[0] != 1 || get16(reply, 2, little) != 14 ||
+        get32(reply, 8, little) != root_visual || reply[26] != 2 ||
+        get32(reply, 32, little) != event_mask ||
+        get32(reply, 36, little) != event_mask) {
+        return false;
+    }
+
+    request[0] = 14; // GetGeometry
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, little) != 15 ||
+        get16(reply, 12, little) != static_cast<std::uint16_t>(-3) ||
+        get16(reply, 14, little) != 5 || get16(reply, 16, little) != 40 ||
+        get16(reply, 18, little) != 30 || get16(reply, 20, little) != 2) {
+        return false;
+    }
+
+    request[0] = 4; // DestroyWindow
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 15; // QueryTree(destroyed child)
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 3 ||
+        get16(reply, 2, little) != 17 || get32(reply, 4, little) != child) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 127; // variable-length NoOperation
+    put16(request, 2, 3, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 43; // GetInputFocus proves recovery
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 19 &&
+        get32(reply, 8, little) == root_window;
 }
 
 bool
@@ -293,6 +427,13 @@ check_request_sequence(int descriptor, bool little, bool fragmented)
         return false;
     }
 
+    request[0] = 255; // unadvertised extension major opcode
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 || get16(reply, 2, little) != 7 ||
+        reply[10] != 255) {
+        return false;
+    }
+
     request[0] = 127; // NoOperation
     return write_all(descriptor, request);
 }
@@ -303,9 +444,11 @@ run_success_case(const char *server, bool little, bool fragmented)
     Child child = spawn_server(server);
     if (child.process < 0 || child.socket < 0)
         return false;
+    std::uint32_t resource_base = 0;
     const bool passed = send_setup(child.socket, little, true, 11, fragmented) &&
-        check_setup_success(child.socket, little) &&
-        check_request_sequence(child.socket, little, fragmented);
+        check_setup_success(child.socket, little, resource_base) &&
+        check_request_sequence(child.socket, little, fragmented) &&
+        check_core_objects(child.socket, little, resource_base);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);

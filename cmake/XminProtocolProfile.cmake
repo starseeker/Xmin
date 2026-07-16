@@ -39,7 +39,27 @@ function(xmin_verify_protocol_profile policy report xml_directory)
         "${xml_file} changed without regenerating protocol-coverage.json"
       )
     endif()
+    if(xml_file STREQUAL "xproto.xml")
+      set(core_xml_hash "${actual_hash}")
+    endif()
   endforeach()
+
+  if(ARGC GREATER 3)
+    set(generated_header "${ARGV3}")
+    if(NOT EXISTS "${generated_header}")
+      message(FATAL_ERROR
+        "Missing generated core protocol header: ${generated_header}"
+      )
+    endif()
+    file(READ "${generated_header}" generated_core)
+    string(FIND "${generated_core}" "sha256: ${core_xml_hash}" hash_position)
+    if(hash_position EQUAL -1)
+      message(FATAL_ERROR
+        "Generated core protocol header is stale; run "
+        "tools/generate-protocol-coverage.py with --cpp-header"
+      )
+    endif()
+  endif()
 
   string(JSON core_count LENGTH "${profile_json}" core_requests)
   if(NOT core_count EQUAL 127)

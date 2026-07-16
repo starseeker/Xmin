@@ -3,6 +3,7 @@ add_library(xmin_next_core STATIC
   connection.cpp
   display_socket.cpp
   server.cpp
+  server_state.cpp
   wire.cpp
   xauthority.cpp
 )

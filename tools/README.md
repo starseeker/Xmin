@@ -9,5 +9,9 @@ retained xcb-proto XML into the committed request-level coverage report. Run:
 
 ```sh
 python3 tools/generate-protocol-coverage.py \
-  profiles/protocol.json protocol/xcb profiles/protocol-coverage.json
+  profiles/protocol.json protocol/xcb profiles/protocol-coverage.json \
+  --cpp-header src/next/include/xmin/next/generated/core_protocol.hpp
 ```
+
+The generated header is a normal committed C++17 input; Python is not needed by
+configure or build.

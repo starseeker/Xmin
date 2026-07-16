@@ -102,7 +102,12 @@ connections through one `poll` loop.  SIGINT/SIGTERM wake that loop through a pi
 normal RAII cleanup removes the display socket and lock.  Native- and opposite-endian
 raw clients cover fragmented setup/request input, authentication rejection, malformed
 length recovery, concurrent display allocation, simultaneous clients, and lifecycle
-cleanup.  Its deliberately small request implementation is still a migration target;
+cleanup.  A single shared `ServerState` now owns atoms, bounded resources, and the
+window tree across clients; committed declarations generated from `xproto.xml` drive
+a bounds-checked semantic handler table.  The first window/atom requests cover create,
+map/unmap, destroy, attributes, geometry, hierarchy, interning, and reverse lookup,
+including cross-client visibility and disconnect teardown.  Its deliberately small
+request implementation is still a migration target;
 the Xorg-backed `Xmin` remains the feature-complete server and differential oracle.
 
 With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer

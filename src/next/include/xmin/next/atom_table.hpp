@@ -14,6 +14,8 @@ using AtomId = std::uint32_t;
 
 class AtomTable {
 public:
+    static constexpr std::size_t maximum_atoms = 4096;
+
     AtomTable();
 
     AtomId intern(std::string_view name, bool only_if_exists = false);

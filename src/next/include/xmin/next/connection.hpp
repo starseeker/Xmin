@@ -1,8 +1,8 @@
 #ifndef XMIN_NEXT_CONNECTION_HPP
 #define XMIN_NEXT_CONNECTION_HPP
 
-#include "xmin/next/resource_registry.hpp"
 #include "xmin/next/result.hpp"
+#include "xmin/next/server_state.hpp"
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
@@ -23,7 +23,13 @@ struct ServerConfig {
 
 class Connection {
 public:
-    Connection(UniqueFd socket, ServerConfig config);
+    Connection(UniqueFd socket, ServerConfig config, ServerState &server);
+    ~Connection();
+
+    Connection(const Connection &) = delete;
+    Connection &operator=(const Connection &) = delete;
+    Connection(Connection &&) = delete;
+    Connection &operator=(Connection &&) = delete;
 
     Result<void> prepare();
     Result<void> serve();
@@ -36,6 +42,16 @@ public:
     Result<void> on_writable();
 
 private:
+    struct RequestContext {
+        ByteOrder order;
+        std::uint8_t opcode;
+        std::uint8_t data;
+        std::uint16_t sequence;
+        const std::vector<std::uint8_t> &request;
+    };
+
+    using RequestHandler = Result<void> (Connection::*)(const RequestContext &);
+
     enum class State {
         setup_prefix,
         setup_authentication,
@@ -51,16 +67,27 @@ private:
     Result<void> queue(const std::vector<std::uint8_t> &bytes);
     Result<void> send_setup_failure(ByteOrder order, std::string reason);
     Result<void> send_setup_success(ByteOrder order);
-    Result<void> dispatch(ByteOrder order, std::uint8_t opcode,
-                          const std::vector<std::uint8_t> &request,
-                          std::uint16_t sequence);
+    Result<void> dispatch(const RequestContext &context);
+    Result<void> handle_create_window(const RequestContext &context);
+    Result<void> handle_get_window_attributes(const RequestContext &context);
+    Result<void> handle_destroy_window(const RequestContext &context);
+    Result<void> handle_map_window(const RequestContext &context);
+    Result<void> handle_unmap_window(const RequestContext &context);
+    Result<void> handle_get_geometry(const RequestContext &context);
+    Result<void> handle_query_tree(const RequestContext &context);
+    Result<void> handle_intern_atom(const RequestContext &context);
+    Result<void> handle_get_atom_name(const RequestContext &context);
+    Result<void> handle_get_input_focus(const RequestContext &context);
+    Result<void> handle_query_extension(const RequestContext &context);
+    Result<void> handle_list_extensions(const RequestContext &context);
+    Result<void> handle_no_operation(const RequestContext &context);
     Result<void> send_error(ByteOrder order, std::uint8_t code,
                             std::uint8_t opcode, std::uint16_t sequence,
                             std::uint32_t bad_value = 0);
 
     UniqueFd socket_;
     ServerConfig config_;
-    ResourceRegistry resources_;
+    ServerState &server_;
     State state_ = State::setup_prefix;
     std::optional<ByteOrder> order_;
     std::vector<std::uint8_t> input_;

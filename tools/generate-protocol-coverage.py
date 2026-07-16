@@ -34,11 +34,65 @@ def requests_from_xml(path: pathlib.Path) -> list[dict[str, object]]:
     return sorted(requests, key=lambda entry: (entry["opcode"], entry["name"]))
 
 
+def write_cpp_header(path: pathlib.Path, core_requests: list[dict[str, object]],
+                     source_hash: str) -> None:
+    enum_entries = []
+    table_entries = [
+        '    CoreRequestInfo{0, "Invalid", false},'
+    ]
+    for request in core_requests:
+        opcode = request["opcode"]
+        name = request["name"]
+        defined = name != "Reserved"
+        enum_name = name if defined else f"Reserved{opcode}"
+        enum_entries.append(f"    {enum_name} = {opcode},")
+        table_entries.append(
+            f"    CoreRequestInfo{{{opcode}, {json.dumps(name)}, "
+            f"{'true' if defined else 'false'}}},"
+        )
+
+    text = "\n".join([
+        "#ifndef XMIN_NEXT_GENERATED_CORE_PROTOCOL_HPP",
+        "#define XMIN_NEXT_GENERATED_CORE_PROTOCOL_HPP",
+        "",
+        f"// Generated from xproto.xml; sha256: {source_hash}",
+        "// Run tools/generate-protocol-coverage.py; do not edit.",
+        "",
+        "#include <array>",
+        "#include <cstdint>",
+        "#include <string_view>",
+        "",
+        "namespace xmin::next {",
+        "",
+        "enum class CoreOpcode : std::uint8_t {",
+        *enum_entries,
+        "};",
+        "",
+        "struct CoreRequestInfo {",
+        "    std::uint8_t opcode;",
+        "    std::string_view name;",
+        "    bool defined;",
+        "};",
+        "",
+        "inline constexpr std::array<CoreRequestInfo, 128> core_request_table{{",
+        *table_entries,
+        "}};",
+        "",
+        "} // namespace xmin::next",
+        "",
+        "#endif",
+        "",
+    ])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("policy", type=pathlib.Path)
     parser.add_argument("xml_directory", type=pathlib.Path)
     parser.add_argument("output", type=pathlib.Path)
+    parser.add_argument("--cpp-header", type=pathlib.Path)
     args = parser.parse_args()
 
     policy = json.loads(args.policy.read_text(encoding="utf-8"))
@@ -126,6 +180,8 @@ def main() -> None:
     args.output.write_text(
         json.dumps(report, indent=2, sort_keys=False) + "\n", encoding="utf-8"
     )
+    if args.cpp_header is not None:
+        write_cpp_header(args.cpp_header, core_requests, sha256(core_xml))
 
 
 if __name__ == "__main__":

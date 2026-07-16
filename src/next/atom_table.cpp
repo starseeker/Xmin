@@ -43,6 +43,8 @@ AtomTable::intern(std::string_view name, bool only_if_exists)
         return found->second;
     if (only_if_exists)
         return 0;
+    if (size() >= maximum_atoms)
+        return 0;
 
     const auto id = static_cast<AtomId>(names_.size());
     names_.push_back(owned_name);

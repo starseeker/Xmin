@@ -1,6 +1,6 @@
 # Xmin radical C++17 modernization plan
 
-Status: proposal for the full-fork branch, 2026-07-16
+Status: active implementation plan for the full-fork branch, 2026-07-16
 
 ## 1. Recommendation
 

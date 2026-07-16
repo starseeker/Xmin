@@ -1,7 +1,9 @@
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/checked.hpp"
+#include "xmin/next/generated/core_protocol.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/result.hpp"
+#include "xmin/next/server_state.hpp"
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
@@ -37,6 +39,20 @@ test_checked_arithmetic()
                "checked_multiply rejected a valid product") &&
         expect(!checked_multiply(maximum, std::size_t{2}),
                "checked_multiply accepted overflow");
+}
+
+bool
+test_generated_core_protocol()
+{
+    using xmin::next::CoreOpcode;
+    const auto intern = static_cast<std::size_t>(CoreOpcode::InternAtom);
+    return expect(xmin::next::core_request_table.size() == 128,
+                  "generated core opcode table has the wrong size") &&
+        expect(xmin::next::core_request_table[intern].name == "InternAtom",
+               "generated core opcode name is wrong") &&
+        expect(xmin::next::core_request_table[120].name == "Reserved" &&
+                   !xmin::next::core_request_table[120].defined,
+               "generated reserved opcode metadata is wrong");
 }
 
 bool
@@ -118,6 +134,48 @@ test_unique_fd()
 }
 
 bool
+test_shared_server_state()
+{
+    constexpr std::uint32_t first_owner = 0x00200000;
+    constexpr std::uint32_t second_owner = 0x00400000;
+    xmin::next::ServerState server(320, 240);
+    if (!expect(server.window(xmin::next::root_window_id) != nullptr,
+                "server root window is missing") ||
+        !expect(server.valid_client_resource(first_owner, first_owner),
+                "valid first client XID was rejected") ||
+        !expect(!server.valid_client_resource(second_owner, first_owner),
+                "foreign client XID range was accepted")) {
+        return false;
+    }
+
+    xmin::next::WindowRecord parent;
+    parent.id = first_owner;
+    parent.parent = xmin::next::root_window_id;
+    parent.width = 20;
+    parent.height = 10;
+    xmin::next::WindowRecord child;
+    child.id = second_owner;
+    child.parent = first_owner;
+    child.width = 5;
+    child.height = 4;
+    if (!expect(server.add_window(std::move(parent), first_owner),
+                "shared parent insertion failed") ||
+        !expect(server.add_window(std::move(child), second_owner),
+                "cross-client child insertion failed") ||
+        !expect(server.window(xmin::next::root_window_id)->children.size() == 1,
+                "root child relationship is wrong")) {
+        return false;
+    }
+    server.disconnect_client(first_owner);
+    return expect(server.window(first_owner) == nullptr,
+                  "owner disconnect retained its window") &&
+        expect(server.window(second_owner) == nullptr,
+               "parent teardown retained a foreign child") &&
+        expect(server.window(xmin::next::root_window_id)->children.empty(),
+               "root retained a destroyed child");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -133,10 +191,11 @@ test_result()
 int
 main()
 {
-    return test_checked_arithmetic() &&
+    return test_checked_arithmetic() && test_generated_core_protocol() &&
             test_wire_order(xmin::next::ByteOrder::little) &&
             test_wire_order(xmin::next::ByteOrder::big) &&
-            test_atoms_and_resources() && test_unique_fd() && test_result()
+            test_atoms_and_resources() && test_unique_fd() &&
+            test_shared_server_state() && test_result()
         ? 0
         : 1;
 }

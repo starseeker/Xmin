@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 namespace xmin::next {
 
@@ -57,7 +58,30 @@ public:
         return erased;
     }
 
+    bool erase(std::uint32_t id) { return resources_.erase(id) != 0; }
+
+    [[nodiscard]] std::vector<std::uint32_t>
+    owned_by(std::uint32_t owner, ResourceKind kind) const
+    {
+        std::vector<std::uint32_t> ids;
+        for (const auto &entry : resources_) {
+            if (entry.second.owner == owner && entry.second.kind == kind)
+                ids.push_back(entry.first);
+        }
+        return ids;
+    }
+
     [[nodiscard]] std::size_t size() const noexcept { return resources_.size(); }
+
+    [[nodiscard]] std::size_t owner_size(std::uint32_t owner) const noexcept
+    {
+        std::size_t count = 0;
+        for (const auto &entry : resources_) {
+            if (entry.second.owner == owner)
+                ++count;
+        }
+        return count;
+    }
 
 private:
     std::unordered_map<std::uint32_t, ResourceRecord> resources_;

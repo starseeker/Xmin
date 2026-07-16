@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <poll.h>
 #include <signal.h>
 #include <unistd.h>
@@ -137,7 +138,7 @@ private:
 
 struct Client {
     std::size_t slot;
-    Connection connection;
+    std::unique_ptr<Connection> connection;
 };
 
 std::optional<std::size_t>
@@ -169,6 +170,7 @@ Server::Server(DisplaySocket listener, ServerConfig config,
                std::size_t maximum_clients, UniqueFd display_notification)
     : listener_(std::move(listener)),
       config_(std::move(config)),
+      state_(config_.width, config_.height),
       maximum_clients_(maximum_clients),
       display_notification_(std::move(display_notification))
 {}
@@ -210,7 +212,7 @@ Server::run()
         descriptors.push_back(pollfd{pipe.value()[0].get(), POLLIN, 0});
         for (const auto &client : clients) {
             descriptors.push_back(pollfd{
-                client.connection.fd(), client.connection.poll_events(), 0});
+                client.connection->fd(), client.connection->poll_events(), 0});
         }
         const std::size_t polled_client_count = clients.size();
 
@@ -248,9 +250,10 @@ Server::run()
                 ServerConfig client_config = config_;
                 client_config.resource_base = static_cast<std::uint32_t>(
                     (*slot + 1U) * 0x00200000U);
-                Connection connection(
-                    std::move(*accepted.value()), std::move(client_config));
-                auto prepared = connection.prepare();
+                auto connection = std::make_unique<Connection>(
+                    std::move(*accepted.value()), std::move(client_config),
+                    state_);
+                auto prepared = connection->prepare();
                 if (!prepared) {
                     std::cerr << "Xmin-next: rejected client: "
                               << prepared.error().message << '\n';
@@ -275,10 +278,10 @@ Server::run()
             }
             else {
                 if ((events & (POLLIN | POLLHUP)) != 0)
-                    operation = clients[index].connection.on_readable();
-                if (operation && !clients[index].connection.finished() &&
+                    operation = clients[index].connection->on_readable();
+                if (operation && !clients[index].connection->finished() &&
                     (events & POLLOUT) != 0) {
-                    operation = clients[index].connection.on_writable();
+                    operation = clients[index].connection->on_writable();
                 }
                 if (operation && (events & POLLERR) != 0 &&
                     (events & (POLLIN | POLLOUT | POLLHUP)) == 0) {
@@ -291,7 +294,7 @@ Server::run()
                           << operation.error().message << '\n';
                 remove[index] = true;
             }
-            else if (clients[index].connection.finished()) {
+            else if (clients[index].connection->finished()) {
                 remove[index] = true;
             }
         }

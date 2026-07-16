@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "1e44e7917dd84417c9150d6ff8326f66b2209ca7e89faa14d2167382cf13d287",
+    "policy_sha256": "8b1d36f078d7d8e761a36bc6e50438b55b32b59e6d1b3cf44e285c3a9bbf1b1b",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -139,7 +139,7 @@
       "name": "CreateWindow",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 2,
@@ -153,14 +153,14 @@
       "name": "GetWindowAttributes",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 4,
       "name": "DestroyWindow",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 5,
@@ -188,7 +188,7 @@
       "name": "MapWindow",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 9,
@@ -202,7 +202,7 @@
       "name": "UnmapWindow",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 11,
@@ -237,21 +237,21 @@
       "name": "QueryTree",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 16,
       "name": "InternAtom",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 17,
       "name": "GetAtomName",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 18,

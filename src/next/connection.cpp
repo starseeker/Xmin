@@ -1,8 +1,10 @@
 #include "xmin/next/connection.hpp"
 
 #include "xmin/next/checked.hpp"
+#include "xmin/next/generated/core_protocol.hpp"
 
 #include <array>
+#include <bitset>
 #include <cerrno>
 #include <cstring>
 #include <fcntl.h>
@@ -17,24 +19,33 @@ namespace {
 
 constexpr std::uint16_t protocol_major = 11;
 constexpr std::uint16_t protocol_minor = 0;
-constexpr std::uint32_t root_window = 1;
-constexpr std::uint32_t default_colormap = 2;
-constexpr std::uint32_t root_visual = 3;
 constexpr std::size_t maximum_request_bytes = 65535U * 4U;
 constexpr std::size_t maximum_buffered_input = maximum_request_bytes + 16384U;
 constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
+constexpr std::uint32_t all_event_masks = 0x01ffffffU;
+constexpr std::uint32_t propagate_event_masks = 0x00003f4fU;
 
 enum : std::uint8_t {
     bad_request = 1,
+    bad_value = 2,
+    bad_window = 3,
+    bad_pixmap = 4,
+    bad_atom = 5,
+    bad_cursor = 6,
+    bad_match = 8,
     bad_drawable = 9,
+    bad_alloc = 11,
+    bad_colormap = 12,
+    bad_id_choice = 14,
     bad_length = 16,
-    get_geometry = 14,
-    get_input_focus = 43,
-    query_extension = 98,
-    list_extensions = 99,
-    no_operation = 127,
 };
+
+constexpr std::size_t
+opcode_index(CoreOpcode opcode) noexcept
+{
+    return static_cast<std::uint8_t>(opcode);
+}
 
 bool
 cookies_equal(const std::vector<std::uint8_t> &left,
@@ -71,12 +82,14 @@ io_failure(std::string_view operation)
 
 } // namespace
 
-Connection::Connection(UniqueFd socket, ServerConfig config)
-    : socket_(std::move(socket)), config_(std::move(config))
+Connection::Connection(UniqueFd socket, ServerConfig config,
+                       ServerState &server)
+    : socket_(std::move(socket)), config_(std::move(config)), server_(server)
+{}
+
+Connection::~Connection()
 {
-    static_cast<void>(resources_.insert(root_window, ResourceKind::window, 0));
-    static_cast<void>(
-        resources_.insert(default_colormap, ResourceKind::colormap, 0));
+    server_.disconnect_client(config_.resource_base);
 }
 
 Result<void>
@@ -186,7 +199,7 @@ Connection::send_setup_success(ByteOrder order)
 
     payload.u32(1); // release
     payload.u32(config_.resource_base);
-    payload.u32(0x001fffff); // client resource-id mask
+    payload.u32(client_resource_mask);
     payload.u32(0);          // motion buffer
     payload.u16(static_cast<std::uint16_t>(vendor.size()));
     payload.u16(65535); // maximum request length in four-byte units
@@ -214,18 +227,18 @@ Connection::send_setup_success(ByteOrder order)
         payload.pad(5);
     }
 
-    payload.u32(root_window);
-    payload.u32(default_colormap);
+    payload.u32(root_window_id);
+    payload.u32(default_colormap_id);
     payload.u32(0x00ffffff);
     payload.u32(0x00000000);
     payload.u32(0);
-    payload.u16(config_.width);
-    payload.u16(config_.height);
-    payload.u16(millimetres(config_.width));
-    payload.u16(millimetres(config_.height));
+    payload.u16(server_.width());
+    payload.u16(server_.height());
+    payload.u16(millimetres(server_.width()));
+    payload.u16(millimetres(server_.height()));
     payload.u16(1);
     payload.u16(1);
-    payload.u32(root_visual);
+    payload.u32(root_visual_id);
     payload.u8(0);
     payload.u8(0);
     payload.u8(24);
@@ -235,7 +248,7 @@ Connection::send_setup_success(ByteOrder order)
     payload.u8(0);
     payload.u16(1);
     payload.pad(4);
-    payload.u32(root_visual);
+    payload.u32(root_visual_id);
     payload.u8(4); // TrueColor
     payload.u8(8);
     payload.u16(256);
@@ -378,91 +391,541 @@ Connection::send_error(ByteOrder order, std::uint8_t code,
 }
 
 Result<void>
-Connection::dispatch(ByteOrder order, std::uint8_t opcode,
-                     const std::vector<std::uint8_t> &request,
-                     std::uint16_t sequence)
+Connection::handle_create_window(const RequestContext &context)
 {
-    if (opcode == no_operation) {
-        if (request.size() != 4)
-            return send_error(order, bad_length, opcode, sequence);
-        return Result<void>::success();
+    if (context.request.size() < 32)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto id = reader.u32();
+    const auto parent_id = reader.u32();
+    const auto x = reader.u16();
+    const auto y = reader.u16();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    const auto border_width = reader.u16();
+    const auto requested_class = reader.u16();
+    const auto visual = reader.u32();
+    const auto value_mask = reader.u32();
+    if (!id || !parent_id || !x || !y || !width || !height ||
+        !border_width || !requested_class || !visual || !value_mask) {
+        return malformed("truncated CreateWindow request");
     }
 
-    if (opcode == get_input_focus) {
-        if (request.size() != 4)
-            return send_error(order, bad_length, opcode, sequence);
-        WireWriter reply(order);
-        reply.u8(1);
-        reply.u8(0); // RevertToNone
-        reply.u16(sequence);
-        reply.u32(0);
-        reply.u32(root_window);
-        reply.pad(20);
-        return queue(reply.data());
+    constexpr std::uint32_t supported_value_mask = 0x00007fffU;
+    const auto value_count = std::bitset<32>(*value_mask).count();
+    const auto value_bytes = checked_multiply(value_count, std::size_t{4});
+    const auto expected_size = value_bytes
+        ? checked_add(std::size_t{32}, *value_bytes)
+        : std::optional<std::size_t>{};
+    if ((*value_mask & ~supported_value_mask) != 0) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *value_mask);
+    }
+    if (!expected_size || context.request.size() != *expected_size) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    if (!server_.valid_client_resource(*id, config_.resource_base)) {
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    }
+    if (server_.resource_limit_reached(config_.resource_base)) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    const auto *parent = server_.window(*parent_id);
+    if (parent == nullptr) {
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *parent_id);
+    }
+    if (*width == 0 || *height == 0) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *width == 0 ? *width : *height);
     }
 
-    if (opcode == get_geometry) {
-        if (request.size() != 8)
-            return send_error(order, bad_length, opcode, sequence);
-        WireReader reader(request.data() + 4, request.size() - 4, order);
-        const auto drawable = reader.u32();
-        if (!drawable)
-            return malformed("truncated GetGeometry request");
-        if (!resources_.is(*drawable, ResourceKind::window))
-            return send_error(order, bad_drawable, opcode, sequence, *drawable);
-
-        WireWriter reply(order);
-        reply.u8(1);
-        reply.u8(24);
-        reply.u16(sequence);
-        reply.u32(0);
-        reply.u32(root_window);
-        reply.i16(0);
-        reply.i16(0);
-        reply.u16(config_.width);
-        reply.u16(config_.height);
-        reply.u16(0);
-        reply.pad(10);
-        return queue(reply.data());
+    WindowClass window_class;
+    if (*requested_class == 0)
+        window_class = parent->window_class;
+    else if (*requested_class == 1)
+        window_class = WindowClass::input_output;
+    else if (*requested_class == 2)
+        window_class = WindowClass::input_only;
+    else {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *requested_class);
     }
 
-    if (opcode == query_extension) {
-        if (request.size() < 8)
-            return send_error(order, bad_length, opcode, sequence);
-        WireReader reader(request.data() + 4, request.size() - 4, order);
-        const auto name_size = reader.u16();
-        if (!name_size || !reader.skip(2))
-            return malformed("truncated QueryExtension request");
-        const auto padded_name = padded_to_four(*name_size);
-        if (!padded_name || request.size() != 8 + *padded_name)
-            return send_error(order, bad_length, opcode, sequence);
+    WindowRecord window;
+    window.id = *id;
+    window.parent = *parent_id;
+    window.x = static_cast<std::int16_t>(*x);
+    window.y = static_cast<std::int16_t>(*y);
+    window.width = *width;
+    window.height = *height;
+    window.border_width = *border_width;
+    window.window_class = window_class;
+    window.colormap = parent->colormap;
 
-        WireWriter reply(order);
-        reply.u8(1);
-        reply.u8(0);
-        reply.u16(sequence);
-        reply.u32(0);
-        reply.u8(0); // not yet advertised by Xmin-next
-        reply.u8(0);
-        reply.u8(0);
-        reply.u8(0);
-        reply.pad(20);
-        return queue(reply.data());
+    if (window_class == WindowClass::input_only) {
+        if (context.data != 0 || *visual != 0 || *border_width != 0) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+        }
+        window.depth = 0;
+        window.visual = 0;
+        window.colormap = 0;
+    }
+    else {
+        if (parent->window_class == WindowClass::input_only) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+        }
+        window.depth = context.data == 0 ? parent->depth : context.data;
+        window.visual = *visual == 0 ? parent->visual : *visual;
+        if (window.depth != 24 || window.visual != root_visual_id) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+        }
     }
 
-    if (opcode == list_extensions) {
-        if (request.size() != 4)
-            return send_error(order, bad_length, opcode, sequence);
-        WireWriter reply(order);
-        reply.u8(1);
-        reply.u8(0);
-        reply.u16(sequence);
-        reply.u32(0);
-        reply.pad(24);
-        return queue(reply.data());
+    WireReader values(context.request.data() + 32,
+                      context.request.size() - 32, context.order);
+    for (unsigned bit = 0; bit < 15; ++bit) {
+        if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
+            continue;
+        const auto value = values.u32();
+        if (!value)
+            return malformed("truncated CreateWindow value list");
+        switch (bit) {
+        case 0:
+            if (*value > 1) {
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            }
+            break;
+        case 1:
+            window.background_pixel = *value;
+            break;
+        case 2:
+            if (*value != 0) {
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            }
+            break;
+        case 3:
+            window.border_pixel = *value;
+            break;
+        case 4:
+            if (*value > 10)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window.bit_gravity = static_cast<std::uint8_t>(*value);
+            break;
+        case 5:
+            if (*value > 10)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window.window_gravity = static_cast<std::uint8_t>(*value);
+            break;
+        case 6:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window.backing_store = static_cast<std::uint8_t>(*value);
+            break;
+        case 7:
+            window.backing_planes = *value;
+            break;
+        case 8:
+            window.backing_pixel = *value;
+            break;
+        case 9:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window.override_redirect = *value != 0;
+            break;
+        case 10:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window.save_under = *value != 0;
+            break;
+        case 11:
+            if ((*value & ~all_event_masks) != 0) {
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            }
+            if (*value != 0)
+                window.event_masks.emplace(config_.resource_base, *value);
+            break;
+        case 12:
+            if ((*value & ~propagate_event_masks) != 0) {
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            }
+            window.do_not_propagate_mask =
+                static_cast<std::uint16_t>(*value);
+            break;
+        case 13:
+            if (*value == 0)
+                window.colormap = parent->colormap;
+            else if (*value == default_colormap_id)
+                window.colormap = *value;
+            else
+                return send_error(context.order, bad_colormap, context.opcode,
+                                  context.sequence, *value);
+            break;
+        case 14:
+            if (*value != 0) {
+                return send_error(context.order, bad_cursor, context.opcode,
+                                  context.sequence, *value);
+            }
+            break;
+        }
     }
 
-    return send_error(order, bad_request, opcode, sequence);
+    if (!server_.add_window(std::move(window), config_.resource_base)) {
+        return send_error(context.order, bad_id_choice, context.opcode,
+                          context.sequence, *id);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_get_window_attributes(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated GetWindowAttributes request");
+    const auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+
+    const auto own_mask = window->event_masks.find(config_.resource_base);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(window->backing_store);
+    reply.u16(context.sequence);
+    reply.u32(3);
+    reply.u32(window->visual);
+    reply.u16(static_cast<std::uint16_t>(window->window_class));
+    reply.u8(window->bit_gravity);
+    reply.u8(window->window_gravity);
+    reply.u32(window->backing_planes);
+    reply.u32(window->backing_pixel);
+    reply.u8(window->save_under ? 1 : 0);
+    reply.u8(window->colormap == default_colormap_id ? 1 : 0);
+    reply.u8(server_.map_state(*id));
+    reply.u8(window->override_redirect ? 1 : 0);
+    reply.u32(window->colormap);
+    reply.u32(server_.all_event_masks(*window));
+    reply.u32(own_mask == window->event_masks.end() ? 0 : own_mask->second);
+    reply.u16(window->do_not_propagate_mask);
+    reply.pad(2);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_destroy_window(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated DestroyWindow request");
+    if (server_.window(*id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    server_.destroy_window(*id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_map_window(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated MapWindow request");
+    auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    window->mapped = true;
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_unmap_window(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated UnmapWindow request");
+    auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    if (*id != root_window_id)
+        window->mapped = false;
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_get_geometry(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto drawable = reader.u32();
+    if (!drawable)
+        return malformed("truncated GetGeometry request");
+    const auto *window = server_.window(*drawable);
+    if (window == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(window->depth);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(root_window_id);
+    reply.i16(window->x);
+    reply.i16(window->y);
+    reply.u16(window->width);
+    reply.u16(window->height);
+    reply.u16(window->border_width);
+    reply.pad(10);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_query_tree(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated QueryTree request");
+    const auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    if (window->children.size() > std::numeric_limits<std::uint16_t>::max()) {
+        return Result<void>::failure(ErrorCode::io,
+                                     "window child limit exceeded");
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(window->children.size()));
+    reply.u32(root_window_id);
+    reply.u32(window->parent);
+    reply.u16(static_cast<std::uint16_t>(window->children.size()));
+    reply.pad(14);
+    for (const auto child : window->children)
+        reply.u32(child);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_intern_atom(const RequestContext &context)
+{
+    if (context.request.size() < 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto name_size = reader.u16();
+    if (!name_size || !reader.skip(2))
+        return malformed("truncated InternAtom request");
+    const auto padded_name = padded_to_four(*name_size);
+    if (!padded_name || context.request.size() != 8 + *padded_name)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1 || *name_size == 0 || *name_size > 1024) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence,
+                          context.data > 1 ? context.data : *name_size);
+    }
+    const std::string_view name(
+        reinterpret_cast<const char *>(context.request.data() + 8),
+        *name_size);
+    const AtomId atom = server_.atoms().intern(name, context.data != 0);
+    if (atom == 0 && context.data == 0) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(atom);
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_atom_name(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto atom = reader.u32();
+    if (!atom)
+        return malformed("truncated GetAtomName request");
+    const auto name = server_.atoms().name(*atom);
+    if (!name)
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *atom);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>((name->size() + 3) / 4));
+    reply.u16(static_cast<std::uint16_t>(name->size()));
+    reply.pad(22);
+    reply.bytes(*name);
+    reply.pad_to_four();
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_input_focus(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0); // RevertToNone
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(root_window_id);
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_query_extension(const RequestContext &context)
+{
+    if (context.request.size() < 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto name_size = reader.u16();
+    if (!name_size || !reader.skip(2))
+        return malformed("truncated QueryExtension request");
+    const auto padded_name = padded_to_four(*name_size);
+    if (!padded_name || context.request.size() != 8 + *padded_name)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u8(0); // not yet advertised by Xmin-next
+    reply.u8(0);
+    reply.u8(0);
+    reply.u8(0);
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_list_extensions(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.pad(24);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_no_operation(const RequestContext &)
+{
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::dispatch(const RequestContext &context)
+{
+    static const std::array<RequestHandler, 128> handlers = [] {
+        std::array<RequestHandler, 128> table{};
+        table[opcode_index(CoreOpcode::CreateWindow)] =
+            &Connection::handle_create_window;
+        table[opcode_index(CoreOpcode::GetWindowAttributes)] =
+            &Connection::handle_get_window_attributes;
+        table[opcode_index(CoreOpcode::DestroyWindow)] =
+            &Connection::handle_destroy_window;
+        table[opcode_index(CoreOpcode::MapWindow)] =
+            &Connection::handle_map_window;
+        table[opcode_index(CoreOpcode::UnmapWindow)] =
+            &Connection::handle_unmap_window;
+        table[opcode_index(CoreOpcode::GetGeometry)] =
+            &Connection::handle_get_geometry;
+        table[opcode_index(CoreOpcode::QueryTree)] =
+            &Connection::handle_query_tree;
+        table[opcode_index(CoreOpcode::InternAtom)] =
+            &Connection::handle_intern_atom;
+        table[opcode_index(CoreOpcode::GetAtomName)] =
+            &Connection::handle_get_atom_name;
+        table[opcode_index(CoreOpcode::GetInputFocus)] =
+            &Connection::handle_get_input_focus;
+        table[opcode_index(CoreOpcode::QueryExtension)] =
+            &Connection::handle_query_extension;
+        table[opcode_index(CoreOpcode::ListExtensions)] =
+            &Connection::handle_list_extensions;
+        table[opcode_index(CoreOpcode::NoOperation)] =
+            &Connection::handle_no_operation;
+        return table;
+    }();
+    if (context.opcode >= handlers.size()) {
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence);
+    }
+    const auto handler = handlers[context.opcode];
+    if (handler == nullptr) {
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence);
+    }
+    return (this->*handler)(context);
 }
 
 Result<bool>
@@ -514,7 +977,9 @@ Connection::process_request()
         input_.begin(),
         input_.begin() + static_cast<std::ptrdiff_t>(*request_size));
     consume_input(*request_size);
-    auto dispatched = dispatch(*order_, *opcode, request, sequence_);
+    const RequestContext context{
+        *order_, *opcode, *data, sequence_, request};
+    auto dispatched = dispatch(context);
     if (!dispatched) {
         return Result<bool>::failure(
             dispatched.error().code, dispatched.error().message);

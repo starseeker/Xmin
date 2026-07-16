@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <cerrno>
 #include <charconv>
 #include <cstddef>
@@ -395,6 +396,51 @@ geometry_round_trip(int descriptor, bool little)
 }
 
 bool
+create_child(int descriptor, bool little, std::uint32_t id)
+{
+    std::vector<std::uint8_t> request(32);
+    request[0] = 1;  // CreateWindow
+    request[1] = 24; // depth
+    put16(request, 2, 8, little);
+    put32(request, 4, id, little);
+    put32(request, 8, root_window, little);
+    put16(request, 16, 20, little);
+    put16(request, 18, 10, little);
+    put16(request, 22, 1, little); // InputOutput
+    put32(request, 24, 3, little); // root visual
+    return write_all(descriptor, request);
+}
+
+std::optional<std::vector<std::uint32_t>>
+query_root(int descriptor, bool little, std::uint16_t sequence)
+{
+    std::vector<std::uint8_t> request(8);
+    request[0] = 15; // QueryTree
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return std::nullopt;
+    std::vector<std::uint8_t> reply(32);
+    if (!read_exact(descriptor, reply) || reply[0] != 1 ||
+        get16(reply, 2, little) != sequence ||
+        get32(reply, 8, little) != root_window) {
+        return std::nullopt;
+    }
+    const auto count = get16(reply, 16, little);
+    if (get32(reply, 4, little) != count)
+        return std::nullopt;
+    std::vector<std::uint8_t> wire_children(
+        static_cast<std::size_t>(count) * 4);
+    if (!read_exact(descriptor, wire_children))
+        return std::nullopt;
+    std::vector<std::uint32_t> children;
+    children.reserve(count);
+    for (std::size_t index = 0; index < count; ++index)
+        children.push_back(get32(wire_children, index * 4, little));
+    return children;
+}
+
+bool
 path_exists(const std::string &path)
 {
     struct stat status {};
@@ -454,6 +500,29 @@ main(int argc, char **argv)
                     geometry_round_trip(second_client.get(), !native) &&
                     geometry_round_trip(first_client.get(), native) &&
                     geometry_round_trip(other_server_client.get(), native);
+                if (passed) {
+                    passed = create_child(
+                        first_client.get(), native, *first_base);
+                    auto shared_tree = query_root(
+                        second_client.get(), !native, 2);
+                    passed = passed && shared_tree &&
+                        std::find(shared_tree->begin(), shared_tree->end(),
+                                  *first_base) != shared_tree->end();
+                    first_client = Fd();
+                    auto after_disconnect = query_root(
+                        second_client.get(), !native, 3);
+                    if (after_disconnect &&
+                        std::find(after_disconnect->begin(),
+                                  after_disconnect->end(), *first_base) !=
+                            after_disconnect->end()) {
+                        after_disconnect = query_root(
+                            second_client.get(), !native, 4);
+                    }
+                    passed = passed && after_disconnect &&
+                        std::find(after_disconnect->begin(),
+                                  after_disconnect->end(), *first_base) ==
+                            after_disconnect->end();
+                }
             }
         }
     }

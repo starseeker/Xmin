@@ -50,7 +50,11 @@ omission and client fallback discovery.
 The core XCB companion covers properties, window hierarchy/configuration,
 geometry/translation, pixmap copy/readback, selection ownership, named colors, and
 synthetic events. The raw opposite-endian setup test also checks a malformed core
-request receives `BadLength` without terminating the connection.
+request receives `BadLength` without terminating the connection. The `Xmin-next`
+variant additionally exercises the same semantic handlers in both byte orders for
+atom interning/name lookup and window create/map/attributes/geometry/tree/destroy,
+checks an unadvertised opcode at 255 cannot escape the 128-slot core table, and proves
+that one client's window is visible to another before disconnect teardown removes it.
 The OSMesa unit check confirms that the renderer itself reports OpenGL 2.0, that the
 host-endian BGRA/ARGB choice produces a native X `0x00RRGGBB` pixel, and that distinct
 draw/read memory buffers work. The software-direct tests go further: they
