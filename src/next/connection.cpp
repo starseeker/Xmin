@@ -3971,6 +3971,126 @@ Connection::handle_query_best_size(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_get_keyboard_mapping(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto first_keycode = reader.u8();
+    const auto count = reader.u8();
+    if (!first_keycode || !count || !reader.skip(2))
+        return malformed("truncated GetKeyboardMapping request");
+    if (*first_keycode < minimum_keycode ||
+        *first_keycode > maximum_keycode) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *first_keycode);
+    }
+    const std::uint16_t end =
+        static_cast<std::uint16_t>(*first_keycode) + *count;
+    if (end > static_cast<std::uint16_t>(maximum_keycode) + 1U)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *count);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(static_cast<std::uint8_t>(keysyms_per_keycode));
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(keysyms_per_keycode * *count));
+    reply.pad(24);
+    const auto &keymap = server_.input().keymap;
+    for (std::uint16_t keycode = *first_keycode; keycode < end; ++keycode) {
+        for (const auto keysym : keymap[keycode])
+            reply.u32(keysym);
+    }
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_keyboard_control(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const auto &input = server_.input();
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(input.global_auto_repeat ? 1 : 0);
+    reply.u16(context.sequence);
+    reply.u32(5);
+    reply.u32(input.led_mask);
+    reply.u8(input.key_click_percent);
+    reply.u8(input.bell_percent);
+    reply.u16(input.bell_pitch);
+    reply.u16(input.bell_duration);
+    reply.pad(2);
+    for (const auto repeats : input.auto_repeats)
+        reply.u8(repeats);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_pointer_control(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const auto &input = server_.input();
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u16(static_cast<std::uint16_t>(
+        input.pointer_acceleration_numerator));
+    reply.u16(static_cast<std::uint16_t>(
+        input.pointer_acceleration_denominator));
+    reply.u16(static_cast<std::uint16_t>(input.pointer_threshold));
+    reply.pad(18);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_pointer_mapping(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const auto &mapping = server_.input().pointer_map;
+    const auto padded = padded_to_four(mapping.size());
+    if (!padded)
+        return malformed("pointer mapping size overflow");
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(static_cast<std::uint8_t>(mapping.size()));
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(*padded / 4));
+    reply.pad(24);
+    for (const auto button : mapping)
+        reply.u8(button);
+    reply.pad(*padded - mapping.size());
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_modifier_mapping(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const auto &mapping = server_.input().modifier_map;
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(static_cast<std::uint8_t>(keys_per_modifier));
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(mapping.size() / 4));
+    reply.pad(24);
+    for (const auto keycode : mapping)
+        reply.u8(keycode);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_input_focus(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -4203,6 +4323,16 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_lookup_color;
         table[opcode_index(CoreOpcode::QueryBestSize)] =
             &Connection::handle_query_best_size;
+        table[opcode_index(CoreOpcode::GetKeyboardMapping)] =
+            &Connection::handle_get_keyboard_mapping;
+        table[opcode_index(CoreOpcode::GetKeyboardControl)] =
+            &Connection::handle_get_keyboard_control;
+        table[opcode_index(CoreOpcode::GetPointerControl)] =
+            &Connection::handle_get_pointer_control;
+        table[opcode_index(CoreOpcode::GetPointerMapping)] =
+            &Connection::handle_get_pointer_mapping;
+        table[opcode_index(CoreOpcode::GetModifierMapping)] =
+            &Connection::handle_get_modifier_mapping;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryKeymap)] =

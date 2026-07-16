@@ -116,8 +116,11 @@ property-list rotation preserves typed payload buffers and supports signed delta
 framebuffer-compatible best-size queries clamp cursors and round short tile/stipple
 widths.  A typed input snapshot starts the pointer at the legacy-compatible screen
 center, answers pointer, empty motion-history, and key-state queries, and applies
-source-gated/clamped warps.  Typed focus state distinguishes the protocol's
-`PointerRoot` sentinel from the server-owned root XID, honors request timestamps,
+source-gated/clamped warps.  Its fixed US core map is a generated constexpr value;
+keyboard, modifier, repeat, pointer-button, and feedback-control queries expose the
+same defaults as the legacy oracle without loading XKM at runtime.  Typed focus state
+distinguishes the protocol's `PointerRoot` sentinel from the server-owned root XID,
+honors request timestamps,
 and applies parent/none/pointer-root reversion when windows become unavailable.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and

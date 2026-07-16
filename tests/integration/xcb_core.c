@@ -136,6 +136,11 @@ main(void)
     xcb_query_pointer_reply_t *pointer = NULL;
     xcb_get_motion_events_reply_t *motion = NULL;
     xcb_query_keymap_reply_t *keymap = NULL;
+    xcb_get_keyboard_mapping_reply_t *keyboard_mapping = NULL;
+    xcb_get_keyboard_control_reply_t *keyboard_control = NULL;
+    xcb_get_pointer_control_reply_t *pointer_control = NULL;
+    xcb_get_pointer_mapping_reply_t *pointer_mapping = NULL;
+    xcb_get_modifier_mapping_reply_t *modifier_mapping = NULL;
     xcb_get_input_focus_reply_t *focus = NULL;
     xcb_grab_pointer_reply_t *pointer_grab = NULL;
     xcb_grab_keyboard_reply_t *keyboard_grab = NULL;
@@ -428,6 +433,53 @@ main(void)
 
         if (memcmp(keymap->keys, clear_keymap, sizeof(clear_keymap)) != 0)
             goto cleanup;
+    }
+
+    stage = "querying fixed core input maps and controls";
+    keyboard_mapping = xcb_get_keyboard_mapping_reply(
+        connection, xcb_get_keyboard_mapping(connection, 96, 1), &error);
+    keyboard_control = xcb_get_keyboard_control_reply(
+        connection, xcb_get_keyboard_control(connection), &error);
+    pointer_control = xcb_get_pointer_control_reply(
+        connection, xcb_get_pointer_control(connection), &error);
+    pointer_mapping = xcb_get_pointer_mapping_reply(
+        connection, xcb_get_pointer_mapping(connection), &error);
+    modifier_mapping = xcb_get_modifier_mapping_reply(
+        connection, xcb_get_modifier_mapping(connection), &error);
+    {
+        static const uint8_t expected_modifiers[32] = {
+            50, 62, 0, 0, 66, 0, 0, 0, 37, 105, 0, 0, 64, 108, 204, 205,
+            77, 0, 0, 0, 203, 0, 0, 0, 133, 134, 206, 0, 92, 0, 0, 0
+        };
+        uint8_t *pointer_buttons = pointer_mapping == NULL
+            ? NULL
+            : xcb_get_pointer_mapping_map(pointer_mapping);
+
+        if (error != NULL || keyboard_mapping == NULL ||
+            keyboard_mapping->keysyms_per_keycode != 7 ||
+            xcb_get_keyboard_mapping_keysyms_length(keyboard_mapping) != 7 ||
+            xcb_get_keyboard_mapping_keysyms(keyboard_mapping)[0] !=
+                0x0000ffc9U ||
+            keyboard_control == NULL ||
+            keyboard_control->global_auto_repeat != 1 ||
+            keyboard_control->led_mask != 0 ||
+            keyboard_control->key_click_percent != 0 ||
+            keyboard_control->bell_percent != 50 ||
+            keyboard_control->bell_pitch != 400 ||
+            keyboard_control->bell_duration != 100 ||
+            pointer_control == NULL ||
+            pointer_control->acceleration_numerator != 2 ||
+            pointer_control->acceleration_denominator != 1 ||
+            pointer_control->threshold != 4 || pointer_mapping == NULL ||
+            xcb_get_pointer_mapping_map_length(pointer_mapping) != 10 ||
+            pointer_buttons == NULL || pointer_buttons[0] != 1 ||
+            pointer_buttons[9] != 10 || modifier_mapping == NULL ||
+            modifier_mapping->keycodes_per_modifier != 4 ||
+            xcb_get_modifier_mapping_keycodes_length(modifier_mapping) != 32 ||
+            memcmp(xcb_get_modifier_mapping_keycodes(modifier_mapping),
+                   expected_modifiers, sizeof(expected_modifiers)) != 0) {
+            goto cleanup;
+        }
     }
 
     stage = "warping the pointer with source constraints";
@@ -1108,6 +1160,11 @@ cleanup:
     free(keyboard_grab);
     free(pointer_grab);
     free(focus);
+    free(modifier_mapping);
+    free(pointer_mapping);
+    free(pointer_control);
+    free(keyboard_control);
+    free(keyboard_mapping);
     free(keymap);
     free(motion);
     free(pointer);

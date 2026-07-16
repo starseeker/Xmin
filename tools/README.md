@@ -15,3 +15,10 @@ python3 tools/generate-protocol-coverage.py \
 
 The generated header is a normal committed C++17 input; Python is not needed by
 configure or build.
+
+`capture-next-core-keymap.c` converts the legacy oracle's core view of the pinned
+`xmin-us.xkb` map and input defaults into the committed C++17 keymap header.  It is
+a migration-time maintenance utility, not a product build dependency.  Start the
+legacy server with its embedded map, compile the utility against libxcb, and write
+its standard output to
+`src/next/include/xmin/next/generated/core_keymap.hpp`.

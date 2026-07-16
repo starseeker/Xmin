@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "e060b20f0bbd86c6cc244af41235d52590fd287e1e9f096fd5e454a02db18842",
+    "policy_sha256": "e13c13b71fd8f9944a717ce8a1a96d6a2c6d9f88142329693629deeb0dab5026",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -839,7 +839,7 @@
       "name": "GetKeyboardMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 102,
@@ -853,7 +853,7 @@
       "name": "GetKeyboardControl",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 104,
@@ -874,7 +874,7 @@
       "name": "GetPointerControl",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 107,
@@ -951,7 +951,7 @@
       "name": "GetPointerMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 118,
@@ -965,7 +965,7 @@
       "name": "GetModifierMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 120,

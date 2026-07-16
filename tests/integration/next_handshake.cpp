@@ -1467,10 +1467,66 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
-    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && reply[1] == 0 &&
-        get16(reply, 2, little) == 120 &&
-        get32(reply, 8, little) == pointer_root;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 120 ||
+        get32(reply, 8, little) != pointer_root) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 101; // GetKeyboardMapping(F12)
+    put16(request, 2, 2, little);
+    request[4] = 96;
+    request[5] = 1;
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 60 || reply[0] != 1 || reply[1] != 7 ||
+        get16(reply, 2, little) != 121 || get32(reply, 4, little) != 7 ||
+        get32(reply, 32, little) != 0x0000ffc9U) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = 103; // GetKeyboardControl
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 52 || reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 122 || get32(reply, 8, little) != 0 ||
+        reply[12] != 0 || reply[13] != 50 ||
+        get16(reply, 14, little) != 400 ||
+        get16(reply, 16, little) != 100) {
+        return false;
+    }
+
+    request[0] = 106; // GetPointerControl
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 123 ||
+        get16(reply, 8, little) != 2 ||
+        get16(reply, 10, little) != 1 ||
+        get16(reply, 12, little) != 4) {
+        return false;
+    }
+
+    request[0] = 117; // GetPointerMapping
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 44 || reply[0] != 1 || reply[1] != 10 ||
+        get16(reply, 2, little) != 124 || reply[32] != 1 ||
+        reply[41] != 10) {
+        return false;
+    }
+
+    request[0] = 119; // GetModifierMapping
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 64 || reply[0] != 1 || reply[1] != 4 ||
+        get16(reply, 2, little) != 125 || reply[32] != 50 ||
+        reply[33] != 62 || reply[63] != 0) {
+        return false;
+    }
+    return true;
 }
 
 bool

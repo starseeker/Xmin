@@ -59,6 +59,7 @@ translation, mutable attributes and GCs, background clearing, and property mutat
 partial retrieval, listing, deletion, signed rotation, framebuffer best-size queries,
 centered pointer/window coordinates, source-gated/clamped pointer warps, empty motion
 history, key-state snapshots, and timestamped focus/reversion state,
+fixed core keysyms/modifiers/repeat/button mappings and feedback defaults,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

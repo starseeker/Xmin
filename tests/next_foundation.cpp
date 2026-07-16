@@ -153,6 +153,14 @@ test_shared_server_state()
         !expect(server.input().pressed_keys ==
                     std::array<std::uint8_t, 32>{},
                 "input snapshot initialized with pressed keys") ||
+        !expect(server.input().keymap[96][0] == 0x0000ffc9U &&
+                    server.input().modifier_map ==
+                        xmin::next::core_modifier_map &&
+                    server.input().auto_repeats ==
+                        xmin::next::default_auto_repeats &&
+                    server.input().pointer_map ==
+                        xmin::next::default_pointer_map,
+                "generated core input defaults were not installed") ||
         !expect(server.valid_client_resource(first_owner, first_owner),
                 "valid first client XID was rejected") ||
         !expect(!server.valid_client_resource(second_owner, first_owner),

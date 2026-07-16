@@ -3,6 +3,7 @@
 
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/client_event.hpp"
+#include "xmin/next/generated/core_keymap.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/surface.hpp"
 
@@ -31,8 +32,6 @@ constexpr std::size_t maximum_pending_events_per_client = 256;
 constexpr std::size_t maximum_pending_events = 4096;
 constexpr std::size_t maximum_passive_grabs_per_client = 256;
 constexpr std::size_t maximum_passive_grabs = 4096;
-constexpr std::uint8_t minimum_keycode = 8;
-constexpr std::uint8_t maximum_keycode = 255;
 constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 
@@ -165,15 +164,31 @@ struct PassiveGrab {
     std::uint16_t modifiers) noexcept;
 
 struct InputState {
+    std::array<std::array<std::uint32_t, keysyms_per_keycode>, 256> keymap =
+        core_keymap;
+    std::array<std::uint8_t, 32> modifier_map = core_modifier_map;
+    std::array<std::uint8_t, 32> auto_repeats = default_auto_repeats;
+    std::array<std::uint8_t, 10> pointer_map = default_pointer_map;
     std::int32_t pointer_x = 0;
     std::int32_t pointer_y = 0;
     std::uint16_t modifier_button_mask = 0;
+    std::uint32_t led_mask = 0;
+    std::int16_t pointer_acceleration_numerator =
+        default_pointer_acceleration_numerator;
+    std::int16_t pointer_acceleration_denominator =
+        default_pointer_acceleration_denominator;
+    std::int16_t pointer_threshold = default_pointer_threshold;
+    std::uint16_t bell_pitch = default_bell_pitch;
+    std::uint16_t bell_duration = default_bell_duration;
+    std::uint8_t key_click_percent = default_key_click_percent;
+    std::uint8_t bell_percent = default_bell_percent;
     std::array<std::uint8_t, 32> pressed_keys{};
     FocusState focus;
     std::optional<ActiveGrab> pointer_grab;
     std::optional<ActiveGrab> keyboard_grab;
     std::uint32_t pointer_grab_time = 1;
     std::uint32_t keyboard_grab_time = 1;
+    bool global_auto_repeat = default_global_auto_repeat;
 };
 
 enum class SelectionUpdate {
