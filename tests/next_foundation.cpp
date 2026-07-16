@@ -174,6 +174,38 @@ test_shared_server_state()
         return false;
     }
 
+    if (!expect(server.register_client(first_owner) &&
+                    server.register_client(second_owner),
+                "client event registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(first_owner, 17);
+    server.note_client_sequence(second_owner, 23);
+    if (!expect(server.broadcast_mapping_notify(1, 96, 1),
+                "mapping notification broadcast failed")) {
+        return false;
+    }
+    const auto *first_mapping = server.next_event(first_owner);
+    const auto *second_mapping = server.next_event(second_owner);
+    const auto *first_mapping_value = first_mapping == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::MappingNotifyEvent>(first_mapping);
+    const auto *second_mapping_value = second_mapping == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::MappingNotifyEvent>(second_mapping);
+    if (!expect(first_mapping_value != nullptr &&
+                    first_mapping_value->sequence == 17 &&
+                    first_mapping_value->request == 1 &&
+                    first_mapping_value->first_keycode == 96 &&
+                    first_mapping_value->count == 1 &&
+                    second_mapping_value != nullptr &&
+                    second_mapping_value->sequence == 23,
+                "mapping broadcast lost client-specific event state")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    server.pop_event(second_owner);
+
     xmin::next::WindowRecord parent;
     parent.id = first_owner;
     parent.parent = xmin::next::root_window_id;
@@ -250,7 +282,8 @@ test_shared_server_state()
         ? nullptr
         : std::get_if<xmin::next::ClientMessageEvent>(queued);
     if (!expect(queued_message != nullptr &&
-                    queued_message->data[0] == 0x584d494eU,
+                    queued_message->data[0] == 0x584d494eU &&
+                    queued_message->sequence == 17,
                 "queued client event lost semantic data")) {
         return false;
     }

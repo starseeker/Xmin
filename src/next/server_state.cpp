@@ -582,6 +582,45 @@ ServerState::selection_owner(AtomId selection) const
 }
 
 bool
+ServerState::register_client(std::uint32_t client)
+{
+    if (client == 0)
+        return false;
+    const auto found = std::find_if(
+        clients_.begin(), clients_.end(),
+        [client](const auto &entry) { return entry.first == client; });
+    if (found != clients_.end())
+        return true;
+    try {
+        clients_.emplace_back(client, 0);
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+void
+ServerState::note_client_sequence(std::uint32_t client,
+                                  std::uint16_t sequence) noexcept
+{
+    const auto found = std::find_if(
+        clients_.begin(), clients_.end(),
+        [client](const auto &entry) { return entry.first == client; });
+    if (found != clients_.end())
+        found->second = sequence;
+}
+
+std::uint16_t
+ServerState::client_sequence(std::uint32_t client) const noexcept
+{
+    const auto found = std::find_if(
+        clients_.begin(), clients_.end(),
+        [client](const auto &entry) { return entry.first == client; });
+    return found == clients_.end() ? 0 : found->second;
+}
+
+bool
 ServerState::can_queue_event(std::uint32_t client) const
 {
     if (client == 0 || pending_events_ >= maximum_pending_events)
@@ -596,6 +635,9 @@ ServerState::queue_event(std::uint32_t client, ClientEvent event)
 {
     if (!can_queue_event(client))
         return false;
+    const std::uint16_t sequence = client_sequence(client);
+    std::visit(
+        [sequence](auto &value) { value.sequence = sequence; }, event);
     try {
         event_queues_[client].push_back(std::move(event));
     }
@@ -603,6 +645,49 @@ ServerState::queue_event(std::uint32_t client, ClientEvent event)
         return false;
     }
     ++pending_events_;
+    return true;
+}
+
+bool
+ServerState::broadcast_mapping_notify(std::uint8_t request,
+                                      std::uint8_t first_keycode,
+                                      std::uint8_t count)
+{
+    if (clients_.size() > maximum_pending_events - pending_events_)
+        return false;
+    for (const auto &client : clients_) {
+        if (!can_queue_event(client.first))
+            return false;
+    }
+
+    std::vector<std::uint32_t> queued;
+    try {
+        queued.reserve(clients_.size());
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    const MappingNotifyEvent event{request, first_keycode, count};
+    for (const auto &client : clients_) {
+        if (queue_event(client.first, event)) {
+            queued.push_back(client.first);
+            continue;
+        }
+
+        const auto failed = event_queues_.find(client.first);
+        if (failed != event_queues_.end() && failed->second.empty())
+            event_queues_.erase(failed);
+        for (const auto recipient : queued) {
+            const auto found = event_queues_.find(recipient);
+            if (found == event_queues_.end() || found->second.empty())
+                continue;
+            found->second.pop_back();
+            --pending_events_;
+            if (found->second.empty())
+                event_queues_.erase(found);
+        }
+        return false;
+    }
     return true;
 }
 
@@ -932,6 +1017,11 @@ ServerState::clear_selections_for_window(std::uint32_t window_id)
 void
 ServerState::disconnect_client(std::uint32_t owner)
 {
+    clients_.erase(
+        std::remove_if(
+            clients_.begin(), clients_.end(),
+            [owner](const auto &entry) { return entry.first == owner; }),
+        clients_.end());
     if (server_grab_owner_ == owner)
         server_grab_owner_ = 0;
     if (input_.pointer_grab && input_.pointer_grab->owner == owner)

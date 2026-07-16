@@ -657,6 +657,33 @@ main(void)
             set_modifier_mapping->status != XCB_MAPPING_STATUS_SUCCESS)
             goto cleanup;
 
+        {
+            xcb_generic_event_t *event;
+            unsigned int keyboard_notifications = 0;
+            unsigned int pointer_notifications = 0;
+            unsigned int modifier_notifications = 0;
+
+            while ((event = xcb_poll_for_event(connection)) != NULL) {
+                if ((event->response_type & 0x7fU) == XCB_MAPPING_NOTIFY) {
+                    xcb_mapping_notify_event_t *mapping =
+                        (xcb_mapping_notify_event_t *) event;
+                    if (mapping->request == XCB_MAPPING_KEYBOARD &&
+                        mapping->first_keycode == 96 && mapping->count == 1)
+                        ++keyboard_notifications;
+                    else if (mapping->request == XCB_MAPPING_POINTER)
+                        ++pointer_notifications;
+                    else if (mapping->request == XCB_MAPPING_MODIFIER)
+                        ++modifier_notifications;
+                }
+                free(event);
+            }
+            if (keyboard_notifications != 3 ||
+                pointer_notifications != 2 ||
+                modifier_notifications != 2) {
+                goto cleanup;
+            }
+        }
+
         keyboard_values[0] = UINT32_MAX;
         keyboard_values[1] = UINT32_MAX;
         repeat_values[1] = XCB_AUTO_REPEAT_MODE_DEFAULT;

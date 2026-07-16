@@ -1613,8 +1613,11 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[5] = 2;
     put32(request, 8, 0x00000078U, little);
     put32(request, 12, 0x00000058U, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 34 || get16(reply, 2, little) != 134 ||
+        reply[4] != 1 || reply[5] != 96 || reply[6] != 1) {
         return false;
+    }
 
     request.assign(8, 0);
     request[0] = 101; // GetKeyboardMapping observes replicated core row
@@ -1640,8 +1643,11 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[5] = 7;
     put32(request, 8, 0x0000ffc9U, little);
     put32(request, 16, 0x0000ffc9U, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 34 || get16(reply, 2, little) != 136 ||
+        reply[4] != 1 || reply[5] != 96 || reply[6] != 1) {
         return false;
+    }
 
     request.assign(8, 0);
     request[0] = 101; // synchronize restored keymap

@@ -61,7 +61,8 @@ centered pointer/window coordinates, source-gated/clamped pointer warps, empty m
 history, key-state snapshots, and timestamped focus/reversion state,
 generated core keysyms plus mutable keysym/modifier/repeat/button mappings and feedback
 controls, including both-endian dynamic-width keymap updates, atomic invalid-update
-rejection, mapping-busy replies, and silent bell validation,
+rejection, mapping-busy replies, per-client `MappingNotify` sequencing, and silent bell
+validation,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color

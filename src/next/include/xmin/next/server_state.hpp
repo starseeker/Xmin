@@ -294,6 +294,12 @@ public:
     [[nodiscard]] EventDelivery deliver_client_message(
         std::uint32_t destination, std::uint32_t event_mask, bool propagate,
         const ClientMessageEvent &event);
+    [[nodiscard]] bool register_client(std::uint32_t client);
+    void note_client_sequence(std::uint32_t client,
+                              std::uint16_t sequence) noexcept;
+    [[nodiscard]] bool broadcast_mapping_notify(
+        std::uint8_t request, std::uint8_t first_keycode,
+        std::uint8_t count);
     [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
     [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
     void pop_event(std::uint32_t client);
@@ -349,6 +355,7 @@ private:
         graphics_contexts_;
     std::unordered_map<AtomId, SelectionRecord> selections_;
     std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
+    std::vector<std::pair<std::uint32_t, std::uint16_t>> clients_;
     std::uint16_t width_;
     std::uint16_t height_;
     std::optional<Surface> composited_root_;
@@ -364,6 +371,8 @@ private:
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
+    [[nodiscard]] std::uint16_t client_sequence(
+        std::uint32_t client) const noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;
     void composite_scene();

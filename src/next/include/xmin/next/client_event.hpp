@@ -11,6 +11,7 @@ struct SelectionClearEvent {
     std::uint32_t time = 0;
     std::uint32_t window = 0;
     std::uint32_t selection = 0;
+    std::uint16_t sequence = 0;
 };
 
 struct ClientMessageEvent {
@@ -18,9 +19,18 @@ struct ClientMessageEvent {
     std::uint32_t window = 0;
     std::uint32_t type = 0;
     std::array<std::uint32_t, 20> data{};
+    std::uint16_t sequence = 0;
 };
 
-using ClientEvent = std::variant<SelectionClearEvent, ClientMessageEvent>;
+struct MappingNotifyEvent {
+    std::uint8_t request = 0;
+    std::uint8_t first_keycode = 0;
+    std::uint8_t count = 0;
+    std::uint16_t sequence = 0;
+};
+
+using ClientEvent = std::variant<
+    SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent>;
 
 } // namespace xmin::next
 

@@ -352,7 +352,7 @@ Connection::encode_event(const ClientEvent &event) const
     if (const auto *clear = std::get_if<SelectionClearEvent>(&event)) {
         writer.u8(29); // SelectionClear
         writer.u8(0);
-        writer.u16(sequence_);
+        writer.u16(clear->sequence);
         writer.u32(clear->time);
         writer.u32(clear->window);
         writer.u32(clear->selection);
@@ -360,21 +360,32 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
-    const auto &message = std::get<ClientMessageEvent>(event);
-    writer.u8(33 | 0x80U); // synthetic ClientMessage
-    writer.u8(message.format);
-    writer.u16(sequence_);
-    writer.u32(message.window);
-    writer.u32(message.type);
-    const std::size_t count = 160U / message.format;
-    for (std::size_t index = 0; index < count; ++index) {
-        if (message.format == 8)
-            writer.u8(static_cast<std::uint8_t>(message.data[index]));
-        else if (message.format == 16)
-            writer.u16(static_cast<std::uint16_t>(message.data[index]));
-        else
-            writer.u32(message.data[index]);
+    if (const auto *message = std::get_if<ClientMessageEvent>(&event)) {
+        writer.u8(33 | 0x80U); // synthetic ClientMessage
+        writer.u8(message->format);
+        writer.u16(message->sequence);
+        writer.u32(message->window);
+        writer.u32(message->type);
+        const std::size_t count = 160U / message->format;
+        for (std::size_t index = 0; index < count; ++index) {
+            if (message->format == 8)
+                writer.u8(static_cast<std::uint8_t>(message->data[index]));
+            else if (message->format == 16)
+                writer.u16(static_cast<std::uint16_t>(message->data[index]));
+            else
+                writer.u32(message->data[index]);
+        }
+        return writer.data();
     }
+
+    const auto &mapping = std::get<MappingNotifyEvent>(event);
+    writer.u8(34); // MappingNotify
+    writer.u8(0);
+    writer.u16(mapping.sequence);
+    writer.u8(mapping.request);
+    writer.u8(mapping.first_keycode);
+    writer.u8(mapping.count);
+    writer.pad(25);
     return writer.data();
 }
 
@@ -589,6 +600,10 @@ Connection::process_setup_authentication()
         return Result<bool>::success(true);
     }
 
+    if (!server_.register_client(config_.resource_base)) {
+        return Result<bool>::failure(
+            ErrorCode::busy, "unable to register authenticated client");
+    }
     auto sent = send_setup_success(*order_);
     if (!sent)
         return Result<bool>::failure(sent.error().code, sent.error().message);
@@ -4060,6 +4075,11 @@ Connection::handle_change_keyboard_mapping(const RequestContext &context)
             }
         }
 
+        if (!server_.broadcast_mapping_notify(
+                1, *first_keycode, context.data)) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        }
         auto &updated = server_.input();
         updated.keymap_width = map_width;
         updated.keymap_row_widths = row_widths;
@@ -4069,7 +4089,7 @@ Connection::handle_change_keyboard_mapping(const RequestContext &context)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     }
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -4416,8 +4436,14 @@ Connection::handle_set_pointer_mapping(const RequestContext &context)
         }
     }
     if (status == 0) {
+        if (!server_.broadcast_mapping_notify(2, 0, 0))
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
         std::copy_n(context.request.begin() + 4, input.pointer_map.size(),
                     input.pointer_map.begin());
+        auto drained = drain_pending_events();
+        if (!drained)
+            return drained;
     }
 
     WireWriter reply(context.order);
@@ -4488,11 +4514,13 @@ Connection::handle_set_modifier_mapping(const RequestContext &context)
             }
         }
     }
+    std::vector<std::uint8_t> canonical;
+    std::size_t canonical_width = 0;
     if (status == 0) {
         try {
-            const std::size_t canonical_width = *std::max_element(
+            canonical_width = *std::max_element(
                 group_sizes.begin(), group_sizes.end());
-            std::vector<std::uint8_t> canonical(canonical_width * 8, 0);
+            canonical.assign(canonical_width * 8, 0);
             std::array<std::size_t, 8> offsets{};
             for (std::size_t keycode = minimum_keycode;
                  keycode <= maximum_keycode; ++keycode) {
@@ -4502,15 +4530,23 @@ Connection::handle_set_modifier_mapping(const RequestContext &context)
                 canonical[group * canonical_width + offsets[group]++] =
                     static_cast<std::uint8_t>(keycode);
             }
-            auto &updated = server_.input();
-            updated.modifier_map = std::move(canonical);
-            updated.modifier_keys_per_group =
-                static_cast<std::uint8_t>(canonical_width);
         }
         catch (const std::bad_alloc &) {
             return send_error(context.order, bad_alloc, context.opcode,
                               context.sequence);
         }
+    }
+    if (status == 0) {
+        if (!server_.broadcast_mapping_notify(0, 0, 0))
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        auto &updated = server_.input();
+        updated.modifier_map = std::move(canonical);
+        updated.modifier_keys_per_group =
+            static_cast<std::uint8_t>(canonical_width);
+        auto drained = drain_pending_events();
+        if (!drained)
+            return drained;
     }
 
     WireWriter reply(context.order);
@@ -4838,6 +4874,7 @@ Connection::process_request()
                                      "truncated request header");
 
     ++sequence_;
+    server_.note_client_sequence(config_.resource_base, sequence_);
     if (*length_units == 0) {
         consume_input(header_size);
         auto sent = send_error(*order_, bad_length, *opcode, sequence_);
@@ -4861,6 +4898,7 @@ Connection::process_request()
     }
     if (input_.size() < *request_size) {
         --sequence_;
+        server_.note_client_sequence(config_.resource_base, sequence_);
         return Result<bool>::success(false);
     }
 
