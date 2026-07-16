@@ -16,7 +16,7 @@ if(TARGET Xmin::next_server)
 
   add_test(NAME xmin.next-help COMMAND Xmin::next_server --help)
   set_tests_properties(xmin.next-help PROPERTIES
-    PASS_REGULAR_EXPRESSION "usage: Xmin-next --client-fd"
+    PASS_REGULAR_EXPRESSION "usage: Xmin-next .*DISPLAY"
   )
 
   add_executable(xmin_next_foundation next_foundation.cpp)
@@ -24,6 +24,15 @@ if(TARGET Xmin::next_server)
   target_link_libraries(xmin_next_foundation PRIVATE Xmin::next_core)
   xmin_enable_warnings(xmin_next_foundation)
   add_test(NAME xmin.next-foundation COMMAND xmin_next_foundation)
+
+  add_executable(xmin_next_platform next_platform.cpp)
+  target_compile_features(xmin_next_platform PRIVATE cxx_std_17)
+  target_compile_definitions(xmin_next_platform PRIVATE
+    _POSIX_C_SOURCE=200809L
+  )
+  target_link_libraries(xmin_next_platform PRIVATE Xmin::next_core)
+  xmin_enable_warnings(xmin_next_platform)
+  add_test(NAME xmin.next-platform COMMAND xmin_next_platform)
 
   add_executable(xmin_next_handshake integration/next_handshake.cpp)
   target_compile_features(xmin_next_handshake PRIVATE cxx_std_17)
@@ -35,6 +44,17 @@ if(TARGET Xmin::next_server)
     COMMAND xmin_next_handshake $<TARGET_FILE:xmin_next>
   )
   set_tests_properties(xmin.next-handshake PROPERTIES TIMEOUT 20)
+
+  add_executable(xmin_next_standalone integration/next_standalone.cpp)
+  target_compile_features(xmin_next_standalone PRIVATE cxx_std_17)
+  target_compile_definitions(xmin_next_standalone PRIVATE
+    _POSIX_C_SOURCE=200809L
+  )
+  xmin_enable_warnings(xmin_next_standalone)
+  add_test(NAME xmin.next-standalone
+    COMMAND xmin_next_standalone $<TARGET_FILE:xmin_next>
+  )
+  set_tests_properties(xmin.next-standalone PROPERTIES TIMEOUT 30)
 endif()
 
 add_executable(xmin_server_handshake integration/server_handshake.c)

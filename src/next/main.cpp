@@ -1,6 +1,9 @@
 #include "xmin/config.h"
 #include "xmin/next/connection.hpp"
+#include "xmin/next/display_socket.hpp"
+#include "xmin/next/server.hpp"
 #include "xmin/next/unique_fd.hpp"
+#include "xmin/next/xauthority.hpp"
 
 #include <cerrno>
 #include <charconv>
@@ -8,9 +11,12 @@
 #include <csignal>
 #include <cstdint>
 #include <cstring>
+#include <exception>
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <new>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -20,6 +26,7 @@
 
 namespace {
 
+using xmin::next::DisplaySocket;
 using xmin::next::ServerConfig;
 using xmin::next::UniqueFd;
 
@@ -27,8 +34,11 @@ void
 print_help()
 {
     std::cout
-        << "usage: Xmin-next --client-fd FD (--cookie-hex HEX | --no-auth) "
-           "[--screen WIDTHxHEIGHT]\n"
+        << "usage: Xmin-next [DISPLAY] [--display-fd FD] "
+           "(--auth FILE | --cookie-hex HEX | --no-auth)\n"
+        << "                 [--screen WIDTHxHEIGHT] [--max-clients N]\n"
+        << "       Xmin-next --client-fd FD "
+           "(--cookie-hex HEX | --no-auth) [--screen WIDTHxHEIGHT]\n"
         << "       Xmin-next --help | --version\n";
 }
 
@@ -40,8 +50,10 @@ parse_unsigned(std::string_view text, T &value)
     T parsed = 0;
     const auto result = std::from_chars(
         text.data(), text.data() + text.size(), parsed, 10);
-    if (result.ec != std::errc{} || result.ptr != text.data() + text.size())
+    if (text.empty() || result.ec != std::errc{} ||
+        result.ptr != text.data() + text.size()) {
         return false;
+    }
     value = parsed;
     return true;
 }
@@ -63,6 +75,14 @@ parse_screen(std::string_view text, ServerConfig &config)
     config.width = static_cast<std::uint16_t>(width);
     config.height = static_cast<std::uint16_t>(height);
     return true;
+}
+
+bool
+parse_display(std::string_view text, unsigned &display)
+{
+    if (!text.empty() && text.front() == ':')
+        text.remove_prefix(1);
+    return parse_unsigned(text, display) && display <= 65535;
 }
 
 int
@@ -102,14 +122,30 @@ fail(std::string_view message)
     return 2;
 }
 
-} // namespace
+bool
+valid_descriptor(int descriptor)
+{
+    return descriptor >= 0 && ::fcntl(descriptor, F_GETFD) >= 0;
+}
+
+enum class Authentication {
+    unspecified,
+    cookie,
+    authority_file,
+    disabled,
+};
 
 int
-main(int argc, char **argv)
+run(int argc, char **argv)
 {
     int client_fd = -1;
+    int display_fd = -1;
+    std::optional<unsigned> requested_display;
+    std::string authority_path;
+    std::string runtime_root = "/tmp";
+    std::size_t maximum_clients = 64;
     ServerConfig config;
-    bool authentication_selected = false;
+    Authentication authentication = Authentication::unspecified;
 
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
@@ -121,32 +157,47 @@ main(int argc, char **argv)
             std::cout << "Xmin-next " << XMIN_VERSION << '\n';
             return 0;
         }
-        if (argument == "--client-fd") {
+        if (argument == "--client-fd" || argument == "--display-fd") {
             if (++index >= argc)
-                return fail("--client-fd requires a value");
+                return fail(std::string(argument) + " requires a value");
             unsigned parsed = 0;
             if (!parse_unsigned(std::string_view(argv[index]), parsed) ||
                 parsed > static_cast<unsigned>(INT_MAX)) {
-                return fail("invalid client file descriptor");
+                return fail(std::string("invalid descriptor for ") +
+                            std::string(argument));
             }
-            client_fd = static_cast<int>(parsed);
+            if (argument == "--client-fd")
+                client_fd = static_cast<int>(parsed);
+            else
+                display_fd = static_cast<int>(parsed);
             continue;
         }
         if (argument == "--cookie-hex") {
             if (++index >= argc)
                 return fail("--cookie-hex requires a value");
-            if (authentication_selected ||
+            if (authentication != Authentication::unspecified ||
                 !parse_cookie(argv[index], config.cookie)) {
                 return fail("invalid or conflicting cookie");
             }
-            authentication_selected = true;
+            authentication = Authentication::cookie;
+            continue;
+        }
+        if (argument == "--auth") {
+            if (++index >= argc)
+                return fail("--auth requires a file");
+            if (authentication != Authentication::unspecified ||
+                std::string_view(argv[index]).empty()) {
+                return fail("invalid or conflicting authority file");
+            }
+            authority_path = argv[index];
+            authentication = Authentication::authority_file;
             continue;
         }
         if (argument == "--no-auth") {
-            if (authentication_selected)
+            if (authentication != Authentication::unspecified)
                 return fail("authentication modes are mutually exclusive");
             config.allow_unauthenticated = true;
-            authentication_selected = true;
+            authentication = Authentication::disabled;
             continue;
         }
         if (argument == "--screen") {
@@ -154,22 +205,102 @@ main(int argc, char **argv)
                 return fail("--screen requires WIDTHxHEIGHT");
             continue;
         }
+        if (argument == "--max-clients") {
+            if (++index >= argc)
+                return fail("--max-clients requires a value");
+            unsigned parsed = 0;
+            if (!parse_unsigned(std::string_view(argv[index]), parsed) ||
+                parsed == 0 || parsed > 127) {
+                return fail("--max-clients must be between 1 and 127");
+            }
+            maximum_clients = parsed;
+            continue;
+        }
+        if (argument == "--runtime-root") {
+            if (++index >= argc || std::string_view(argv[index]).empty())
+                return fail("--runtime-root requires a directory");
+            runtime_root = argv[index];
+            continue;
+        }
+        if (!argument.empty() && argument.front() != '-') {
+            unsigned display = 0;
+            if (requested_display || !parse_display(argument, display))
+                return fail("invalid or duplicate DISPLAY");
+            requested_display = display;
+            continue;
+        }
         return fail(std::string("unknown option: ") + std::string(argument));
     }
 
-    if (client_fd < 0)
-        return fail("--client-fd is required in this migration milestone");
-    if (!authentication_selected)
-        return fail("select --cookie-hex or explicit --no-auth");
-    if (::fcntl(client_fd, F_GETFD) < 0)
-        return fail(std::string("invalid client fd: ") + std::strerror(errno));
+    if (authentication == Authentication::unspecified)
+        return fail("select --auth, --cookie-hex, or explicit --no-auth");
+    if (client_fd >= 0) {
+        if (display_fd >= 0 || requested_display ||
+            authentication == Authentication::authority_file) {
+            return fail("--client-fd cannot be combined with display options "
+                        "or --auth");
+        }
+        if (!valid_descriptor(client_fd)) {
+            return fail(
+                std::string("invalid client fd: ") + std::strerror(errno));
+        }
+        xmin::next::Connection connection(
+            UniqueFd(client_fd), std::move(config));
+        const auto result = connection.serve();
+        if (!result) {
+            std::cerr << "Xmin-next: " << result.error().message << '\n';
+            return 1;
+        }
+        return 0;
+    }
 
-    std::signal(SIGPIPE, SIG_IGN);
-    xmin::next::Connection connection(UniqueFd(client_fd), std::move(config));
-    const auto result = connection.serve();
+    if (display_fd >= 0 && !valid_descriptor(display_fd)) {
+        return fail(
+            std::string("invalid display fd: ") + std::strerror(errno));
+    }
+    auto listener = DisplaySocket::open(requested_display, runtime_root);
+    if (!listener) {
+        std::cerr << "Xmin-next: " << listener.error().message << '\n';
+        return 1;
+    }
+    if (authentication == Authentication::authority_file) {
+        auto cookie = xmin::next::load_xauthority_cookie(
+            authority_path, listener.value().display());
+        if (!cookie) {
+            std::cerr << "Xmin-next: " << cookie.error().message << '\n';
+            return 1;
+        }
+        config.cookie = std::move(cookie.value());
+    }
+
+    std::cerr << "Xmin-next: listening on :" << listener.value().display()
+              << " at " << listener.value().socket_path() << '\n';
+    xmin::next::Server server(
+        std::move(listener.value()), std::move(config), maximum_clients,
+        UniqueFd(display_fd));
+    const auto result = server.run();
     if (!result) {
         std::cerr << "Xmin-next: " << result.error().message << '\n';
         return 1;
     }
     return 0;
+}
+
+} // namespace
+
+int
+main(int argc, char **argv)
+{
+    std::signal(SIGPIPE, SIG_IGN);
+    try {
+        return run(argc, argv);
+    }
+    catch (const std::bad_alloc &) {
+        std::cerr << "Xmin-next: out of memory\n";
+        return 1;
+    }
+    catch (const std::exception &error) {
+        std::cerr << "Xmin-next: fatal error: " << error.what() << '\n';
+        return 1;
+    }
 }

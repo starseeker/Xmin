@@ -101,6 +101,7 @@ cmake --preset dev
 cmake --build --preset dev
 ctest --preset dev
 ./build/dev/src/server/Xmin --version
+./build/dev/src/next/Xmin-next --version
 ```
 
 Without presets:
@@ -180,6 +181,19 @@ To start an isolated test display explicitly:
 retain access control and use `-auth` with an MIT-MAGIC-COOKIE-1 authority file. TCP
 transport is absent unless explicitly enabled at configure time.
 
+The in-progress C++17 server can independently reserve and serve a Unix display with:
+
+```sh
+./build/dev/src/next/Xmin-next :99 --auth ./authority \
+  --screen 1280x1024 --max-clients 64
+```
+
+Omit `:99` to allocate the first free display. `--display-fd FD` writes the selected
+display number followed by a newline once the listener, signal pipe, and authentication
+state are ready. `--no-auth` is available only as an explicit choice for isolated test
+environments. `--runtime-root DIR` redirects `.X11-unix` and lock files into a private
+directory for hermetic tests; normal clients expect the default `/tmp` layout.
+
 ## Build controls
 
 | Option | Default | Purpose |
@@ -214,6 +228,7 @@ src/
   client/glx/           separately shipped GL/GLX/OSMesa client bridge
   launcher/             integrated authenticated process launcher
   control/              self-contained window/input/capture client (`xminctl`)
+  next/                 independent C++17 server, wire core, and POSIX platform layer
   support/              Xmin-owned adapters, launcher, and portability code
   server/               thin executable wrapper around the DIX server lifecycle
 data/fonts/             generated embedded core fonts

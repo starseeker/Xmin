@@ -2,11 +2,15 @@
 
 #include "xmin/next/checked.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstring>
+#include <fcntl.h>
 #include <limits>
+#include <poll.h>
 #include <string_view>
 #include <unistd.h>
+#include <utility>
 
 namespace xmin::next {
 namespace {
@@ -17,6 +21,8 @@ constexpr std::uint32_t root_window = 1;
 constexpr std::uint32_t default_colormap = 2;
 constexpr std::uint32_t root_visual = 3;
 constexpr std::size_t maximum_request_bytes = 65535U * 4U;
+constexpr std::size_t maximum_buffered_input = maximum_request_bytes + 16384U;
+constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
 
 enum : std::uint8_t {
@@ -55,6 +61,14 @@ malformed(std::string message)
     return Result<void>::failure(ErrorCode::malformed, std::move(message));
 }
 
+Result<void>
+io_failure(std::string_view operation)
+{
+    return Result<void>::failure(
+        ErrorCode::io,
+        std::string(operation) + ": " + std::strerror(errno));
+}
+
 } // namespace
 
 Connection::Connection(UniqueFd socket, ServerConfig config)
@@ -65,46 +79,82 @@ Connection::Connection(UniqueFd socket, ServerConfig config)
         resources_.insert(default_colormap, ResourceKind::colormap, 0));
 }
 
-Result<bool>
-Connection::read_exact(std::uint8_t *destination, std::size_t size)
+Result<void>
+Connection::prepare()
 {
-    std::size_t offset = 0;
-    while (offset < size) {
-        const auto count = ::read(socket_.get(), destination + offset, size - offset);
-        if (count == 0) {
-            if (offset == 0)
-                return Result<bool>::success(false);
-            return Result<bool>::failure(
-                ErrorCode::unexpected_eof, "connection closed within a packet");
-        }
-        if (count < 0) {
-            if (errno == EINTR)
-                continue;
-            return Result<bool>::failure(
-                ErrorCode::io, std::string("read: ") + std::strerror(errno));
-        }
-        offset += static_cast<std::size_t>(count);
-    }
-    return Result<bool>::success(true);
+    if (prepared_)
+        return Result<void>::success();
+    if (!socket_)
+        return Result<void>::failure(ErrorCode::invalid_argument,
+                                     "invalid client socket");
+
+    const int status_flags = ::fcntl(socket_.get(), F_GETFL);
+    if (status_flags < 0)
+        return io_failure("fcntl(F_GETFL)");
+    if (::fcntl(socket_.get(), F_SETFL, status_flags | O_NONBLOCK) < 0)
+        return io_failure("fcntl(F_SETFL)");
+
+    const int descriptor_flags = ::fcntl(socket_.get(), F_GETFD);
+    if (descriptor_flags < 0)
+        return io_failure("fcntl(F_GETFD)");
+    if (::fcntl(socket_.get(), F_SETFD, descriptor_flags | FD_CLOEXEC) < 0)
+        return io_failure("fcntl(F_SETFD)");
+
+    prepared_ = true;
+    return Result<void>::success();
+}
+
+short
+Connection::poll_events() const noexcept
+{
+    if (finished_)
+        return 0;
+    short events = 0;
+    if (!close_after_output_)
+        events |= POLLIN;
+    if (output_offset_ < output_.size())
+        events |= POLLOUT;
+    return events;
+}
+
+void
+Connection::consume_input(std::size_t size)
+{
+    input_.erase(
+        input_.begin(), input_.begin() + static_cast<std::ptrdiff_t>(size));
+}
+
+void
+Connection::close_after_output() noexcept
+{
+    close_after_output_ = true;
+    if (output_offset_ == output_.size())
+        finished_ = true;
 }
 
 Result<void>
-Connection::write_all(const std::vector<std::uint8_t> &bytes)
+Connection::queue(const std::vector<std::uint8_t> &bytes)
 {
-    std::size_t offset = 0;
-    while (offset < bytes.size()) {
-        const auto count =
-            ::write(socket_.get(), bytes.data() + offset, bytes.size() - offset);
-        if (count < 0) {
-            if (errno == EINTR)
-                continue;
-            return Result<void>::failure(
-                ErrorCode::io, std::string("write: ") + std::strerror(errno));
-        }
-        if (count == 0)
-            return Result<void>::failure(ErrorCode::io, "write made no progress");
-        offset += static_cast<std::size_t>(count);
+    if (bytes.empty())
+        return Result<void>::success();
+
+    if (output_offset_ == output_.size()) {
+        output_.clear();
+        output_offset_ = 0;
     }
+    else if (output_offset_ != 0) {
+        output_.erase(
+            output_.begin(),
+            output_.begin() + static_cast<std::ptrdiff_t>(output_offset_));
+        output_offset_ = 0;
+    }
+
+    const auto new_size = checked_add(output_.size(), bytes.size());
+    if (!new_size || *new_size > maximum_buffered_output) {
+        return Result<void>::failure(
+            ErrorCode::io, "connection output buffer limit exceeded");
+    }
+    output_.insert(output_.end(), bytes.begin(), bytes.end());
     return Result<void>::success();
 }
 
@@ -125,7 +175,7 @@ Connection::send_setup_failure(ByteOrder order, std::string reason)
     reply.u16(static_cast<std::uint16_t>(*padded_reason / 4));
     reply.bytes(reason);
     reply.pad(*padded_reason - reason.size());
-    return write_all(reply.data());
+    return queue(reply.data());
 }
 
 Result<void>
@@ -134,28 +184,30 @@ Connection::send_setup_success(ByteOrder order)
     constexpr std::string_view vendor = "Xmin-next";
     WireWriter payload(order);
 
-    payload.u32(1);          // release
-    payload.u32(0x00200000); // client resource-id base
+    payload.u32(1); // release
+    payload.u32(config_.resource_base);
     payload.u32(0x001fffff); // client resource-id mask
     payload.u32(0);          // motion buffer
     payload.u16(static_cast<std::uint16_t>(vendor.size()));
-    payload.u16(65535);      // maximum request length in four-byte units
-    payload.u8(1);           // roots
-    payload.u8(4);           // pixmap formats
+    payload.u16(65535); // maximum request length in four-byte units
+    payload.u8(1);      // roots
+    payload.u8(4);      // pixmap formats
     const auto image_order = host_byte_order() == ByteOrder::little ? 0U : 1U;
     payload.u8(static_cast<std::uint8_t>(image_order));
     payload.u8(static_cast<std::uint8_t>(image_order));
-    payload.u8(32);          // bitmap scanline unit
-    payload.u8(32);          // bitmap scanline pad
-    payload.u8(8);           // minimum keycode
-    payload.u8(255);         // maximum keycode
+    payload.u8(32);  // bitmap scanline unit
+    payload.u8(32);  // bitmap scanline pad
+    payload.u8(8);   // minimum keycode
+    payload.u8(255); // maximum keycode
     payload.pad(4);
 
     payload.bytes(vendor);
     payload.pad_to_four();
     for (const auto &format : {
              std::pair<std::uint8_t, std::uint8_t>{1, 1},
-             {8, 8}, {24, 32}, {32, 32}}) {
+             {8, 8},
+             {24, 32},
+             {32, 32}}) {
         payload.u8(format.first);
         payload.u8(format.second);
         payload.u8(32);
@@ -202,31 +254,27 @@ Connection::send_setup_success(ByteOrder order)
     prefix.u16(protocol_minor);
     prefix.u16(static_cast<std::uint16_t>(payload.size() / 4));
     prefix.bytes(payload.data());
-    return write_all(prefix.data());
+    return queue(prefix.data());
 }
 
-Result<std::optional<ByteOrder>>
-Connection::perform_setup()
+Result<bool>
+Connection::process_setup_prefix()
 {
-    std::vector<std::uint8_t> prefix(12);
-    auto prefix_read = read_exact(prefix.data(), prefix.size());
-    if (!prefix_read)
-        return Result<std::optional<ByteOrder>>::failure(
-            prefix_read.error().code, prefix_read.error().message);
-    if (!prefix_read.value())
-        return Result<std::optional<ByteOrder>>::failure(
-            ErrorCode::unexpected_eof, "connection closed before setup");
+    constexpr std::size_t prefix_size = 12;
+    if (input_.size() < prefix_size)
+        return Result<bool>::success(false);
 
     ByteOrder order;
-    if (prefix[0] == static_cast<std::uint8_t>('l'))
+    if (input_[0] == static_cast<std::uint8_t>('l'))
         order = ByteOrder::little;
-    else if (prefix[0] == static_cast<std::uint8_t>('B'))
+    else if (input_[0] == static_cast<std::uint8_t>('B'))
         order = ByteOrder::big;
-    else
-        return Result<std::optional<ByteOrder>>::failure(
+    else {
+        return Result<bool>::failure(
             ErrorCode::malformed, "invalid setup byte order");
+    }
 
-    WireReader reader(prefix, order);
+    WireReader reader(input_.data(), prefix_size, order);
     const auto byte_order = reader.u8();
     const auto unused = reader.u8();
     const auto major = reader.u16();
@@ -235,62 +283,82 @@ Connection::perform_setup()
     const auto auth_data_size = reader.u16();
     if (!byte_order || !unused || !major || !minor || !auth_name_size ||
         !auth_data_size || !reader.skip(2)) {
-        return Result<std::optional<ByteOrder>>::failure(
+        return Result<bool>::failure(
             ErrorCode::malformed, "truncated setup prefix");
     }
+
+    consume_input(prefix_size);
+    order_ = order;
     if (*major != protocol_major || *minor != protocol_minor) {
         auto sent = send_setup_failure(order, "X11 protocol 11.0 required");
         if (!sent)
-            return Result<std::optional<ByteOrder>>::failure(
+            return Result<bool>::failure(
                 sent.error().code, sent.error().message);
-        return Result<std::optional<ByteOrder>>::success(std::nullopt);
+        input_.clear();
+        close_after_output();
+        return Result<bool>::success(true);
     }
 
     const auto padded_name = padded_to_four(*auth_name_size);
     const auto padded_data = padded_to_four(*auth_data_size);
     if (!padded_name || !padded_data || *padded_name > 1024 ||
         *padded_data > 1024) {
-        return Result<std::optional<ByteOrder>>::failure(
+        return Result<bool>::failure(
             ErrorCode::malformed, "invalid setup authentication lengths");
     }
     const auto payload_size = checked_add(*padded_name, *padded_data);
     if (!payload_size) {
-        return Result<std::optional<ByteOrder>>::failure(
+        return Result<bool>::failure(
             ErrorCode::malformed, "setup authentication length overflow");
     }
-    std::vector<std::uint8_t> payload(*payload_size);
-    auto payload_read = read_exact(payload.data(), payload.size());
-    if (!payload_read)
-        return Result<std::optional<ByteOrder>>::failure(
-            payload_read.error().code, payload_read.error().message);
-    if (!payload_read.value())
-        return Result<std::optional<ByteOrder>>::failure(
-            ErrorCode::unexpected_eof, "connection closed before authentication");
+
+    setup_payload_size_ = *payload_size;
+    setup_name_size_ = *auth_name_size;
+    setup_data_size_ = *auth_data_size;
+    setup_padded_name_size_ = *padded_name;
+    state_ = State::setup_authentication;
+    return Result<bool>::success(true);
+}
+
+Result<bool>
+Connection::process_setup_authentication()
+{
+    if (input_.size() < setup_payload_size_)
+        return Result<bool>::success(false);
+    if (!order_)
+        return Result<bool>::failure(ErrorCode::malformed,
+                                     "setup byte order was not recorded");
 
     std::string auth_name;
-    auth_name.reserve(*auth_name_size);
-    for (std::size_t index = 0; index < *auth_name_size; ++index)
-        auth_name.push_back(static_cast<char>(payload[index]));
+    auth_name.reserve(setup_name_size_);
+    for (std::size_t index = 0; index < setup_name_size_; ++index)
+        auth_name.push_back(static_cast<char>(input_[index]));
     std::vector<std::uint8_t> auth_data(
-        payload.begin() + static_cast<std::ptrdiff_t>(*padded_name),
-        payload.begin() + static_cast<std::ptrdiff_t>(*padded_name + *auth_data_size));
+        input_.begin() +
+            static_cast<std::ptrdiff_t>(setup_padded_name_size_),
+        input_.begin() + static_cast<std::ptrdiff_t>(
+                             setup_padded_name_size_ + setup_data_size_));
+    consume_input(setup_payload_size_);
 
     const bool authenticated = config_.allow_unauthenticated
         ? auth_name.empty() && auth_data.empty()
-        : auth_name == cookie_protocol && cookies_equal(auth_data, config_.cookie);
+        : !config_.cookie.empty() && auth_name == cookie_protocol &&
+            cookies_equal(auth_data, config_.cookie);
     if (!authenticated) {
-        auto sent = send_setup_failure(order, "Authentication failed");
+        auto sent = send_setup_failure(*order_, "Authentication failed");
         if (!sent)
-            return Result<std::optional<ByteOrder>>::failure(
+            return Result<bool>::failure(
                 sent.error().code, sent.error().message);
-        return Result<std::optional<ByteOrder>>::success(std::nullopt);
+        input_.clear();
+        close_after_output();
+        return Result<bool>::success(true);
     }
 
-    auto sent = send_setup_success(order);
+    auto sent = send_setup_success(*order_);
     if (!sent)
-        return Result<std::optional<ByteOrder>>::failure(
-            sent.error().code, sent.error().message);
-    return Result<std::optional<ByteOrder>>::success(order);
+        return Result<bool>::failure(sent.error().code, sent.error().message);
+    state_ = State::requests;
+    return Result<bool>::success(true);
 }
 
 Result<void>
@@ -306,7 +374,7 @@ Connection::send_error(ByteOrder order, std::uint8_t code,
     reply.u16(0);
     reply.u8(opcode);
     reply.pad(21);
-    return write_all(reply.data());
+    return queue(reply.data());
 }
 
 Result<void>
@@ -330,7 +398,7 @@ Connection::dispatch(ByteOrder order, std::uint8_t opcode,
         reply.u32(0);
         reply.u32(root_window);
         reply.pad(20);
-        return write_all(reply.data());
+        return queue(reply.data());
     }
 
     if (opcode == get_geometry) {
@@ -341,8 +409,7 @@ Connection::dispatch(ByteOrder order, std::uint8_t opcode,
         if (!drawable)
             return malformed("truncated GetGeometry request");
         if (!resources_.is(*drawable, ResourceKind::window))
-            return send_error(
-                order, bad_drawable, opcode, sequence, *drawable);
+            return send_error(order, bad_drawable, opcode, sequence, *drawable);
 
         WireWriter reply(order);
         reply.u8(1);
@@ -356,13 +423,12 @@ Connection::dispatch(ByteOrder order, std::uint8_t opcode,
         reply.u16(config_.height);
         reply.u16(0);
         reply.pad(10);
-        return write_all(reply.data());
+        return queue(reply.data());
     }
 
     if (opcode == query_extension) {
-        if (request.size() < 8) {
+        if (request.size() < 8)
             return send_error(order, bad_length, opcode, sequence);
-        }
         WireReader reader(request.data() + 4, request.size() - 4, order);
         const auto name_size = reader.u16();
         if (!name_size || !reader.skip(2))
@@ -381,7 +447,7 @@ Connection::dispatch(ByteOrder order, std::uint8_t opcode,
         reply.u8(0);
         reply.u8(0);
         reply.pad(20);
-        return write_all(reply.data());
+        return queue(reply.data());
     }
 
     if (opcode == list_extensions) {
@@ -393,78 +459,209 @@ Connection::dispatch(ByteOrder order, std::uint8_t opcode,
         reply.u16(sequence);
         reply.u32(0);
         reply.pad(24);
-        return write_all(reply.data());
+        return queue(reply.data());
     }
 
     return send_error(order, bad_request, opcode, sequence);
 }
 
-Result<void>
-Connection::serve_requests(ByteOrder order)
+Result<bool>
+Connection::process_request()
 {
-    std::uint16_t sequence = 0;
-    for (;;) {
-        std::vector<std::uint8_t> header(4);
-        auto header_read = read_exact(header.data(), header.size());
-        if (!header_read)
-            return Result<void>::failure(
-                header_read.error().code, header_read.error().message);
-        if (!header_read.value())
-            return Result<void>::success();
+    constexpr std::size_t header_size = 4;
+    if (input_.size() < header_size)
+        return Result<bool>::success(false);
+    if (!order_)
+        return Result<bool>::failure(ErrorCode::malformed,
+                                     "request byte order was not recorded");
 
-        ++sequence;
-        WireReader header_reader(header, order);
-        const auto opcode = header_reader.u8();
-        const auto data = header_reader.u8();
-        const auto length_units = header_reader.u16();
-        if (!opcode || !data || !length_units)
-            return malformed("truncated request header");
-        if (*length_units == 0) {
-            auto sent = send_error(order, bad_length, *opcode, sequence);
-            if (!sent)
-                return sent;
+    WireReader header(input_.data(), header_size, *order_);
+    const auto opcode = header.u8();
+    const auto data = header.u8();
+    const auto length_units = header.u16();
+    if (!opcode || !data || !length_units)
+        return Result<bool>::failure(ErrorCode::malformed,
+                                     "truncated request header");
+
+    ++sequence_;
+    if (*length_units == 0) {
+        consume_input(header_size);
+        auto sent = send_error(*order_, bad_length, *opcode, sequence_);
+        if (!sent)
+            return Result<bool>::failure(
+                sent.error().code, sent.error().message);
+        return Result<bool>::success(true);
+    }
+
+    const auto request_size = checked_multiply(
+        static_cast<std::size_t>(*length_units), std::size_t{4});
+    if (!request_size || *request_size < header_size ||
+        *request_size > maximum_request_bytes) {
+        auto sent = send_error(*order_, bad_length, *opcode, sequence_);
+        if (!sent)
+            return Result<bool>::failure(
+                sent.error().code, sent.error().message);
+        input_.clear();
+        close_after_output();
+        return Result<bool>::success(true);
+    }
+    if (input_.size() < *request_size) {
+        --sequence_;
+        return Result<bool>::success(false);
+    }
+
+    std::vector<std::uint8_t> request(
+        input_.begin(),
+        input_.begin() + static_cast<std::ptrdiff_t>(*request_size));
+    consume_input(*request_size);
+    auto dispatched = dispatch(*order_, *opcode, request, sequence_);
+    if (!dispatched) {
+        return Result<bool>::failure(
+            dispatched.error().code, dispatched.error().message);
+    }
+    return Result<bool>::success(true);
+}
+
+Result<void>
+Connection::process_input()
+{
+    while (!finished_ && !close_after_output_) {
+        Result<bool> processed = [&]() {
+            switch (state_) {
+            case State::setup_prefix:
+                return process_setup_prefix();
+            case State::setup_authentication:
+                return process_setup_authentication();
+            case State::requests:
+                return process_request();
+            }
+            return Result<bool>::failure(ErrorCode::malformed,
+                                         "invalid connection state");
+        }();
+        if (!processed) {
+            return Result<void>::failure(
+                processed.error().code, processed.error().message);
+        }
+        if (!processed.value())
+            break;
+    }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::on_readable()
+{
+    if (!prepared_)
+        return Result<void>::failure(ErrorCode::invalid_argument,
+                                     "connection was not prepared");
+    if (finished_ || close_after_output_)
+        return Result<void>::success();
+
+    std::array<std::uint8_t, 16384> bytes{};
+    for (;;) {
+        const auto count = ::read(socket_.get(), bytes.data(), bytes.size());
+        if (count > 0) {
+            const auto new_size = checked_add(
+                input_.size(), static_cast<std::size_t>(count));
+            if (!new_size || *new_size > maximum_buffered_input) {
+                return Result<void>::failure(
+                    ErrorCode::malformed,
+                    "connection input buffer limit exceeded");
+            }
+            input_.insert(
+                input_.end(), bytes.begin(),
+                bytes.begin() + static_cast<std::ptrdiff_t>(count));
+            auto processed = process_input();
+            if (!processed)
+                return processed;
+            if (close_after_output_)
+                return Result<void>::success();
             continue;
         }
-        const auto request_size = checked_multiply(
-            static_cast<std::size_t>(*length_units), std::size_t{4});
-        if (!request_size || *request_size < header.size() ||
-            *request_size > maximum_request_bytes) {
-            return malformed("request length exceeds the negotiated maximum");
-        }
-
-        std::vector<std::uint8_t> request(*request_size);
-        request[0] = header[0];
-        request[1] = header[1];
-        request[2] = header[2];
-        request[3] = header[3];
-        if (request.size() > header.size()) {
-            auto body_read = read_exact(
-                request.data() + header.size(), request.size() - header.size());
-            if (!body_read)
-                return Result<void>::failure(
-                    body_read.error().code, body_read.error().message);
-            if (!body_read.value()) {
+        if (count == 0) {
+            if (!input_.empty() || state_ != State::requests) {
                 return Result<void>::failure(
                     ErrorCode::unexpected_eof,
-                    "connection closed before request body");
+                    "connection closed within a protocol packet");
             }
+            close_after_output();
+            return Result<void>::success();
         }
-
-        auto dispatched = dispatch(order, *opcode, request, sequence);
-        if (!dispatched)
-            return dispatched;
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return Result<void>::success();
+        return io_failure("read");
     }
+}
+
+Result<void>
+Connection::on_writable()
+{
+    if (!prepared_)
+        return Result<void>::failure(ErrorCode::invalid_argument,
+                                     "connection was not prepared");
+    while (output_offset_ < output_.size()) {
+        const auto count = ::write(
+            socket_.get(), output_.data() + output_offset_,
+            output_.size() - output_offset_);
+        if (count > 0) {
+            output_offset_ += static_cast<std::size_t>(count);
+            continue;
+        }
+        if (count == 0)
+            return Result<void>::failure(ErrorCode::io,
+                                         "write made no progress");
+        if (errno == EINTR)
+            continue;
+        if (errno == EAGAIN || errno == EWOULDBLOCK)
+            return Result<void>::success();
+        return io_failure("write");
+    }
+
+    output_.clear();
+    output_offset_ = 0;
+    if (close_after_output_)
+        finished_ = true;
+    return Result<void>::success();
 }
 
 Result<void>
 Connection::serve()
 {
-    auto setup = perform_setup();
-    if (!setup)
-        return Result<void>::failure(setup.error().code, setup.error().message);
-    if (!setup.value())
-        return Result<void>::success();
-    return serve_requests(*setup.value());
+    auto prepared = prepare();
+    if (!prepared)
+        return prepared;
+
+    while (!finished_) {
+        pollfd descriptor{socket_.get(), poll_events(), 0};
+        int result;
+        do {
+            result = ::poll(&descriptor, 1, -1);
+        } while (result < 0 && errno == EINTR);
+        if (result < 0)
+            return io_failure("poll");
+        if ((descriptor.revents & POLLNVAL) != 0) {
+            return Result<void>::failure(ErrorCode::io,
+                                         "client descriptor became invalid");
+        }
+        if ((descriptor.revents & (POLLIN | POLLHUP)) != 0) {
+            auto read = on_readable();
+            if (!read)
+                return read;
+        }
+        if (!finished_ && (descriptor.revents & POLLOUT) != 0) {
+            auto written = on_writable();
+            if (!written)
+                return written;
+        }
+        if (!finished_ && (descriptor.revents & POLLERR) != 0 &&
+            (descriptor.revents & (POLLIN | POLLOUT | POLLHUP)) == 0) {
+            return Result<void>::failure(ErrorCode::io,
+                                         "client socket reported an error");
+        }
+    }
+    return Result<void>::success();
 }
 
 } // namespace xmin::next

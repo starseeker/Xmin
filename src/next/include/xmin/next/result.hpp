@@ -12,6 +12,7 @@ enum class ErrorCode {
     unexpected_eof,
     malformed,
     invalid_argument,
+    busy,
 };
 
 struct Error {

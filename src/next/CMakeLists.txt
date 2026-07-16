@@ -1,7 +1,10 @@
 add_library(xmin_next_core STATIC
   atom_table.cpp
   connection.cpp
+  display_socket.cpp
+  server.cpp
   wire.cpp
+  xauthority.cpp
 )
 add_library(Xmin::next_core ALIAS xmin_next_core)
 target_compile_features(xmin_next_core PUBLIC cxx_std_17)

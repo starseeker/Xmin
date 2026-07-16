@@ -93,6 +93,18 @@ Another core-protocol gate round-trips properties, window hierarchy/configuratio
 geometry, pixmap copy/readback, selection ownership, named colors, and synthetic
 events.  The opposite-endian raw client verifies malformed core `BadLength` recovery.
 
+The modernization branch also builds `Xmin-next`, the independent C++17 replacement
+described in `modernize.txt`.  It no longer needs an inherited test socket: it owns a
+direct Unix-domain X11 listener, atomically reserves dynamic or explicit displays,
+recovers stale locks and sockets, reads bounded binary Xauthority records, assigns a
+distinct resource-ID range to each client, and multiplexes bounded nonblocking
+connections through one `poll` loop.  SIGINT/SIGTERM wake that loop through a pipe so
+normal RAII cleanup removes the display socket and lock.  Native- and opposite-endian
+raw clients cover fragmented setup/request input, authentication rejection, malformed
+length recovery, concurrent display allocation, simultaneous clients, and lifecycle
+cleanup.  Its deliberately small request implementation is still a migration target;
+the Xorg-backed `Xmin` remains the feature-complete server and differential oracle.
+
 With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer
 and Xorg's non-DRI indirect GLX implementation.  A project-owned provider maps GLX contexts and CPU
 drawables directly to OSMesa; a raw-wire integration test creates an indirect context,

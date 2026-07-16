@@ -96,6 +96,23 @@ write_all(int descriptor, const std::vector<std::uint8_t> &bytes)
 }
 
 bool
+write_fragmented(int descriptor, const std::vector<std::uint8_t> &bytes,
+                 std::size_t split)
+{
+    if (split == 0 || split >= bytes.size())
+        return write_all(descriptor, bytes);
+    const std::vector<std::uint8_t> first(bytes.begin(), bytes.begin() +
+        static_cast<std::ptrdiff_t>(split));
+    const std::vector<std::uint8_t> second(
+        bytes.begin() + static_cast<std::ptrdiff_t>(split), bytes.end());
+    if (!write_all(descriptor, first))
+        return false;
+    const timespec pause{0, 10000000};
+    static_cast<void>(::nanosleep(&pause, nullptr));
+    return write_all(descriptor, second);
+}
+
+bool
 read_all(int descriptor, std::vector<std::uint8_t> &bytes)
 {
     std::size_t offset = 0;
@@ -167,7 +184,7 @@ cookie_bytes(bool valid)
 
 bool
 send_setup(int descriptor, bool little, bool valid_cookie,
-           std::uint16_t major = 11)
+           std::uint16_t major = 11, bool fragmented = false)
 {
     std::vector<std::uint8_t> prefix(12);
     prefix[0] = static_cast<std::uint8_t>(little ? 'l' : 'B');
@@ -182,6 +199,10 @@ send_setup(int descriptor, bool little, bool valid_cookie,
         authentication.push_back(0);
     const auto cookie = cookie_bytes(valid_cookie);
     authentication.insert(authentication.end(), cookie.begin(), cookie.end());
+    if (fragmented) {
+        return write_fragmented(descriptor, prefix, 1) &&
+            write_fragmented(descriptor, authentication, 7);
+    }
     return write_all(descriptor, prefix) && write_all(descriptor, authentication);
 }
 
@@ -216,13 +237,14 @@ check_setup_success(int descriptor, bool little)
 }
 
 bool
-check_request_sequence(int descriptor, bool little)
+check_request_sequence(int descriptor, bool little, bool fragmented)
 {
     std::vector<std::uint8_t> request(8);
     request[0] = 14; // GetGeometry
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
-    if (!write_all(descriptor, request))
+    if (!(fragmented ? write_fragmented(descriptor, request, 4)
+                     : write_all(descriptor, request)))
         return false;
     std::vector<std::uint8_t> reply;
     if (!read_reply(descriptor, reply) || reply[0] != 1 || reply[1] != 24 ||
@@ -276,14 +298,14 @@ check_request_sequence(int descriptor, bool little)
 }
 
 bool
-run_success_case(const char *server, bool little)
+run_success_case(const char *server, bool little, bool fragmented)
 {
     Child child = spawn_server(server);
     if (child.process < 0 || child.socket < 0)
         return false;
-    const bool passed = send_setup(child.socket, little, true) &&
+    const bool passed = send_setup(child.socket, little, true, 11, fragmented) &&
         check_setup_success(child.socket, little) &&
-        check_request_sequence(child.socket, little);
+        check_request_sequence(child.socket, little, fragmented);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);
@@ -323,11 +345,11 @@ main(int argc, char **argv)
         return 2;
     }
     const bool native = host_is_little_endian();
-    if (!run_success_case(argv[1], native)) {
+    if (!run_success_case(argv[1], native, true)) {
         std::cerr << "native-order setup/request case failed\n";
         return 1;
     }
-    if (!run_success_case(argv[1], !native)) {
+    if (!run_success_case(argv[1], !native, false)) {
         std::cerr << "opposite-order setup/request case failed\n";
         return 1;
     }
