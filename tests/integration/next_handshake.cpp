@@ -263,11 +263,12 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 4> extensions{{
+    constexpr std::array<std::string_view, 5> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
         "XTEST",
+        "SHAPE",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -285,7 +286,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 4 && get16(reply, 2, little) == sequence &&
+        reply[1] == 5 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -293,7 +294,9 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 bool
 query_extension(int descriptor, bool little, std::string_view name,
                 std::uint16_t sequence, std::uint8_t expected_opcode,
-                std::vector<std::uint8_t> &reply)
+                std::vector<std::uint8_t> &reply,
+                std::uint8_t expected_event = 0,
+                std::uint8_t expected_error = 0)
 {
     std::vector<std::uint8_t> request(
         8 + ((name.size() + 3) & ~std::size_t{3}), 0);
@@ -304,7 +307,7 @@ query_extension(int descriptor, bool little, std::string_view name,
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && get16(reply, 2, little) == sequence &&
         reply[8] == 1 && reply[9] == expected_opcode &&
-        reply[10] == 0 && reply[11] == 0;
+        reply[10] == expected_event && reply[11] == expected_error;
 }
 
 bool
@@ -409,6 +412,269 @@ check_foundation_extensions(int descriptor, bool little)
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && get16(reply, 2, little) == 12 &&
         get32(reply, 8, little) == pointer_root;
+}
+
+bool
+check_shape(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t shape_opcode = 132;
+    constexpr std::uint8_t shape_event = 64;
+    const std::uint32_t window = resource_base;
+    const std::uint32_t source_window = resource_base + 1;
+    const std::uint32_t bitmap = resource_base + 2;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "SHAPE", 1, shape_opcode,
+                         reply, shape_event)) {
+        return false;
+    }
+    request.assign(4, 0);
+    request[0] = shape_opcode; // QueryVersion
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 1 || get16(reply, 10, little) != 1) {
+        return false;
+    }
+
+    const auto create_window = [little](std::uint32_t id, std::int16_t x,
+                                        std::int16_t y,
+                                        std::uint16_t width,
+                                        std::uint16_t height) {
+        std::vector<std::uint8_t> created(32, 0);
+        created[0] = 1;  // CreateWindow
+        created[1] = 24; // depth
+        put16(created, 2, 8, little);
+        put32(created, 4, id, little);
+        put32(created, 8, root_window, little);
+        put16(created, 12, static_cast<std::uint16_t>(x), little);
+        put16(created, 14, static_cast<std::uint16_t>(y), little);
+        put16(created, 16, width, little);
+        put16(created, 18, height, little);
+        put16(created, 22, 1, little); // InputOutput
+        put32(created, 24, 3, little); // root visual
+        return created;
+    };
+    request = create_window(window, 140, 100, 40, 40);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 8; // MapWindow under the initial centered pointer
+    put16(request, 2, 2, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request = create_window(source_window, 0, 0, 8, 8);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 53; // CreatePixmap, zero-filled depth-1 mask
+    request[1] = 1;
+    put16(request, 2, 4, little);
+    put32(request, 4, bitmap, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 4, little);
+    put16(request, 14, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = shape_opcode; // SelectInput
+    request[1] = 6;
+    put16(request, 2, 3, little);
+    put32(request, 4, window, little);
+    request[8] = 1;
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = shape_opcode; // InputSelected
+    request[1] = 7;
+    put16(request, 2, 2, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 8) {
+        return false;
+    }
+
+    const auto rectangles = [little, window](
+                                std::uint8_t kind, std::int16_t x,
+                                std::int16_t y, std::uint16_t width,
+                                std::uint16_t height) {
+        std::vector<std::uint8_t> shaped(24, 0);
+        shaped[0] = shape_opcode;
+        shaped[1] = 1; // Rectangles
+        put16(shaped, 2, 6, little);
+        shaped[4] = 0; // Set
+        shaped[5] = kind;
+        shaped[6] = 0; // Unsorted
+        put32(shaped, 8, window, little);
+        put16(shaped, 16, static_cast<std::uint16_t>(x), little);
+        put16(shaped, 18, static_cast<std::uint16_t>(y), little);
+        put16(shaped, 20, width, little);
+        put16(shaped, 22, height, little);
+        return shaped;
+    };
+    request = rectangles(0, 2, 3, 30, 30); // bounding shape
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 0 ||
+        get16(reply, 2, little) != 9 || get32(reply, 4, little) != window ||
+        get16(reply, 8, little) != 2 || get16(reply, 10, little) != 3 ||
+        get16(reply, 12, little) != 30 ||
+        get16(reply, 14, little) != 30 || reply[20] != 1) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = shape_opcode; // QueryExtents
+    request[1] = 5;
+    put16(request, 2, 2, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 10 ||
+        reply[8] != 1 || reply[9] != 0 ||
+        get16(reply, 12, little) != 2 || get16(reply, 14, little) != 3 ||
+        get16(reply, 16, little) != 30 ||
+        get16(reply, 18, little) != 30 ||
+        get16(reply, 24, little) != 40 ||
+        get16(reply, 26, little) != 40) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = shape_opcode; // GetRectangles
+    request[1] = 8;
+    put16(request, 2, 3, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 || reply[1] != 3 ||
+        get16(reply, 2, little) != 11 || get32(reply, 8, little) != 1 ||
+        get16(reply, 32, little) != 2 ||
+        get16(reply, 34, little) != 3 ||
+        get16(reply, 36, little) != 30 ||
+        get16(reply, 38, little) != 30) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = shape_opcode; // Offset bounding shape
+    request[1] = 4;
+    put16(request, 2, 4, little);
+    put32(request, 8, window, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, static_cast<std::uint16_t>(-1), little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 0 ||
+        get16(reply, 2, little) != 12 || get16(reply, 8, little) != 3 ||
+        get16(reply, 10, little) != 2) {
+        return false;
+    }
+
+    request.assign(20, 0);
+    request[0] = shape_opcode; // Combine source default into clip
+    request[1] = 3;
+    put16(request, 2, 5, little);
+    request[4] = 0; // Set
+    request[5] = 1; // Clip
+    request[6] = 0; // Bounding source
+    put32(request, 8, window, little);
+    put32(request, 16, source_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 1 ||
+        get16(reply, 2, little) != 13 ||
+        get16(reply, 12, little) != 8 || get16(reply, 14, little) != 8) {
+        return false;
+    }
+
+    const auto mask = [little, window](std::uint8_t kind,
+                                      std::uint32_t source) {
+        std::vector<std::uint8_t> shaped(20, 0);
+        shaped[0] = shape_opcode;
+        shaped[1] = 2; // Mask
+        put16(shaped, 2, 5, little);
+        shaped[4] = 0; // Set
+        shaped[5] = kind;
+        put32(shaped, 8, window, little);
+        put32(shaped, 16, source, little);
+        return shaped;
+    };
+    request = mask(2, bitmap); // empty explicit input shape
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 2 ||
+        get16(reply, 2, little) != 14 || get16(reply, 12, little) != 0 ||
+        get16(reply, 14, little) != 0 || reply[20] != 1) {
+        return false;
+    }
+    request = mask(2, 0); // None removes explicit shape regardless of op
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 2 ||
+        get16(reply, 2, little) != 15 || get16(reply, 12, little) != 40 ||
+        get16(reply, 14, little) != 40 || reply[20] != 0) {
+        return false;
+    }
+
+    request = rectangles(2, 0, 0, 2, 2); // exclude centered pointer
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || reply[1] != 2 ||
+        get16(reply, 2, little) != 16) {
+        return false;
+    }
+    request.assign(8, 0);
+    request[0] = 38; // QueryPointer(root)
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 17 ||
+        get32(reply, 12, little) != 0) {
+        return false;
+    }
+    request = mask(2, 0); // restore default input shape
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != shape_event || get16(reply, 2, little) != 18) {
+        return false;
+    }
+    request.assign(8, 0);
+    request[0] = 38;
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 19 ||
+        get32(reply, 12, little) != window) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = shape_opcode; // deselect
+    request[1] = 6;
+    put16(request, 2, 3, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = shape_opcode;
+    request[1] = 7;
+    put16(request, 2, 2, little);
+    put32(request, 4, window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 21) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = shape_opcode; // invalid GetRectangles kind
+    request[1] = 8;
+    put16(request, 2, 3, little);
+    put32(request, 4, window, little);
+    request[8] = 3;
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 0 && reply[1] == 2 &&
+        get16(reply, 2, little) == 22 &&
+        get32(reply, 4, little) == 3 && get16(reply, 8, little) == 8 &&
+        reply[10] == shape_opcode;
 }
 
 bool
@@ -2140,6 +2406,22 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
 }
 
 bool
+run_shape_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_shape(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_foundation_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -2244,6 +2526,14 @@ main(int argc, char **argv)
     if (!run_foundation_case(argv[1], native) ||
         !run_foundation_case(argv[1], !native)) {
         std::cerr << "foundation extension case failed\n";
+        return 1;
+    }
+    if (!run_shape_case(argv[1], native)) {
+        std::cerr << "native-order SHAPE extension case failed\n";
+        return 1;
+    }
+    if (!run_shape_case(argv[1], !native)) {
+        std::cerr << "opposite-order SHAPE extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

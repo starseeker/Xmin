@@ -33,6 +33,7 @@ constexpr std::size_t maximum_pending_events_per_client = 256;
 constexpr std::size_t maximum_pending_events = 4096;
 constexpr std::size_t maximum_passive_grabs_per_client = 256;
 constexpr std::size_t maximum_passive_grabs = 4096;
+constexpr std::size_t maximum_shape_rectangles = 32768;
 constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 inline constexpr auto default_repeat_delay = std::chrono::milliseconds{660};
@@ -56,6 +57,8 @@ struct WindowRecord {
     std::vector<std::uint32_t> children;
     std::unordered_map<std::uint32_t, std::uint32_t> event_masks;
     std::unordered_map<AtomId, PropertyValue> properties;
+    std::array<std::optional<Region>, 3> shapes;
+    std::vector<std::uint32_t> shape_event_clients;
     std::optional<Surface> surface;
     std::int16_t x = 0;
     std::int16_t y = 0;
@@ -77,6 +80,17 @@ struct WindowRecord {
     bool override_redirect = false;
     bool save_under = false;
     bool mapped = false;
+
+    [[nodiscard]] Rectangle default_shape(std::uint8_t kind) const noexcept
+    {
+        if (kind == 1)
+            return Rectangle{0, 0, width, height};
+        const std::int32_t border = border_width;
+        return Rectangle{
+            -border, -border,
+            static_cast<std::uint32_t>(width) + 2U * border_width,
+            static_cast<std::uint32_t>(height) + 2U * border_width};
+    }
 };
 
 struct PixmapRecord {
@@ -247,6 +261,13 @@ enum class PassiveGrabUpdate {
     resource_exhausted,
 };
 
+enum class ShapeUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
+    queue_full,
+};
+
 class ServerState {
 public:
     ServerState(std::uint16_t width, std::uint16_t height,
@@ -315,6 +336,13 @@ public:
     [[nodiscard]] bool broadcast_mapping_notify(
         std::uint8_t request, std::uint8_t first_keycode,
         std::uint8_t count);
+    [[nodiscard]] ShapeUpdate set_window_shape(
+        WindowRecord &window, std::uint8_t kind,
+        std::optional<Region> shape);
+    [[nodiscard]] bool select_shape_events(
+        WindowRecord &window, std::uint32_t client, bool enabled);
+    [[nodiscard]] bool shape_events_selected(
+        const WindowRecord &window, std::uint32_t client) const noexcept;
     [[nodiscard]] EventDelivery inject_input(
         std::uint8_t type, std::uint8_t detail,
         std::int32_t root_x, std::int32_t root_y);
@@ -369,6 +397,8 @@ public:
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
+    [[nodiscard]] std::uint32_t child_window_at(
+        std::uint32_t parent, std::int32_t x, std::int32_t y) const;
     [[nodiscard]] std::pair<std::int32_t, std::int32_t>
     absolute_position(std::uint32_t id) const;
 

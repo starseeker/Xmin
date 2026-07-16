@@ -12,6 +12,7 @@ enum class ExtensionKind : std::uint8_t {
     xc_misc,
     generic_event,
     xtest,
+    shape,
 };
 
 struct ExtensionInfo {
@@ -33,12 +34,15 @@ inline constexpr ExtensionInfo generic_event_extension{
     ExtensionKind::generic_event};
 inline constexpr ExtensionInfo xtest_extension{
     "XTEST", 131, 0, 0, 2, 2, ExtensionKind::xtest};
+inline constexpr ExtensionInfo shape_extension{
+    "SHAPE", 132, 64, 0, 1, 1, ExtensionKind::shape};
 
-inline constexpr std::array<ExtensionInfo, 4> extension_registry{{
+inline constexpr std::array<ExtensionInfo, 5> extension_registry{{
     big_requests_extension,
     xc_misc_extension,
     generic_event_extension,
     xtest_extension,
+    shape_extension,
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

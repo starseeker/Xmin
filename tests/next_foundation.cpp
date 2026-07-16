@@ -2343,6 +2343,36 @@ test_region_clipping()
         return false;
     }
 
+    xmin::next::Region source;
+    xmin::next::Region combined;
+    const std::vector<xmin::next::Rectangle> second = {{2, 1, 4, 3}};
+    if (!expect(xmin::next::Region::canonicalize(second, source),
+                "second region canonicalization failed") ||
+        !expect(xmin::next::Region::combine(
+                    xmin::next::RegionOperation::intersect,
+                    region, source, combined),
+                "region intersection failed") ||
+        !expect(combined.extents().x == 2 && combined.extents().y == 1 &&
+                    combined.extents().width == 3 &&
+                    combined.extents().height == 1,
+                "region intersection extents are wrong") ||
+        !expect(xmin::next::Region::combine(
+                    xmin::next::RegionOperation::subtract,
+                    region, source, combined),
+                "region subtraction failed") ||
+        !expect(combined.contains(0, 0) && !combined.contains(3, 1),
+                "region subtraction contents are wrong") ||
+        !expect(xmin::next::Region::combine(
+                    xmin::next::RegionOperation::invert,
+                    region, source, combined),
+                "region inversion failed") ||
+        !expect(combined.contains(5, 2) && !combined.contains(3, 1),
+                "region inversion contents are wrong") ||
+        !expect(combined.translate(-2, 3) && combined.contains(3, 5),
+                "region translation failed")) {
+        return false;
+    }
+
     auto surface = xmin::next::Surface::create(8, 2, 24);
     if (!expect(surface.has_value(), "clip-test surface creation failed"))
         return false;
@@ -2441,8 +2471,128 @@ test_scene_composition()
     static_cast<void>(
         server.set_window_mapped(*server.window(owner), true));
     composed = server.readable_surface(xmin::next::root_window_id);
-    return expect(composed->pixel(3, 2) == 0x0000ff00U,
-                  "remapped window did not return to the scene");
+    if (!expect(composed->pixel(3, 2) == 0x0000ff00U,
+                "remapped window did not return to the scene")) {
+        return false;
+    }
+
+    xmin::next::Region bounding;
+    xmin::next::Region clip;
+    const std::vector<xmin::next::Rectangle> bounding_rectangles = {
+        {0, 0, 3, 3}};
+    const std::vector<xmin::next::Rectangle> clip_rectangles = {
+        {1, 1, 1, 1}};
+    auto *stored_parent = server.window(owner);
+    if (!expect(xmin::next::Region::canonicalize(
+                    bounding_rectangles, bounding) &&
+                    xmin::next::Region::canonicalize(clip_rectangles, clip),
+                "scene shape canonicalization failed") ||
+        !expect(server.set_window_shape(
+                    *stored_parent, 0, std::move(bounding)) ==
+                    xmin::next::ShapeUpdate::updated &&
+                    server.set_window_shape(*stored_parent, 1,
+                                            std::move(clip)) ==
+                    xmin::next::ShapeUpdate::updated,
+                "scene shape update failed")) {
+        return false;
+    }
+    composed = server.readable_surface(xmin::next::root_window_id);
+    return expect(composed->pixel(4, 3) == 0x0000ff00U,
+                  "shape intersection omitted visible window content") &&
+        expect(composed->pixel(3, 2) == 0x000000ffU,
+               "clip hole retained window pixels") &&
+        expect(composed->pixel(2, 1) == 0x000000ffU,
+               "bounding shape retained an excluded border") &&
+        expect(composed->pixel(9, 6) == 0x000000ffU,
+               "bounding shape did not constrain child composition");
+}
+
+bool
+test_shape_state()
+{
+    constexpr std::uint32_t client = 0x00200000;
+    constexpr std::uint32_t window_id = 0x00400000;
+    xmin::next::ServerState server(16, 12);
+    if (!expect(server.register_client(client),
+                "shape client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(client, 41);
+    xmin::next::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::next::root_window_id;
+    window.width = 8;
+    window.height = 6;
+    if (!expect(server.add_window(std::move(window), 0),
+                "shape window insertion failed")) {
+        return false;
+    }
+    auto *stored = server.window(window_id);
+    xmin::next::Region initial;
+    const std::vector<xmin::next::Rectangle> initial_rectangles = {
+        {1, 2, 3, 4}};
+    if (!expect(server.select_shape_events(*stored, client, true),
+                "shape event selection failed") ||
+        !expect(xmin::next::Region::canonicalize(
+                    initial_rectangles, initial),
+                "initial shape canonicalization failed") ||
+        !expect(server.set_window_shape(*stored, 0, std::move(initial)) ==
+                    xmin::next::ShapeUpdate::updated,
+                "initial shape update failed")) {
+        return false;
+    }
+    const auto *event = server.next_event(client);
+    const auto *notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::ShapeNotifyEvent>(event);
+    if (!expect(notify != nullptr && notify->sequence == 41 &&
+                    notify->kind == 0 && notify->window == window_id &&
+                    notify->x == 1 && notify->y == 2 &&
+                    notify->width == 3 && notify->height == 4 &&
+                    notify->shaped,
+                "shape notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(client);
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.broadcast_mapping_notify(1, 96, 1),
+                    "shape queue setup failed")) {
+            return false;
+        }
+    }
+
+    xmin::next::Region replacement;
+    const std::vector<xmin::next::Rectangle> replacement_rectangles = {
+        {0, 0, 1, 1}};
+    if (!expect(xmin::next::Region::canonicalize(
+                    replacement_rectangles, replacement),
+                "replacement shape canonicalization failed") ||
+        !expect(server.set_window_shape(
+                    *stored, 0, std::move(replacement)) ==
+                    xmin::next::ShapeUpdate::queue_full,
+                "full observer queue accepted a shape update") ||
+        !expect(stored->shapes[0] &&
+                    stored->shapes[0]->extents().x == 1 &&
+                    stored->shapes[0]->extents().width == 3,
+                "failed shape notification partially committed state")) {
+        return false;
+    }
+
+    server.disconnect_client(client);
+    xmin::next::Region disconnected_update;
+    if (!expect(xmin::next::Region::canonicalize(
+                    replacement_rectangles, disconnected_update),
+                "disconnected shape canonicalization failed") ||
+        !expect(server.set_window_shape(
+                    *stored, 0, std::move(disconnected_update)) ==
+                    xmin::next::ShapeUpdate::updated,
+                "disconnect retained a stale shape subscription") ||
+        !expect(!server.has_pending_event(client),
+                "disconnect retained a shape notification queue")) {
+        return false;
+    }
+    return true;
 }
 
 bool
@@ -2553,7 +2703,7 @@ main()
             test_keyboard_grab_view_loss() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
-            test_scene_composition() &&
+            test_scene_composition() && test_shape_state() &&
             test_window_tree_mutations() && test_colormap_state() &&
             test_result()
         ? 0

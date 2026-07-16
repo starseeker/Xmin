@@ -119,6 +119,35 @@ wire_coordinate(std::int32_t value) noexcept
         std::numeric_limits<std::int16_t>::max()));
 }
 
+std::uint16_t
+wire_size(std::uint32_t value) noexcept
+{
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(
+        value, std::numeric_limits<std::uint16_t>::max()));
+}
+
+std::optional<RegionOperation>
+region_operation(std::uint8_t operation) noexcept
+{
+    if (operation > static_cast<std::uint8_t>(RegionOperation::invert))
+        return std::nullopt;
+    return static_cast<RegionOperation>(operation);
+}
+
+bool
+make_default_shape(const WindowRecord &window, std::uint8_t kind,
+                   Region &result)
+{
+    try {
+        const std::vector<Rectangle> rectangles{
+            window.default_shape(kind)};
+        return Region::canonicalize(rectangles, result);
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+}
+
 bool
 timestamp_later(std::uint32_t left, std::uint32_t right) noexcept
 {
@@ -393,6 +422,21 @@ Connection::encode_event(const ClientEvent &event) const
         writer.u8(mapping->first_keycode);
         writer.u8(mapping->count);
         writer.pad(25);
+        return writer.data();
+    }
+
+    if (const auto *shape = std::get_if<ShapeNotifyEvent>(&event)) {
+        writer.u8(shape_extension.first_event);
+        writer.u8(shape->kind);
+        writer.u16(shape->sequence);
+        writer.u32(shape->window);
+        writer.i16(shape->x);
+        writer.i16(shape->y);
+        writer.u16(shape->width);
+        writer.u16(shape->height);
+        writer.u32(shape->time);
+        writer.u8(shape->shaped ? 1 : 0);
+        writer.pad(11);
         return writer.data();
     }
 
@@ -2451,25 +2495,8 @@ Connection::handle_query_pointer(const RequestContext &context)
     if (server_.map_state(window->id) == 2 &&
         input.pointer_x >= origin.first && input.pointer_x < window_right &&
         input.pointer_y >= origin.second && input.pointer_y < window_bottom) {
-        for (auto iterator = window->children.rbegin();
-             iterator != window->children.rend(); ++iterator) {
-            const auto *candidate = server_.window(*iterator);
-            if (candidate == nullptr || server_.map_state(candidate->id) != 2)
-                continue;
-            const auto child_origin = server_.absolute_position(candidate->id);
-            const std::int64_t border = candidate->border_width;
-            const std::int64_t left = child_origin.first - border;
-            const std::int64_t top = child_origin.second - border;
-            const std::int64_t right = child_origin.first + candidate->width +
-                border;
-            const std::int64_t bottom = child_origin.second +
-                candidate->height + border;
-            if (input.pointer_x >= left && input.pointer_x < right &&
-                input.pointer_y >= top && input.pointer_y < bottom) {
-                child = candidate->id;
-                break;
-            }
-        }
+        child = server_.child_window_at(
+            window->id, input.pointer_x, input.pointer_y);
     }
 
     WireWriter reply(context.order);
@@ -4884,6 +4911,535 @@ Connection::handle_generic_event(const RequestContext &context)
 }
 
 Result<void>
+Connection::update_shape(const RequestContext &context, WindowRecord &window,
+                         std::uint8_t operation, std::uint8_t kind,
+                         std::optional<Region> source)
+{
+    const auto selected_operation = region_operation(operation);
+    if (!selected_operation) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, operation, context.data);
+    }
+    if (kind >= window.shapes.size()) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, kind, context.data);
+    }
+
+    std::optional<Region> revised;
+    if (!source) {
+        revised.reset();
+    }
+    else {
+        Region combined;
+        switch (*selected_operation) {
+        case RegionOperation::set:
+            revised = std::move(source);
+            break;
+        case RegionOperation::unite:
+            if (window.shapes[kind]) {
+                if (!Region::combine(
+                        *selected_operation, *window.shapes[kind], *source,
+                        combined)) {
+                    return send_error(
+                        context.order, bad_alloc, context.opcode,
+                        context.sequence, 0, context.data);
+                }
+                revised = std::move(combined);
+            }
+            break;
+        case RegionOperation::intersect:
+            if (!window.shapes[kind]) {
+                revised = std::move(source);
+                break;
+            }
+            if (!Region::combine(
+                    *selected_operation, *window.shapes[kind], *source,
+                    combined)) {
+                return send_error(
+                    context.order, bad_alloc, context.opcode,
+                    context.sequence, 0, context.data);
+            }
+            revised = std::move(combined);
+            break;
+        case RegionOperation::subtract: {
+            Region default_region;
+            const Region *destination = window.shapes[kind]
+                ? &*window.shapes[kind]
+                : &default_region;
+            if (!window.shapes[kind] &&
+                !make_default_shape(window, kind, default_region)) {
+                return send_error(
+                    context.order, bad_alloc, context.opcode,
+                    context.sequence, 0, context.data);
+            }
+            if (!Region::combine(
+                    *selected_operation, *destination, *source, combined)) {
+                return send_error(
+                    context.order, bad_alloc, context.opcode,
+                    context.sequence, 0, context.data);
+            }
+            revised = std::move(combined);
+            break;
+        }
+        case RegionOperation::invert:
+            if (!window.shapes[kind]) {
+                const std::vector<Rectangle> empty;
+                if (!Region::canonicalize(empty, combined)) {
+                    return send_error(
+                        context.order, bad_alloc, context.opcode,
+                        context.sequence, 0, context.data);
+                }
+            }
+            else if (!Region::combine(
+                         *selected_operation, *window.shapes[kind], *source,
+                         combined)) {
+                return send_error(
+                    context.order, bad_alloc, context.opcode,
+                    context.sequence, 0, context.data);
+            }
+            revised = std::move(combined);
+            break;
+        }
+    }
+
+    const auto updated = server_.set_window_shape(
+        window, kind, std::move(revised));
+    if (updated == ShapeUpdate::invalid) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, kind, context.data);
+    }
+    if (updated == ShapeUpdate::resource_exhausted ||
+        updated == ShapeUpdate::queue_full) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+    return drain_pending_events();
+}
+
+Result<void>
+Connection::handle_shape(const RequestContext &context)
+{
+    switch (context.data) {
+    case 0: { // QueryVersion
+        if (context.request.size() != 4) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u16(shape_extension.major_version);
+        reply.u16(shape_extension.minor_version);
+        reply.pad(20);
+        return queue(reply.data());
+    }
+    case 1: { // Rectangles
+        if (context.request.size() < 16 ||
+            ((context.request.size() - 16) & 7U) != 0) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 12, context.order);
+        const auto operation = reader.u8();
+        const auto kind = reader.u8();
+        const auto ordering = reader.u8();
+        const auto destination = [&]() -> std::optional<std::uint32_t> {
+            if (!reader.skip(1))
+                return std::nullopt;
+            return reader.u32();
+        }();
+        const auto x_offset = reader.u16();
+        const auto y_offset = reader.u16();
+        if (!operation || !kind || !ordering || !destination || !x_offset ||
+            !y_offset) {
+            return malformed("truncated SHAPE Rectangles request");
+        }
+        if (!region_operation(*operation)) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *operation, context.data);
+        }
+        if (*kind >= 3) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *kind, context.data);
+        }
+        if (*ordering > 3) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *ordering, context.data);
+        }
+        auto *window = server_.window(*destination);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *destination, context.data);
+        }
+
+        WireReader rectangles_reader(
+            context.request.data() + 16, context.request.size() - 16,
+            context.order);
+        std::vector<Rectangle> rectangles;
+        try {
+            rectangles.reserve((context.request.size() - 16) / 8);
+            while (rectangles_reader.remaining() != 0) {
+                const auto x = rectangles_reader.u16();
+                const auto y = rectangles_reader.u16();
+                const auto width = rectangles_reader.u16();
+                const auto height = rectangles_reader.u16();
+                if (!x || !y || !width || !height)
+                    return malformed("truncated SHAPE rectangle list");
+                rectangles.push_back(Rectangle{
+                    signed_word(*x), signed_word(*y), *width, *height});
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        if (!valid_clip_order(rectangles, *ordering)) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        Region source;
+        if (!Region::canonicalize(rectangles, source) ||
+            !source.translate(
+                signed_word(*x_offset), signed_word(*y_offset))) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        return update_shape(
+            context, *window, *operation, *kind, std::move(source));
+    }
+    case 2: { // Mask
+        if (context.request.size() != 20) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 16, context.order);
+        const auto operation = reader.u8();
+        const auto kind = reader.u8();
+        if (!operation || !kind || !reader.skip(2))
+            return malformed("truncated SHAPE Mask header");
+        const auto destination = reader.u32();
+        const auto x_offset = reader.u16();
+        const auto y_offset = reader.u16();
+        const auto source_id = reader.u32();
+        if (!destination || !x_offset || !y_offset || !source_id)
+            return malformed("truncated SHAPE Mask request");
+        if (!region_operation(*operation)) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *operation, context.data);
+        }
+        if (*kind >= 3) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *kind, context.data);
+        }
+        auto *window = server_.window(*destination);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *destination, context.data);
+        }
+        if (*source_id == 0)
+            return update_shape(context, *window, *operation, *kind, {});
+        const auto *pixmap = server_.pixmap(*source_id);
+        if (pixmap == nullptr) {
+            return send_error(context.order, bad_pixmap, context.opcode,
+                              context.sequence, *source_id, context.data);
+        }
+        if (pixmap->surface.depth() != 1) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+
+        std::vector<Rectangle> rectangles;
+        try {
+            for (std::uint16_t y = 0; y < pixmap->surface.height(); ++y) {
+                std::uint16_t x = 0;
+                while (x < pixmap->surface.width()) {
+                    while (x < pixmap->surface.width() &&
+                           (pixmap->surface.pixel(x, y) & 1U) == 0) {
+                        ++x;
+                    }
+                    const std::uint16_t start = x;
+                    while (x < pixmap->surface.width() &&
+                           (pixmap->surface.pixel(x, y) & 1U) != 0) {
+                        ++x;
+                    }
+                    if (x != start) {
+                        if (rectangles.size() == maximum_shape_rectangles) {
+                            return send_error(
+                                context.order, bad_alloc, context.opcode,
+                                context.sequence, 0, context.data);
+                        }
+                        rectangles.push_back(Rectangle{
+                            start, y,
+                            static_cast<std::uint32_t>(x - start), 1});
+                    }
+                }
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        Region source;
+        if (!Region::canonicalize(rectangles, source) ||
+            !source.translate(
+                signed_word(*x_offset), signed_word(*y_offset))) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        return update_shape(
+            context, *window, *operation, *kind, std::move(source));
+    }
+    case 3: { // Combine
+        if (context.request.size() != 20) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 16, context.order);
+        const auto operation = reader.u8();
+        const auto destination_kind = reader.u8();
+        const auto source_kind = reader.u8();
+        if (!operation || !destination_kind || !source_kind ||
+            !reader.skip(1)) {
+            return malformed("truncated SHAPE Combine header");
+        }
+        const auto destination_id = reader.u32();
+        const auto x_offset = reader.u16();
+        const auto y_offset = reader.u16();
+        const auto source_id = reader.u32();
+        if (!destination_id || !x_offset || !y_offset || !source_id)
+            return malformed("truncated SHAPE Combine request");
+        if (!region_operation(*operation)) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *operation, context.data);
+        }
+        if (*destination_kind >= 3 || *source_kind >= 3) {
+            const std::uint8_t bad_kind = *destination_kind >= 3
+                ? *destination_kind
+                : *source_kind;
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, bad_kind, context.data);
+        }
+        auto *destination = server_.window(*destination_id);
+        if (destination == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *destination_id, context.data);
+        }
+        const auto *source_window = server_.window(*source_id);
+        if (source_window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *source_id, context.data);
+        }
+        Region source;
+        if (source_window->shapes[*source_kind]) {
+            if (!Region::combine(
+                    RegionOperation::set,
+                    *source_window->shapes[*source_kind],
+                    *source_window->shapes[*source_kind], source)) {
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence, 0, context.data);
+            }
+        }
+        else if (!make_default_shape(*source_window, *source_kind, source)) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        if (!source.translate(
+                signed_word(*x_offset), signed_word(*y_offset))) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        return update_shape(
+            context, *destination, *operation, *destination_kind,
+            std::move(source));
+    }
+    case 4: { // Offset
+        if (context.request.size() != 16) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 12, context.order);
+        const auto kind = reader.u8();
+        if (!kind || !reader.skip(3))
+            return malformed("truncated SHAPE Offset header");
+        const auto destination_id = reader.u32();
+        const auto x_offset = reader.u16();
+        const auto y_offset = reader.u16();
+        if (!destination_id || !x_offset || !y_offset)
+            return malformed("truncated SHAPE Offset request");
+        if (*kind >= 3) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *kind, context.data);
+        }
+        auto *window = server_.window(*destination_id);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *destination_id, context.data);
+        }
+        std::optional<Region> revised;
+        if (window->shapes[*kind]) {
+            Region translated;
+            if (!Region::combine(
+                    RegionOperation::set, *window->shapes[*kind],
+                    *window->shapes[*kind], translated) ||
+                !translated.translate(
+                    signed_word(*x_offset), signed_word(*y_offset))) {
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence, 0, context.data);
+            }
+            revised = std::move(translated);
+        }
+        const auto updated = server_.set_window_shape(
+            *window, *kind, std::move(revised));
+        if (updated == ShapeUpdate::resource_exhausted ||
+            updated == ShapeUpdate::queue_full) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        return drain_pending_events();
+    }
+    case 5: { // QueryExtents
+        if (context.request.size() != 8) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto window_id = reader.u32();
+        if (!window_id)
+            return malformed("truncated SHAPE QueryExtents request");
+        const auto *window = server_.window(*window_id);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *window_id, context.data);
+        }
+        const Rectangle bounding = window->shapes[0]
+            ? window->shapes[0]->extents()
+            : window->default_shape(0);
+        const Rectangle clip = window->shapes[1]
+            ? window->shapes[1]->extents()
+            : window->default_shape(1);
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u8(window->shapes[0] ? 1 : 0);
+        reply.u8(window->shapes[1] ? 1 : 0);
+        reply.pad(2);
+        reply.i16(wire_coordinate(bounding.x));
+        reply.i16(wire_coordinate(bounding.y));
+        reply.u16(wire_size(bounding.width));
+        reply.u16(wire_size(bounding.height));
+        reply.i16(wire_coordinate(clip.x));
+        reply.i16(wire_coordinate(clip.y));
+        reply.u16(wire_size(clip.width));
+        reply.u16(wire_size(clip.height));
+        reply.pad(4);
+        return queue(reply.data());
+    }
+    case 6: { // SelectInput
+        if (context.request.size() != 12) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 8, context.order);
+        const auto window_id = reader.u32();
+        const auto enabled = reader.u8();
+        if (!window_id || !enabled || !reader.skip(3))
+            return malformed("truncated SHAPE SelectInput request");
+        if (*enabled > 1) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *enabled, context.data);
+        }
+        auto *window = server_.window(*window_id);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *window_id, context.data);
+        }
+        if (!server_.select_shape_events(
+                *window, config_.resource_base, *enabled != 0)) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        return Result<void>::success();
+    }
+    case 7: { // InputSelected
+        if (context.request.size() != 8) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto window_id = reader.u32();
+        if (!window_id)
+            return malformed("truncated SHAPE InputSelected request");
+        const auto *window = server_.window(*window_id);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *window_id, context.data);
+        }
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(server_.shape_events_selected(
+                     *window, config_.resource_base)
+                     ? 1
+                     : 0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.pad(24);
+        return queue(reply.data());
+    }
+    case 8: { // GetRectangles
+        if (context.request.size() != 12) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        WireReader reader(context.request.data() + 4, 8, context.order);
+        const auto window_id = reader.u32();
+        const auto kind = reader.u8();
+        if (!window_id || !kind || !reader.skip(3))
+            return malformed("truncated SHAPE GetRectangles request");
+        if (*kind >= 3) {
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *kind, context.data);
+        }
+        const auto *window = server_.window(*window_id);
+        if (window == nullptr) {
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *window_id, context.data);
+        }
+        Region default_region;
+        const Region *shape = window->shapes[*kind]
+            ? &*window->shapes[*kind]
+            : &default_region;
+        if (!window->shapes[*kind] &&
+            !make_default_shape(*window, *kind, default_region)) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        const auto &rectangles = shape->rectangles();
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(3); // canonical regions are YXBanded
+        reply.u16(context.sequence);
+        reply.u32(static_cast<std::uint32_t>(rectangles.size() * 2U));
+        reply.u32(static_cast<std::uint32_t>(rectangles.size()));
+        reply.pad(20);
+        for (const auto &rectangle : rectangles) {
+            reply.i16(wire_coordinate(rectangle.x));
+            reply.i16(wire_coordinate(rectangle.y));
+            reply.u16(wire_size(rectangle.width));
+            reply.u16(wire_size(rectangle.height));
+        }
+        return queue(reply.data());
+    }
+    default:
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+}
+
+Result<void>
 Connection::handle_xtest(const RequestContext &context)
 {
     switch (context.data) {
@@ -5033,6 +5589,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_generic_event(context);
         case ExtensionKind::xtest:
             return handle_xtest(context);
+        case ExtensionKind::shape:
+            return handle_shape(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

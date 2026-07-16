@@ -175,6 +175,11 @@ private:
     Result<void> handle_xc_misc(const RequestContext &context);
     Result<void> handle_generic_event(const RequestContext &context);
     Result<void> handle_xtest(const RequestContext &context);
+    Result<void> handle_shape(const RequestContext &context);
+    Result<void> update_shape(
+        const RequestContext &context, WindowRecord &window,
+        std::uint8_t operation, std::uint8_t kind,
+        std::optional<Region> source);
     Result<void> handle_no_operation(const RequestContext &context);
     Result<void> send_error(ByteOrder order, std::uint8_t code,
                             std::uint8_t opcode, std::uint16_t sequence,

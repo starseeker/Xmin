@@ -58,6 +58,13 @@ wire_coordinate(std::int32_t value) noexcept
         std::numeric_limits<std::int16_t>::max()));
 }
 
+std::uint16_t
+wire_size(std::uint32_t value) noexcept
+{
+    return static_cast<std::uint16_t>(std::min<std::uint32_t>(
+        value, std::numeric_limits<std::uint16_t>::max()));
+}
+
 } // namespace
 
 PassiveGrabDomain
@@ -611,41 +618,113 @@ ServerState::composite_window(std::uint32_t id, std::int64_t parent_x,
         content_left, content_top, content_right, content_bottom,
         clip_left, clip_top, clip_right, clip_bottom);
 
+    const auto for_each_shape_rectangle = [candidate](
+                                              std::uint8_t kind,
+                                              const auto &operation) {
+        if (candidate->shapes[kind]) {
+            for (const auto &rectangle :
+                 candidate->shapes[kind]->rectangles()) {
+                operation(rectangle);
+            }
+            return;
+        }
+        operation(candidate->default_shape(kind));
+    };
     if (candidate->surface && visible_outer[0] < visible_outer[2] &&
-        visible_outer[1] < visible_outer[3]) {
-        composited_root_->fill(
-            Rectangle{
-                static_cast<std::int32_t>(visible_outer[0]),
-                static_cast<std::int32_t>(visible_outer[1]),
-                static_cast<std::uint32_t>(
-                    visible_outer[2] - visible_outer[0]),
-                static_cast<std::uint32_t>(
-                    visible_outer[3] - visible_outer[1])},
-            candidate->border_pixel, 3, 0xffffffffU);
+        visible_outer[1] < visible_outer[3] &&
+        candidate->border_width != 0) {
+        for_each_shape_rectangle(0, [&](const Rectangle &shape) {
+            const auto bounded = intersect(
+                content_left + shape.x, content_top + shape.y,
+                content_left + shape.x + shape.width,
+                content_top + shape.y + shape.height,
+                visible_outer[0], visible_outer[1],
+                visible_outer[2], visible_outer[3]);
+            const std::array<std::array<std::int64_t, 4>, 4> bands{{
+                {{outer_left, outer_top, outer_right, content_top}},
+                {{outer_left, content_bottom, outer_right, outer_bottom}},
+                {{outer_left, content_top, content_left, content_bottom}},
+                {{content_right, content_top, outer_right, content_bottom}},
+            }};
+            for (const auto &band : bands) {
+                const auto shaped = intersect(
+                    bounded[0], bounded[1], bounded[2], bounded[3],
+                    band[0], band[1], band[2], band[3]);
+                if (shaped[0] >= shaped[2] || shaped[1] >= shaped[3])
+                    continue;
+                composited_root_->fill(
+                    Rectangle{
+                        static_cast<std::int32_t>(shaped[0]),
+                        static_cast<std::int32_t>(shaped[1]),
+                        static_cast<std::uint32_t>(shaped[2] - shaped[0]),
+                        static_cast<std::uint32_t>(shaped[3] - shaped[1])},
+                    candidate->border_pixel, 3, 0xffffffffU);
+            }
+        });
     }
     if (candidate->surface && visible_content[0] < visible_content[2] &&
         visible_content[1] < visible_content[3]) {
-        composited_root_->copy_from(
-            *candidate->surface,
-            static_cast<std::int32_t>(visible_content[0] - content_left),
-            static_cast<std::int32_t>(visible_content[1] - content_top),
-            static_cast<std::int32_t>(visible_content[0]),
-            static_cast<std::int32_t>(visible_content[1]),
-            static_cast<std::uint32_t>(
-                visible_content[2] - visible_content[0]),
-            static_cast<std::uint32_t>(
-                visible_content[3] - visible_content[1]),
-            3, 0xffffffffU);
+        Region combined_shape;
+        const Region *content_shape = nullptr;
+        if (candidate->shapes[0] && candidate->shapes[1]) {
+            if (!Region::combine(
+                    RegionOperation::intersect, *candidate->shapes[0],
+                    *candidate->shapes[1], combined_shape)) {
+                return;
+            }
+            content_shape = &combined_shape;
+        }
+        else if (candidate->shapes[0]) {
+            content_shape = &*candidate->shapes[0];
+        }
+        else if (candidate->shapes[1]) {
+            content_shape = &*candidate->shapes[1];
+        }
+        const auto copy_rectangle = [&](const Rectangle &shape) {
+            const auto shaped = intersect(
+                content_left + shape.x, content_top + shape.y,
+                content_left + shape.x + shape.width,
+                content_top + shape.y + shape.height,
+                visible_content[0], visible_content[1],
+                visible_content[2], visible_content[3]);
+            if (shaped[0] >= shaped[2] || shaped[1] >= shaped[3])
+                return;
+            composited_root_->copy_from(
+                *candidate->surface,
+                static_cast<std::int32_t>(shaped[0] - content_left),
+                static_cast<std::int32_t>(shaped[1] - content_top),
+                static_cast<std::int32_t>(shaped[0]),
+                static_cast<std::int32_t>(shaped[1]),
+                static_cast<std::uint32_t>(shaped[2] - shaped[0]),
+                static_cast<std::uint32_t>(shaped[3] - shaped[1]),
+                3, 0xffffffffU);
+        };
+        if (content_shape) {
+            for (const auto &shape : content_shape->rectangles())
+                copy_rectangle(shape);
+        }
+        else {
+            copy_rectangle(candidate->default_shape(1));
+        }
     }
 
     if (visible_content[0] >= visible_content[2] ||
         visible_content[1] >= visible_content[3]) {
         return;
     }
+    auto child_clip = visible_content;
+    if (candidate->shapes[0]) {
+        const Rectangle bounding = candidate->shapes[0]->extents();
+        child_clip = intersect(
+            child_clip[0], child_clip[1], child_clip[2], child_clip[3],
+            content_left + bounding.x, content_top + bounding.y,
+            content_left + bounding.x + bounding.width,
+            content_top + bounding.y + bounding.height);
+    }
     for (const auto child : candidate->children) {
         composite_window(child, content_left, content_top,
-                         visible_content[0], visible_content[1],
-                         visible_content[2], visible_content[3]);
+                         child_clip[0], child_clip[1],
+                         child_clip[2], child_clip[3]);
     }
 }
 
@@ -940,6 +1019,74 @@ ServerState::broadcast_mapping_notify(std::uint8_t request,
     return true;
 }
 
+ShapeUpdate
+ServerState::set_window_shape(WindowRecord &candidate, std::uint8_t kind,
+                              std::optional<Region> shape)
+{
+    if (kind >= candidate.shapes.size())
+        return ShapeUpdate::invalid;
+    if (shape && shape->rectangles().size() > maximum_shape_rectangles)
+        return ShapeUpdate::resource_exhausted;
+    if (candidate.parent == 0)
+        return ShapeUpdate::updated;
+    const Rectangle extents = shape ? shape->extents()
+                                    : candidate.default_shape(kind);
+    std::vector<PlannedEvent> events;
+    try {
+        events.reserve(candidate.shape_event_clients.size());
+        for (const auto client : candidate.shape_event_clients) {
+            events.emplace_back(
+                client,
+                ShapeNotifyEvent{
+                    kind, candidate.id, wire_coordinate(extents.x),
+                    wire_coordinate(extents.y), wire_size(extents.width),
+                    wire_size(extents.height), current_time_,
+                    shape.has_value()});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return ShapeUpdate::queue_full;
+    }
+    if (!queue_events_atomically(events))
+        return ShapeUpdate::queue_full;
+    candidate.shapes[kind] = std::move(shape);
+    invalidate_scene();
+    return ShapeUpdate::updated;
+}
+
+bool
+ServerState::select_shape_events(WindowRecord &candidate,
+                                 std::uint32_t client, bool enabled)
+{
+    const auto found = std::find(
+        candidate.shape_event_clients.begin(),
+        candidate.shape_event_clients.end(), client);
+    if (!enabled) {
+        if (found != candidate.shape_event_clients.end())
+            candidate.shape_event_clients.erase(found);
+        return true;
+    }
+    if (found != candidate.shape_event_clients.end())
+        return true;
+    try {
+        candidate.shape_event_clients.push_back(client);
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::shape_events_selected(const WindowRecord &candidate,
+                                   std::uint32_t client) const noexcept
+{
+    return std::find(
+               candidate.shape_event_clients.begin(),
+               candidate.shape_event_clients.end(), client) !=
+        candidate.shape_event_clients.end();
+}
+
 SelectionUpdate
 ServerState::set_selection_owner(AtomId selection, std::uint32_t window_id,
                                  std::uint32_t client, std::uint32_t time)
@@ -1041,24 +1188,10 @@ std::uint32_t
 ServerState::deepest_window_at(std::uint32_t parent_id,
                                std::int32_t x, std::int32_t y) const
 {
-    const auto *parent = window(parent_id);
-    if (parent == nullptr)
+    if (window(parent_id) == nullptr)
         return 0;
-    for (auto iterator = parent->children.rbegin();
-         iterator != parent->children.rend(); ++iterator) {
-        const auto *child = window(*iterator);
-        if (child == nullptr || map_state(child->id) != 2)
-            continue;
-        const auto origin = absolute_position(child->id);
-        const std::int64_t border = child->border_width;
-        if (x < origin.first - border || y < origin.second - border ||
-            x >= origin.first + child->width + border ||
-            y >= origin.second + child->height + border) {
-            continue;
-        }
-        return deepest_window_at(child->id, x, y);
-    }
-    return parent_id;
+    const std::uint32_t child = child_window_at(parent_id, x, y);
+    return child == 0 ? parent_id : deepest_window_at(child, x, y);
 }
 
 EventDelivery
@@ -2372,6 +2505,11 @@ ServerState::disconnect_client(std::uint32_t owner)
         server_grab_owner_ = 0;
     for (auto &window_entry : windows_)
         window_entry.second.event_masks.erase(owner);
+    for (auto &window_entry : windows_) {
+        auto &clients = window_entry.second.shape_event_clients;
+        clients.erase(std::remove(clients.begin(), clients.end(), owner),
+                      clients.end());
+    }
     const auto queued = event_queues_.find(owner);
     if (queued != event_queues_.end()) {
         pending_events_ -= queued->second.size();
@@ -2441,6 +2579,40 @@ ServerState::all_event_masks(const WindowRecord &candidate) const
     for (const auto &selection : candidate.event_masks)
         masks |= selection.second;
     return masks;
+}
+
+std::uint32_t
+ServerState::child_window_at(std::uint32_t parent_id,
+                             std::int32_t x, std::int32_t y) const
+{
+    const auto *parent = window(parent_id);
+    if (parent == nullptr)
+        return 0;
+    for (auto iterator = parent->children.rbegin();
+         iterator != parent->children.rend(); ++iterator) {
+        const auto *child = window(*iterator);
+        if (child == nullptr || map_state(child->id) != 2)
+            continue;
+        const auto origin = absolute_position(child->id);
+        const std::int64_t border = child->border_width;
+        if (x < origin.first - border || y < origin.second - border ||
+            x >= origin.first + child->width + border ||
+            y >= origin.second + child->height + border) {
+            continue;
+        }
+        const std::int64_t local_x =
+            static_cast<std::int64_t>(x) - origin.first;
+        const std::int64_t local_y =
+            static_cast<std::int64_t>(y) - origin.second;
+        if ((child->shapes[0] &&
+             !child->shapes[0]->contains(local_x, local_y)) ||
+            (child->shapes[2] &&
+             !child->shapes[2]->contains(local_x, local_y))) {
+            continue;
+        }
+        return child->id;
+    }
+    return 0;
 }
 
 std::pair<std::int32_t, std::int32_t>

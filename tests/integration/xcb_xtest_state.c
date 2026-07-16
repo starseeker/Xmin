@@ -6,10 +6,14 @@
 
 #include <xcb/bigreq.h>
 #include <xcb/ge.h>
+#include <xcb/shape.h>
 #include <xcb/xcb.h>
 #include <xcb/xcbext.h>
 #include <xcb/xc_misc.h>
 #include <xcb/xtest.h>
+
+static int checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
+                   const char *operation);
 
 static xcb_genericevent_query_version_reply_t *
 query_generic_event_version(xcb_connection_t *connection,
@@ -70,6 +74,47 @@ cleanup:
     free(big);
     free(misc);
     free(generic);
+    return result;
+}
+
+static int
+test_shape(xcb_connection_t *connection, xcb_screen_t *screen)
+{
+    xcb_generic_error_t *error = NULL;
+    xcb_shape_query_version_reply_t *version = xcb_shape_query_version_reply(
+        connection, xcb_shape_query_version(connection), &error);
+    xcb_shape_query_extents_reply_t *extents = NULL;
+    xcb_window_t window = xcb_generate_id(connection);
+    const xcb_rectangle_t rectangle = { 2, 3, 40, 30 };
+    int result = 0;
+
+    if (error != NULL || version == NULL || version->major_version != 1 ||
+        version->minor_version != 1)
+        goto cleanup;
+    xcb_create_window(connection, screen->root_depth, window, screen->root,
+                      0, 0, 64, 48, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                      screen->root_visual, 0, NULL);
+    if (!checked(connection,
+                 xcb_shape_rectangles_checked(
+                     connection, XCB_SHAPE_SO_SET, XCB_SHAPE_SK_BOUNDING,
+                     XCB_CLIP_ORDERING_UNSORTED, window, 0, 0, 1, &rectangle),
+                 "SHAPE Rectangles"))
+        goto cleanup;
+    extents = xcb_shape_query_extents_reply(
+        connection, xcb_shape_query_extents(connection, window), &error);
+    if (error != NULL || extents == NULL || !extents->bounding_shaped ||
+        extents->bounding_shape_extents_x != rectangle.x ||
+        extents->bounding_shape_extents_y != rectangle.y ||
+        extents->bounding_shape_extents_width != rectangle.width ||
+        extents->bounding_shape_extents_height != rectangle.height)
+        goto cleanup;
+    result = 1;
+
+cleanup:
+    xcb_destroy_window(connection, window);
+    free(error);
+    free(extents);
+    free(version);
     return result;
 }
 
@@ -142,6 +187,11 @@ main(void)
     }
     if (!test_foundation_extensions(connection)) {
         fprintf(stderr, "foundation extension negotiation failed\n");
+        xcb_disconnect(connection);
+        return 1;
+    }
+    if (!test_shape(connection, screen)) {
+        fprintf(stderr, "SHAPE extension round trip failed\n");
         xcb_disconnect(connection);
         return 1;
     }

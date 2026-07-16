@@ -131,10 +131,14 @@ honors request timestamps,
 and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
-advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, and XTEST 2.2.
+advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2, and
+SHAPE 1.1.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
+SHAPE uses the shared canonical region algebra for every bounding, clip, and input
+operation; bounded bitmap conversion, typed per-client notifications, hit testing, and
+scene composition all consume the same per-window shape state.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

@@ -13,13 +13,26 @@ struct Rectangle {
     std::uint32_t height = 0;
 };
 
+enum class RegionOperation : std::uint8_t {
+    set,
+    unite,
+    intersect,
+    subtract,
+    invert,
+};
+
 class Region {
 public:
     [[nodiscard]] static bool canonicalize(
         const std::vector<Rectangle> &rectangles, Region &result);
+    [[nodiscard]] static bool combine(
+        RegionOperation operation, const Region &destination,
+        const Region &source, Region &result);
 
     [[nodiscard]] bool contains(std::int64_t x,
                                 std::int64_t y) const noexcept;
+    [[nodiscard]] bool translate(std::int32_t x, std::int32_t y);
+    [[nodiscard]] Rectangle extents() const noexcept;
     [[nodiscard]] bool empty() const noexcept { return rectangles_.empty(); }
     [[nodiscard]] const std::vector<Rectangle> &rectangles() const noexcept
     {

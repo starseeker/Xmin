@@ -29,6 +29,18 @@ struct MappingNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct ShapeNotifyEvent {
+    std::uint8_t kind = 0;
+    std::uint32_t window = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint32_t time = 0;
+    bool shaped = false;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -73,7 +85,7 @@ struct FocusEvent {
 
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
-    CoreInputEvent, CrossingEvent, FocusEvent>;
+    ShapeNotifyEvent, CoreInputEvent, CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next
 

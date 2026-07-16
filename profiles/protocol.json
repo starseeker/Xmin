@@ -48,7 +48,8 @@
       "name": "SHAPE",
       "xml": "shape.xml",
       "version": "1.1",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "XInputExtension",
