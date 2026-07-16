@@ -2095,6 +2095,59 @@ Connection::handle_copy_area(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_copy_plane(const RequestContext &context)
+{
+    if (context.request.size() != 32)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 28, context.order);
+    const auto source_id = reader.u32();
+    const auto destination_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    const auto source_x = reader.u16();
+    const auto source_y = reader.u16();
+    const auto destination_x = reader.u16();
+    const auto destination_y = reader.u16();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    const auto bit_plane = reader.u32();
+    if (!source_id || !destination_id || !graphics_id || !source_x ||
+        !source_y || !destination_x || !destination_y || !width || !height ||
+        !bit_plane) {
+        return malformed("truncated CopyPlane request");
+    }
+    const auto *source = server_.drawable_surface(*source_id);
+    if (source == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *source_id);
+    auto *destination = server_.drawable_surface(*destination_id);
+    if (destination == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *destination_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    const bool plane_in_depth = source->depth() == 32 ||
+        *bit_plane < (std::uint32_t{1} << source->depth());
+    if (*bit_plane == 0 || (*bit_plane & (*bit_plane - 1U)) != 0 ||
+        !plane_in_depth) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *bit_plane);
+    }
+    if (graphics->depth != destination->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    destination->copy_plane_from(
+        *source, signed_word(*source_x), signed_word(*source_y),
+        signed_word(*destination_x), signed_word(*destination_y), *width,
+        *height, *bit_plane, graphics->foreground, graphics->background,
+        graphics->function, graphics->plane_mask);
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_poly_points(const RequestContext &context)
 {
     if (context.request.size() < 12 ||
@@ -3112,6 +3165,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_clear_area;
         table[opcode_index(CoreOpcode::CopyArea)] =
             &Connection::handle_copy_area;
+        table[opcode_index(CoreOpcode::CopyPlane)] =
+            &Connection::handle_copy_plane;
         table[opcode_index(CoreOpcode::PolyPoint)] =
             &Connection::handle_poly_points;
         table[opcode_index(CoreOpcode::PolyLine)] =

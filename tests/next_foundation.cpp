@@ -300,16 +300,35 @@ test_surface_raster_and_overlap()
     lines->draw_line(-1000000, 4, 1000000, 4, 0x00abcdefU, 3,
                      0xffffffffU);
     lines->draw_line(-2, -2, 2, 2, 0x00123456U, 3, 0xffffffffU);
-    return expect(lines->pixel(0, 4) == 0x00abcdefU &&
-                      lines->pixel(7, 4) == 0x00abcdefU,
-                  "large clipped line did not span the surface") &&
-        expect(lines->pixel(0, 0) == 0x00123456U &&
-                   lines->pixel(1, 1) == 0x00123456U &&
-                   lines->pixel(2, 2) == 0x00123456U &&
-                   lines->pixel(7, 7) == 0x00777777U,
-               "diagonal clipped line rasterization failed") &&
-        expect(lines->pixel(3, 2) == 0,
-               "clipped line escaped its endpoint");
+    if (!expect(lines->pixel(0, 4) == 0x00abcdefU &&
+                    lines->pixel(7, 4) == 0x00abcdefU,
+                "large clipped line did not span the surface") ||
+        !expect(lines->pixel(0, 0) == 0x00123456U &&
+                    lines->pixel(1, 1) == 0x00123456U &&
+                    lines->pixel(2, 2) == 0x00123456U &&
+                    lines->pixel(7, 7) == 0x00777777U,
+                "diagonal clipped line rasterization failed") ||
+        !expect(lines->pixel(3, 2) == 0,
+                "clipped line escaped its endpoint")) {
+        return false;
+    }
+
+    auto bitmap = xmin::next::Surface::create(4, 1, 1);
+    auto projected = xmin::next::Surface::create(4, 1, 24);
+    if (!expect(bitmap && projected,
+                "CopyPlane test surface creation failed")) {
+        return false;
+    }
+    bitmap->draw_pixel(0, 0, 1, 3, 1);
+    bitmap->draw_pixel(2, 0, 1, 3, 1);
+    projected->copy_plane_from(*bitmap, 0, 0, 0, 0, 4, 1, 1,
+                               0x00ff0000U, 0x000000ffU, 3,
+                               0xffffffffU);
+    return expect(projected->pixel(0, 0) == 0x00ff0000U &&
+                      projected->pixel(1, 0) == 0x000000ffU &&
+                      projected->pixel(2, 0) == 0x00ff0000U &&
+                      projected->pixel(3, 0) == 0x000000ffU,
+                  "CopyPlane did not map source bits through GC colors");
 }
 
 bool

@@ -351,6 +351,64 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
     }
 }
 
+void
+Surface::copy_plane_from(const Surface &source, std::int32_t source_x,
+                         std::int32_t source_y,
+                         std::int32_t destination_x,
+                         std::int32_t destination_y, std::uint32_t width,
+                         std::uint32_t height, std::uint32_t bit_plane,
+                         std::uint32_t foreground, std::uint32_t background,
+                         std::uint8_t function, std::uint32_t plane_mask)
+{
+    const std::int64_t first_x = std::max<std::int64_t>(
+        {0, -static_cast<std::int64_t>(source_x),
+         -static_cast<std::int64_t>(destination_x)});
+    const std::int64_t first_y = std::max<std::int64_t>(
+        {0, -static_cast<std::int64_t>(source_y),
+         -static_cast<std::int64_t>(destination_y)});
+    const std::int64_t last_x = std::min<std::int64_t>(
+        {width, static_cast<std::int64_t>(source.width_) - source_x,
+         static_cast<std::int64_t>(width_) - destination_x});
+    const std::int64_t last_y = std::min<std::int64_t>(
+        {height, static_cast<std::int64_t>(source.height_) - source_y,
+         static_cast<std::int64_t>(height_) - destination_y});
+    if (first_x >= last_x || first_y >= last_y)
+        return;
+
+    std::int64_t first_row = first_y;
+    std::int64_t after_last_row = last_y;
+    std::int64_t row_step = 1;
+    if (&source == this && destination_y > source_y) {
+        first_row = last_y - 1;
+        after_last_row = first_y - 1;
+        row_step = -1;
+    }
+    std::int64_t first_column = first_x;
+    std::int64_t after_last_column = last_x;
+    std::int64_t column_step = 1;
+    if (&source == this && destination_y == source_y &&
+        destination_x > source_x) {
+        first_column = last_x - 1;
+        after_last_column = first_x - 1;
+        column_step = -1;
+    }
+    for (std::int64_t row = first_row; row != after_last_row;
+         row += row_step) {
+        for (std::int64_t column = first_column;
+             column != after_last_column; column += column_step) {
+            const auto sx = static_cast<std::size_t>(source_x + column);
+            const auto sy = static_cast<std::size_t>(source_y + row);
+            const auto dx = static_cast<std::size_t>(destination_x + column);
+            const auto dy = static_cast<std::size_t>(destination_y + row);
+            const std::uint32_t source_pixel =
+                source.pixels_[sy * source.width_ + sx];
+            store(dy * width_ + dx,
+                  (source_pixel & bit_plane) != 0 ? foreground : background,
+                  function, plane_mask);
+        }
+    }
+}
+
 std::uint32_t
 Surface::pixel(std::uint16_t x, std::uint16_t y) const noexcept
 {

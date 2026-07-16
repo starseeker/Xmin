@@ -117,7 +117,9 @@ main(void)
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
+    xcb_pixmap_t bitmap = XCB_NONE;
     xcb_gcontext_t graphics = XCB_NONE;
+    xcb_gcontext_t bitmap_graphics = XCB_NONE;
     xcb_colormap_t colormap = XCB_NONE;
     xcb_colormap_t copied_colormap = XCB_NONE;
     uint32_t pixel = 0;
@@ -389,6 +391,67 @@ main(void)
         if ((pixel & 0x00ffffffU) != 0x00ff0000U)
             goto cleanup;
     }
+
+    stage = "copying a bitmap plane through GC colors";
+    bitmap = xcb_generate_id(connection);
+    bitmap_graphics = xcb_generate_id(connection);
+    {
+        uint8_t bitmap_data[4] = { 0, 0, 0, 0 };
+        const uint32_t colors[] = { 0x00ffff00U, 0x0000ffffU };
+        const xcb_setup_t *setup = xcb_get_setup(connection);
+
+        bitmap_data[0] = setup->bitmap_format_bit_order == XCB_IMAGE_ORDER_LSB_FIRST
+            ? 0x05U
+            : 0xa0U;
+        if (!checked(connection,
+                     xcb_create_pixmap_checked(
+                         connection, 1, bitmap, screen->root, 8, 1),
+                     "CreatePixmap bitmap") ||
+            !checked(connection,
+                     xcb_create_gc_checked(
+                         connection, bitmap_graphics, bitmap, 0, NULL),
+                     "CreateGC bitmap") ||
+            !checked(connection,
+                     xcb_put_image_checked(
+                         connection, XCB_IMAGE_FORMAT_Z_PIXMAP, bitmap,
+                         bitmap_graphics, 8, 1, 0, 0, 0, 1,
+                         sizeof(bitmap_data), bitmap_data),
+                     "PutImage bitmap") ||
+            !checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics,
+                         XCB_GC_FOREGROUND | XCB_GC_BACKGROUND, colors),
+                     "ChangeGC CopyPlane colors") ||
+            !checked(connection,
+                     xcb_copy_plane_checked(
+                         connection, bitmap, child, graphics, 0, 0, 0, 5,
+                         8, 1, 1),
+                     "CopyPlane")) {
+            goto cleanup;
+        }
+    }
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, child, 0, 5,
+                      8, 1, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 8 * 4)
+        goto cleanup;
+    {
+        unsigned x;
+
+        for (x = 0; x < 8; ++x) {
+            const uint32_t expected = x == 0 || x == 2
+                ? 0x00ffff00U
+                : 0x0000ffffU;
+            memcpy(&pixel, xcb_get_image_data(image) + x * 4,
+                   sizeof(pixel));
+            if ((pixel & 0x00ffffffU) != expected)
+                goto cleanup;
+        }
+    }
     stage = "checking child pixels through the root";
     free(image);
     image = xcb_get_image_reply(
@@ -522,8 +585,12 @@ cleanup:
                                 property_atom->atom);
         if (graphics != XCB_NONE)
             xcb_free_gc(connection, graphics);
+        if (bitmap_graphics != XCB_NONE)
+            xcb_free_gc(connection, bitmap_graphics);
         if (pixmap != XCB_NONE)
             xcb_free_pixmap(connection, pixmap);
+        if (bitmap != XCB_NONE)
+            xcb_free_pixmap(connection, bitmap);
         if (copied_colormap != XCB_NONE)
             xcb_free_colormap(connection, copied_colormap);
         if (colormap != XCB_NONE)

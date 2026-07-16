@@ -64,7 +64,8 @@ to another while a 32-bit property remains correctly encoded for the opposite-en
 client after disconnect teardown.
 The next-server graphics vertical slice independently covers surface allocation caps,
 plane masks, overlap-safe self-copy, clipped point/line/segment/rectangle drawing, and
-pixmap-to-window fill/copy/readback in native and opposite client byte orders while
+pixmap-to-window fill/copy/readback plus cross-depth `CopyPlane` foreground/background
+mapping in native and opposite client byte orders while
 respecting the setup image byte order. Raw uploads
 cover 32-bit pixels and padded 1-bit scanlines in both client byte orders. Scene tests
 cover root backing preservation, borders, nested clipping, map/unmap restoration, and an

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "5c3ff2430e7b853b8385fbef3f9ba87934695f924efcdbb7d55129ba32d2ca4e",
+    "policy_sha256": "00fa32ba9c4a6d0ed6f46619416eb1994f198256a6cc6cbdf4b95b2e0d6ad8a7",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -573,7 +573,7 @@
       "name": "CopyPlane",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 64,
