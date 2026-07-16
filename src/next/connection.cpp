@@ -95,28 +95,6 @@ key_is_pressed(const InputState &input, std::uint8_t keycode) noexcept
             (1U << (keycode & 7U))) != 0;
 }
 
-void
-refresh_modifier_button_mask(InputState &input) noexcept
-{
-    std::uint16_t state = 0;
-    for (std::size_t group = 0; group < 8; ++group) {
-        for (std::size_t index = 0;
-             index < input.modifier_keys_per_group; ++index) {
-            const std::uint8_t keycode = input.modifier_map[
-                group * input.modifier_keys_per_group + index];
-            if (keycode != 0 && key_is_pressed(input, keycode)) {
-                state |= static_cast<std::uint16_t>(1U << group);
-                break;
-            }
-        }
-    }
-    for (std::size_t button = 1; button <= 5; ++button) {
-        if (input.pressed_buttons.test(button))
-            state |= static_cast<std::uint16_t>(1U << (button + 7));
-    }
-    input.modifier_button_mask = state;
-}
-
 std::int32_t
 signed_dword(std::uint32_t value) noexcept
 {
@@ -401,14 +379,32 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
-    const auto &mapping = std::get<MappingNotifyEvent>(event);
-    writer.u8(34); // MappingNotify
+    if (const auto *mapping = std::get_if<MappingNotifyEvent>(&event)) {
+        writer.u8(34); // MappingNotify
+        writer.u8(0);
+        writer.u16(mapping->sequence);
+        writer.u8(mapping->request);
+        writer.u8(mapping->first_keycode);
+        writer.u8(mapping->count);
+        writer.pad(25);
+        return writer.data();
+    }
+
+    const auto &input = std::get<CoreInputEvent>(event);
+    writer.u8(input.type);
+    writer.u8(input.detail);
+    writer.u16(input.sequence);
+    writer.u32(input.time);
+    writer.u32(input.root);
+    writer.u32(input.event);
+    writer.u32(input.child);
+    writer.i16(input.root_x);
+    writer.i16(input.root_y);
+    writer.i16(input.event_x);
+    writer.i16(input.event_y);
+    writer.u16(input.state);
+    writer.u8(input.same_screen ? 1 : 0);
     writer.u8(0);
-    writer.u16(mapping.sequence);
-    writer.u8(mapping.request);
-    writer.u8(mapping.first_keycode);
-    writer.u8(mapping.count);
-    writer.pad(25);
     return writer.data();
 }
 
@@ -4766,23 +4762,23 @@ Connection::handle_xtest(const RequestContext &context)
             if (*detail < minimum_keycode || *detail > maximum_keycode)
                 return send_error(context.order, bad_value, context.opcode,
                                   context.sequence, *detail, context.data);
-            const std::uint8_t mask = static_cast<std::uint8_t>(
-                1U << (*detail & 7U));
-            auto &keys = input.pressed_keys[*detail >> 3];
-            if (*type == 2)
-                keys |= mask;
-            else
-                keys &= static_cast<std::uint8_t>(~mask);
-            refresh_modifier_button_mask(input);
-            return Result<void>::success();
+            const auto delivered = server_.inject_input(
+                *type, *detail, input.pointer_x, input.pointer_y);
+            if (delivered == EventDelivery::queue_full)
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence, 0, context.data);
+            return drain_pending_events();
         }
         if (*type == 4 || *type == 5) {
             if (*detail < 1 || *detail > input.pointer_map.size())
                 return send_error(context.order, bad_value, context.opcode,
                                   context.sequence, *detail, context.data);
-            input.pressed_buttons.set(*detail, *type == 4);
-            refresh_modifier_button_mask(input);
-            return Result<void>::success();
+            const auto delivered = server_.inject_input(
+                *type, *detail, input.pointer_x, input.pointer_y);
+            if (delivered == EventDelivery::queue_full)
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence, 0, context.data);
+            return drain_pending_events();
         }
         if (*type == 6) {
             if (*detail > 1)
@@ -4794,11 +4790,15 @@ Connection::handle_xtest(const RequestContext &context)
                 x += input.pointer_x;
                 y += input.pointer_y;
             }
-            input.pointer_x = std::clamp<std::int32_t>(
+            x = std::clamp<std::int32_t>(
                 x, 0, static_cast<std::int32_t>(server_.width()) - 1);
-            input.pointer_y = std::clamp<std::int32_t>(
+            y = std::clamp<std::int32_t>(
                 y, 0, static_cast<std::int32_t>(server_.height()) - 1);
-            return Result<void>::success();
+            const auto delivered = server_.inject_input(*type, *detail, x, y);
+            if (delivered == EventDelivery::queue_full)
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence, 0, context.data);
+            return drain_pending_events();
         }
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *type, context.data);

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <limits>
 #include <new>
 #include <utility>
 
@@ -47,6 +48,14 @@ append_without(std::vector<PassiveGrab> &destination,
         destination.push_back(std::move(retained));
     }
     return true;
+}
+
+std::int16_t
+wire_coordinate(std::int32_t value) noexcept
+{
+    return static_cast<std::int16_t>(std::clamp<std::int32_t>(
+        value, std::numeric_limits<std::int16_t>::min(),
+        std::numeric_limits<std::int16_t>::max()));
 }
 
 } // namespace
@@ -786,6 +795,274 @@ ServerState::deliver_client_message(std::uint32_t destination,
         candidate = window(candidate->parent);
     }
     return EventDelivery::no_recipient;
+}
+
+std::uint32_t
+ServerState::deepest_window_at(std::uint32_t parent_id,
+                               std::int32_t x, std::int32_t y) const
+{
+    const auto *parent = window(parent_id);
+    if (parent == nullptr)
+        return 0;
+    for (auto iterator = parent->children.rbegin();
+         iterator != parent->children.rend(); ++iterator) {
+        const auto *child = window(*iterator);
+        if (child == nullptr || map_state(child->id) != 2)
+            continue;
+        const auto origin = absolute_position(child->id);
+        const std::int64_t border = child->border_width;
+        if (x < origin.first - border || y < origin.second - border ||
+            x >= origin.first + child->width + border ||
+            y >= origin.second + child->height + border) {
+            continue;
+        }
+        return deepest_window_at(child->id, x, y);
+    }
+    return parent_id;
+}
+
+EventDelivery
+ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
+                               std::uint32_t source,
+                               std::uint32_t propagation_stop,
+                               std::uint32_t pointer_window,
+                               const ActiveGrab *grab)
+{
+    const auto deliver = [&](std::uint32_t destination,
+                             const std::vector<std::uint32_t> &recipients,
+                             CoreInputEvent routed) {
+        const auto origin = absolute_position(destination);
+        routed.event = destination;
+        routed.event_x = wire_coordinate(
+            static_cast<std::int32_t>(routed.root_x) - origin.first);
+        routed.event_y = wire_coordinate(
+            static_cast<std::int32_t>(routed.root_y) - origin.second);
+        routed.child = 0;
+        std::uint32_t child = pointer_window;
+        while (child != 0 && child != destination) {
+            const auto *candidate = window(child);
+            if (candidate == nullptr)
+                break;
+            if (candidate->parent == destination) {
+                routed.child = child;
+                break;
+            }
+            child = candidate->parent;
+        }
+        if (pending_events_ > maximum_pending_events - recipients.size())
+            return EventDelivery::queue_full;
+        for (const auto recipient : recipients) {
+            if (!can_queue_event(recipient))
+                return EventDelivery::queue_full;
+        }
+        std::vector<std::uint32_t> queued;
+        try {
+            queued.reserve(recipients.size());
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        for (const auto recipient : recipients) {
+            if (queue_event(recipient, routed)) {
+                queued.push_back(recipient);
+                continue;
+            }
+            const auto failed = event_queues_.find(recipient);
+            if (failed != event_queues_.end() && failed->second.empty())
+                event_queues_.erase(failed);
+            for (const auto rollback : queued) {
+                const auto found = event_queues_.find(rollback);
+                if (found == event_queues_.end() || found->second.empty())
+                    continue;
+                found->second.pop_back();
+                --pending_events_;
+                if (found->second.empty())
+                    event_queues_.erase(found);
+            }
+            return EventDelivery::queue_full;
+        }
+        return EventDelivery::delivered;
+    };
+
+    const auto forced = [&]() {
+        if (grab == nullptr || (grab->event_mask & mask) == 0)
+            return EventDelivery::no_recipient;
+        return deliver(grab->window, {grab->owner}, event);
+    };
+    if (grab != nullptr && !grab->owner_events)
+        return forced();
+
+    auto *candidate = window(source);
+    std::uint32_t propagated_mask = mask;
+    while (candidate != nullptr) {
+        std::vector<std::uint32_t> recipients;
+        try {
+            for (const auto &selection : candidate->event_masks) {
+                if ((selection.second & propagated_mask) != 0 &&
+                    (grab == nullptr || selection.first == grab->owner)) {
+                    recipients.push_back(selection.first);
+                }
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        if (!recipients.empty())
+            return deliver(candidate->id, recipients, event);
+        if (candidate->id == propagation_stop || candidate->parent == 0)
+            break;
+        propagated_mask &= ~candidate->do_not_propagate_mask;
+        if (propagated_mask == 0)
+            break;
+        candidate = window(candidate->parent);
+    }
+    return forced();
+}
+
+void
+ServerState::refresh_modifier_button_mask() noexcept
+{
+    std::uint16_t state = 0;
+    for (std::size_t group = 0; group < 8; ++group) {
+        for (std::size_t index = 0;
+             index < input_.modifier_keys_per_group; ++index) {
+            const std::uint8_t keycode = input_.modifier_map[
+                group * input_.modifier_keys_per_group + index];
+            if (keycode != 0 &&
+                (input_.pressed_keys[keycode >> 3] &
+                 (1U << (keycode & 7U))) != 0) {
+                state |= static_cast<std::uint16_t>(1U << group);
+                break;
+            }
+        }
+    }
+    for (std::size_t button = 1; button <= 5; ++button) {
+        if (input_.pressed_buttons.test(button))
+            state |= static_cast<std::uint16_t>(1U << (button + 7));
+    }
+    input_.modifier_button_mask = state;
+}
+
+EventDelivery
+ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
+                          std::int32_t root_x, std::int32_t root_y)
+{
+    const bool key_event = type == 2 || type == 3;
+    const bool button_event = type == 4 || type == 5;
+    const bool motion_event = type == 6;
+    const std::uint16_t state_before = input_.modifier_button_mask;
+    const std::int32_t event_x = motion_event ? root_x : input_.pointer_x;
+    const std::int32_t event_y = motion_event ? root_y : input_.pointer_y;
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, event_x, event_y);
+    std::uint32_t source = pointer_window;
+    std::uint32_t propagation_stop = root_window_id;
+    if (key_event) {
+        if (input_.focus.kind == FocusKind::none)
+            source = 0;
+        else if (input_.focus.kind == FocusKind::window) {
+            propagation_stop = input_.focus.window;
+            if (pointer_window != input_.focus.window &&
+                !is_descendant(pointer_window, input_.focus.window)) {
+                source = input_.focus.window;
+            }
+        }
+    }
+
+    std::uint8_t wire_detail = detail;
+    if (button_event)
+        wire_detail = input_.pointer_map[detail - 1];
+    std::uint32_t mask = key_event
+        ? (type == 2 ? 1U << 0 : 1U << 1)
+        : (button_event
+            ? (type == 4 ? 1U << 2 : 1U << 3)
+            : 1U << 6);
+    if (motion_event && input_.pressed_buttons.any()) {
+        mask |= 1U << 13;
+        for (std::size_t button = 1; button <= 5; ++button) {
+            if (input_.pressed_buttons.test(button))
+                mask |= 1U << (button + 7);
+        }
+    }
+
+    std::optional<ActiveGrab> activated;
+    const ActiveGrab *grab = key_event
+        ? (input_.keyboard_grab ? &*input_.keyboard_grab : nullptr)
+        : (input_.pointer_grab ? &*input_.pointer_grab : nullptr);
+    if (grab == nullptr && (type == 2 || type == 4)) {
+        const PassiveGrabKind kind = key_event
+            ? PassiveGrabKind::key
+            : PassiveGrabKind::button;
+        for (const auto &passive : passive_grabs_) {
+            const std::uint8_t grab_detail = button_event
+                ? wire_detail
+                : detail;
+            if (passive.kind != kind ||
+                !passive.details.test(grab_detail) ||
+                !passive.modifiers.test(state_before & all_modifiers_mask) ||
+                (source != passive.window &&
+                 !is_descendant(source, passive.window))) {
+                continue;
+            }
+            activated = ActiveGrab{
+                passive.owner, passive.window, passive.confine_to,
+                current_time_, passive.event_mask, passive.pointer_mode,
+                passive.keyboard_mode, passive.owner_events, true,
+                grab_detail};
+            grab = &*activated;
+            break;
+        }
+    }
+
+    CoreInputEvent event;
+    event.type = type;
+    event.detail = motion_event ? 0 : wire_detail;
+    event.time = current_time_;
+    event.root = root_window_id;
+    event.root_x = wire_coordinate(event_x);
+    event.root_y = wire_coordinate(event_y);
+    event.state = state_before;
+    const EventDelivery delivered = source == 0 ||
+            (button_event && wire_detail == 0)
+        ? EventDelivery::no_recipient
+        : route_input_event(event, mask, source, propagation_stop,
+                            pointer_window, grab);
+    if (delivered == EventDelivery::queue_full)
+        return delivered;
+
+    if (key_event) {
+        const std::uint8_t bit = static_cast<std::uint8_t>(
+            1U << (detail & 7U));
+        auto &keys = input_.pressed_keys[detail >> 3];
+        if (type == 2)
+            keys |= bit;
+        else
+            keys &= static_cast<std::uint8_t>(~bit);
+    }
+    else if (button_event) {
+        input_.pressed_buttons.set(detail, type == 4);
+    }
+    else if (motion_event) {
+        input_.pointer_x = root_x;
+        input_.pointer_y = root_y;
+    }
+    refresh_modifier_button_mask();
+    if (activated) {
+        if (key_event)
+            input_.keyboard_grab = *activated;
+        else
+            input_.pointer_grab = *activated;
+    }
+    if (type == 3 && input_.keyboard_grab &&
+        input_.keyboard_grab->passive &&
+        input_.keyboard_grab->passive_detail == detail) {
+        input_.keyboard_grab.reset();
+    }
+    if (type == 5 && input_.pointer_grab &&
+        input_.pointer_grab->passive && input_.pressed_buttons.none()) {
+        input_.pointer_grab.reset();
+    }
+    return delivered;
 }
 
 bool

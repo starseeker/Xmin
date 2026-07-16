@@ -1762,6 +1762,15 @@ check_xtest(int descriptor, bool little)
         return false;
     }
 
+    request.assign(16, 0);
+    request[0] = 2; // ChangeWindowAttributes
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 1U << 11, little); // CWEventMask
+    put32(request, 12, 1U << 6, little); // PointerMotionMask
+    if (!write_all(descriptor, request))
+        return false;
+
     const auto fake_input = [little](std::uint8_t type, std::uint8_t detail,
                                      std::int16_t x = 0,
                                      std::int16_t y = 0) {
@@ -1784,7 +1793,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
-        reply.size() != 40 || get16(reply, 2, little) != 4 ||
+        reply.size() != 40 || get16(reply, 2, little) != 5 ||
         reply[20] != 1) {
         return false;
     }
@@ -1792,7 +1801,7 @@ check_xtest(int descriptor, bool little)
     request = fake_input(99, 0); // invalid event type
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 2 ||
-        get16(reply, 2, little) != 5 || get16(reply, 8, little) != 2 ||
+        get16(reply, 2, little) != 6 || get16(reply, 8, little) != 2 ||
         reply[10] != 128) {
         return false;
     }
@@ -1805,20 +1814,31 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) ||
-        reply.size() != 40 || get16(reply, 2, little) != 7 ||
+        reply.size() != 40 || get16(reply, 2, little) != 8 ||
         reply[20] != 0) {
         return false;
     }
 
     request = fake_input(6, 0, 17, 19); // absolute MotionNotify
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 6 || reply[1] != 0 ||
+        get16(reply, 2, little) != 9 ||
+        get32(reply, 8, little) != root_window ||
+        get32(reply, 12, little) != root_window ||
+        get32(reply, 16, little) != 0 ||
+        get16(reply, 20, little) != 17 ||
+        get16(reply, 22, little) != 19 ||
+        get16(reply, 24, little) != 17 ||
+        get16(reply, 26, little) != 19 ||
+        get16(reply, 28, little) != 0 || reply[30] != 1) {
         return false;
+    }
     request.assign(8, 0);
     request[0] = 38; // QueryPointer
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 9 || get16(reply, 16, little) != 17 ||
+        get16(reply, 2, little) != 10 || get16(reply, 16, little) != 17 ||
         get16(reply, 18, little) != 19) {
         return false;
     }
@@ -1831,7 +1851,7 @@ check_xtest(int descriptor, bool little)
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 11 ||
+        get16(reply, 2, little) != 12 ||
         get16(reply, 24, little) != 0x0100) {
         return false;
     }
@@ -1840,14 +1860,18 @@ check_xtest(int descriptor, bool little)
     if (!write_all(descriptor, request))
         return false;
     request = fake_input(6, 0, 160, 120); // restore pointer center
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 6 || get16(reply, 2, little) != 14 ||
+        get16(reply, 20, little) != 160 ||
+        get16(reply, 22, little) != 120) {
         return false;
+    }
     request.assign(8, 0);
     request[0] = 38;
     put16(request, 2, 2, little);
     put32(request, 4, root_window, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        get16(reply, 2, little) != 14 ||
+        get16(reply, 2, little) != 15 ||
         get16(reply, 16, little) != 160 ||
         get16(reply, 18, little) != 120 ||
         get16(reply, 24, little) != 0) {
@@ -1861,7 +1885,7 @@ check_xtest(int descriptor, bool little)
     request[4] = 2;
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 2 ||
-        get16(reply, 2, little) != 15 || get16(reply, 8, little) != 3) {
+        get16(reply, 2, little) != 16 || get16(reply, 8, little) != 3) {
         return false;
     }
     request[4] = 1;
@@ -1876,7 +1900,7 @@ check_xtest(int descriptor, bool little)
     put32(request, 8, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && reply[1] == 1 &&
-        get16(reply, 2, little) == 17;
+        get16(reply, 2, little) == 18;
 }
 
 bool

@@ -130,7 +130,11 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The first constexpr extension-registry entry advertises XTEST 2.2 at a stable opcode.
 Its typed request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
-input snapshot; delayed scheduling and routed input events remain later vertical slices.
+input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate
+rules, routes typed core events through normal selections or active/passive grabs, stamps
+each recipient's sequence at enqueue time, and commits device state only after successful
+delivery.  Delayed scheduling, crossing/focus events, and repeat timers remain later
+vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with

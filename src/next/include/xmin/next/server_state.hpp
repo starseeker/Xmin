@@ -136,6 +136,8 @@ struct ActiveGrab {
     std::uint8_t pointer_mode = 1;
     std::uint8_t keyboard_mode = 1;
     bool owner_events = false;
+    bool passive = false;
+    std::uint8_t passive_detail = 0;
 };
 
 enum class PassiveGrabKind : std::uint8_t {
@@ -300,6 +302,9 @@ public:
     [[nodiscard]] bool broadcast_mapping_notify(
         std::uint8_t request, std::uint8_t first_keycode,
         std::uint8_t count);
+    [[nodiscard]] EventDelivery inject_input(
+        std::uint8_t type, std::uint8_t detail,
+        std::int32_t root_x, std::int32_t root_y);
     [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
     [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
     void pop_event(std::uint32_t client);
@@ -373,6 +378,13 @@ private:
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     [[nodiscard]] std::uint16_t client_sequence(
         std::uint32_t client) const noexcept;
+    [[nodiscard]] std::uint32_t deepest_window_at(
+        std::uint32_t parent, std::int32_t x, std::int32_t y) const;
+    [[nodiscard]] EventDelivery route_input_event(
+        CoreInputEvent event, std::uint32_t mask,
+        std::uint32_t source, std::uint32_t propagation_stop,
+        std::uint32_t pointer_window, const ActiveGrab *grab);
+    void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;
     void composite_scene();

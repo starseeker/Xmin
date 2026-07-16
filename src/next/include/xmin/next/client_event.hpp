@@ -29,8 +29,25 @@ struct MappingNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct CoreInputEvent {
+    std::uint8_t type = 0;
+    std::uint8_t detail = 0;
+    std::uint32_t time = 0;
+    std::uint32_t root = 0;
+    std::uint32_t event = 0;
+    std::uint32_t child = 0;
+    std::int16_t root_x = 0;
+    std::int16_t root_y = 0;
+    std::int16_t event_x = 0;
+    std::int16_t event_y = 0;
+    std::uint16_t state = 0;
+    bool same_screen = true;
+    std::uint16_t sequence = 0;
+};
+
 using ClientEvent = std::variant<
-    SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent>;
+    SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
+    CoreInputEvent>;
 
 } // namespace xmin::next
 

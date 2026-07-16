@@ -430,6 +430,204 @@ test_passive_grabs()
 }
 
 bool
+test_input_routing()
+{
+    constexpr std::uint32_t first_owner = 0x00200000;
+    constexpr std::uint32_t second_owner = 0x00400000;
+    constexpr std::uint32_t parent_id = first_owner | 1U;
+    constexpr std::uint32_t child_id = first_owner | 2U;
+    constexpr std::uint32_t key_press_mask = 1U << 0;
+    constexpr std::uint32_t key_release_mask = 1U << 1;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(first_owner) &&
+                    server.register_client(second_owner),
+                "input-routing client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(first_owner, 31);
+    server.note_client_sequence(second_owner, 47);
+
+    xmin::next::WindowRecord parent;
+    parent.id = parent_id;
+    parent.parent = xmin::next::root_window_id;
+    parent.x = 10;
+    parent.y = 8;
+    parent.width = 60;
+    parent.height = 50;
+    xmin::next::WindowRecord child;
+    child.id = child_id;
+    child.parent = parent_id;
+    child.x = 5;
+    child.y = 6;
+    child.width = 20;
+    child.height = 15;
+    if (!expect(server.add_window(std::move(parent), first_owner) &&
+                    server.add_window(std::move(child), first_owner),
+                "input-routing window insertion failed")) {
+        return false;
+    }
+    auto *stored_parent = server.window(parent_id);
+    auto *stored_child = server.window(child_id);
+    server.set_window_mapped(*stored_parent, true);
+    server.set_window_mapped(*stored_child, true);
+    stored_parent->event_masks.emplace(
+        second_owner, key_press_mask | key_release_mask);
+    if (!expect(server.inject_input(6, 0, 18, 17) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.input().pointer_x == 18 &&
+                    server.input().pointer_y == 17,
+                "unselected motion did not update pointer state") ||
+        !expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, parent_id, 0, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "input-routing focus setup failed") ||
+        !expect(server.inject_input(2, 38, 18, 17) ==
+                    xmin::next::EventDelivery::delivered,
+                "key press did not propagate to an ancestor")) {
+        return false;
+    }
+    const auto *queued = server.next_event(second_owner);
+    const auto *key = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(key != nullptr && key->type == 2 && key->detail == 38 &&
+                    key->root == xmin::next::root_window_id &&
+                    key->event == parent_id && key->child == child_id &&
+                    key->root_x == 18 && key->root_y == 17 &&
+                    key->event_x == 8 && key->event_y == 9 &&
+                    key->state == 0 && key->same_screen &&
+                    key->sequence == 47,
+                "propagated key event lost routing metadata")) {
+        return false;
+    }
+    server.pop_event(second_owner);
+
+    stored_child->do_not_propagate_mask = key_release_mask;
+    if (!expect(server.inject_input(3, 38, 18, 17) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    !server.has_pending_event(second_owner) &&
+                    (server.input().pressed_keys[38 >> 3] &
+                     (1U << (38 & 7U))) == 0,
+                "do-not-propagate did not stop a key release")) {
+        return false;
+    }
+    stored_child->do_not_propagate_mask = 0;
+
+    if (!expect(server.inject_input(6, 0, 90, 70) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.inject_input(2, 41, 90, 70) ==
+                    xmin::next::EventDelivery::delivered,
+                "focused key event outside the focus subtree was lost")) {
+        return false;
+    }
+    queued = server.next_event(second_owner);
+    key = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(key != nullptr && key->event == parent_id &&
+                    key->child == 0 && key->root_x == 90 &&
+                    key->root_y == 70 && key->event_x == 80 &&
+                    key->event_y == 62,
+                "focused key event used the dispatch source as its child")) {
+        return false;
+    }
+    server.pop_event(second_owner);
+    if (!expect(server.inject_input(3, 41, 90, 70) ==
+                    xmin::next::EventDelivery::delivered,
+                "focused key release outside the focus subtree was lost")) {
+        return false;
+    }
+    server.pop_event(second_owner);
+    stored_parent->event_masks.erase(second_owner);
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        first_owner, key_press_mask | key_release_mask);
+    if (!expect(server.inject_input(2, 42, 90, 70) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.inject_input(3, 42, 90, 70) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    !server.has_pending_event(first_owner),
+                "keyboard propagation escaped above the focus window")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.erase(first_owner);
+    stored_parent->event_masks.emplace(
+        second_owner, key_press_mask | key_release_mask);
+    if (!expect(server.inject_input(6, 0, 18, 17) ==
+                    xmin::next::EventDelivery::no_recipient,
+                "pointer restoration unexpectedly delivered an event")) {
+        return false;
+    }
+
+    server.input().keyboard_grab = xmin::next::ActiveGrab{
+        first_owner, xmin::next::root_window_id, 0, server.current_time(),
+        key_press_mask, 1, 1, false};
+    if (!expect(server.inject_input(2, 39, 18, 17) ==
+                    xmin::next::EventDelivery::delivered,
+                "active keyboard grab did not receive a key press")) {
+        return false;
+    }
+    queued = server.next_event(first_owner);
+    key = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(key != nullptr && key->detail == 39 &&
+                    key->event == xmin::next::root_window_id &&
+                    key->child == parent_id && key->sequence == 31 &&
+                    !server.has_pending_event(second_owner),
+                "active keyboard grab did not override normal selection")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    if (!expect(server.inject_input(3, 39, 18, 17) ==
+                    xmin::next::EventDelivery::no_recipient,
+                "unselected grabbed key release was delivered")) {
+        return false;
+    }
+    server.input().keyboard_grab.reset();
+
+    xmin::next::PassiveGrab passive;
+    passive.kind = xmin::next::PassiveGrabKind::key;
+    passive.details = xmin::next::passive_grab_details(passive.kind, 40);
+    passive.modifiers = xmin::next::passive_grab_modifiers(0);
+    passive.owner = first_owner;
+    passive.window = parent_id;
+    passive.event_mask = key_press_mask | key_release_mask;
+    if (!expect(server.add_passive_grab(std::move(passive)) ==
+                    xmin::next::PassiveGrabUpdate::updated,
+                "passive input-routing grab insertion failed") ||
+        !expect(server.inject_input(2, 40, 18, 17) ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.input().keyboard_grab &&
+                    server.input().keyboard_grab->passive &&
+                    server.input().keyboard_grab->passive_detail == 40,
+                "passive key grab did not activate")) {
+        return false;
+    }
+    queued = server.next_event(first_owner);
+    key = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(key != nullptr && key->detail == 40 &&
+                    key->event == parent_id && key->child == child_id,
+                "passive grab press used the wrong event path")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    if (!expect(server.inject_input(3, 40, 18, 17) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.input().keyboard_grab,
+                "passive key grab did not release")) {
+        return false;
+    }
+    queued = server.next_event(first_owner);
+    key = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    return expect(key != nullptr && key->type == 3 && key->detail == 40,
+                  "passive grab release event was not delivered");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -733,6 +931,7 @@ main()
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_passive_grabs() &&
+            test_input_routing() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&
