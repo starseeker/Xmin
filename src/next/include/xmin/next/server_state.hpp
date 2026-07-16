@@ -35,6 +35,9 @@ constexpr std::size_t maximum_pending_events = 4096;
 constexpr std::size_t maximum_passive_grabs_per_client = 256;
 constexpr std::size_t maximum_passive_grabs = 4096;
 constexpr std::size_t maximum_shape_rectangles = 32768;
+constexpr std::size_t maximum_xfixes_regions = 4096;
+constexpr std::size_t maximum_xfixes_barriers = 4096;
+constexpr std::size_t maximum_xfixes_subscriptions = 4096;
 constexpr std::size_t maximum_sync_wait_conditions =
     maximum_pending_events_per_client;
 constexpr std::uint16_t any_modifier = 0x8000;
@@ -54,6 +57,8 @@ struct PropertyValue {
 };
 
 struct CursorImage {
+    std::uint32_t serial = 0;
+    AtomId name = 0;
     std::uint16_t width = 0;
     std::uint16_t height = 0;
     std::uint16_t x_hot = 0;
@@ -147,6 +152,36 @@ struct SelectionRecord {
     std::uint32_t window = 0;
     std::uint32_t client = 0;
     std::uint32_t changed_at = 0;
+};
+
+struct XFixesSelectionSubscription {
+    std::uint32_t client = 0;
+    std::uint32_t window = 0;
+    AtomId selection = 0;
+    std::uint32_t event_mask = 0;
+};
+
+struct XFixesCursorSubscription {
+    std::uint32_t client = 0;
+    std::uint32_t window = 0;
+    std::uint32_t event_mask = 0;
+};
+
+struct XFixesBarrierRecord {
+    std::uint32_t id = 0;
+    std::uint32_t window = 0;
+    std::int16_t x1 = 0;
+    std::int16_t y1 = 0;
+    std::int16_t x2 = 0;
+    std::int16_t y2 = 0;
+    std::uint32_t directions = 0;
+    std::vector<std::uint16_t> devices;
+};
+
+struct SaveSetEntry {
+    std::uint32_t window = 0;
+    bool to_root = false;
+    bool map = true;
 };
 
 enum class FocusKind : std::uint8_t {
@@ -312,6 +347,13 @@ enum class ShapeUpdate {
     queue_full,
 };
 
+enum class XFixesUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
+    queue_full,
+};
+
 enum class SyncTestType : std::uint8_t {
     positive_transition = 0,
     negative_transition = 1,
@@ -460,6 +502,40 @@ public:
     [[nodiscard]] const CursorRecord *cursor(std::uint32_t id) const;
     [[nodiscard]] bool add_cursor(CursorRecord cursor, std::uint32_t owner);
     [[nodiscard]] bool erase_cursor(std::uint32_t id);
+    [[nodiscard]] EventDelivery cursor_maybe_changed();
+    [[nodiscard]] XFixesUpdate set_window_cursor(
+        WindowRecord &window, std::shared_ptr<CursorImage> cursor);
+    [[nodiscard]] XFixesUpdate set_pointer_grab_cursor(
+        std::uint32_t event_mask, std::shared_ptr<CursorImage> cursor);
+    [[nodiscard]] XFixesUpdate replace_cursor(
+        const std::shared_ptr<CursorImage> &source,
+        const std::shared_ptr<CursorImage> &destination);
+    [[nodiscard]] XFixesUpdate replace_cursor_by_name(
+        const std::shared_ptr<CursorImage> &source, AtomId name);
+    [[nodiscard]] Region *xfixes_region(std::uint32_t id);
+    [[nodiscard]] const Region *xfixes_region(std::uint32_t id) const;
+    [[nodiscard]] bool add_xfixes_region(
+        std::uint32_t id, Region region, std::uint32_t owner);
+    [[nodiscard]] bool erase_xfixes_region(std::uint32_t id);
+    [[nodiscard]] XFixesUpdate select_xfixes_selection_input(
+        std::uint32_t client, std::uint32_t window, AtomId selection,
+        std::uint32_t event_mask);
+    [[nodiscard]] XFixesUpdate select_xfixes_cursor_input(
+        std::uint32_t client, std::uint32_t window,
+        std::uint32_t event_mask);
+    [[nodiscard]] XFixesUpdate hide_cursor(std::uint32_t client);
+    [[nodiscard]] XFixesUpdate show_cursor(std::uint32_t client);
+    [[nodiscard]] bool cursor_hidden() const noexcept
+    {
+        return !cursor_hide_counts_.empty();
+    }
+    [[nodiscard]] bool add_xfixes_barrier(
+        XFixesBarrierRecord barrier, std::uint32_t owner);
+    [[nodiscard]] bool erase_xfixes_barrier(std::uint32_t id,
+                                            std::uint32_t owner);
+    [[nodiscard]] XFixesUpdate alter_save_set(
+        std::uint32_t client, std::uint32_t window, bool insert,
+        bool to_root, bool map);
     [[nodiscard]] SyncCounterRecord *sync_counter(std::uint32_t id);
     [[nodiscard]] const SyncCounterRecord *sync_counter(
         std::uint32_t id) const;
@@ -572,6 +648,12 @@ private:
         render_pictures_;
     std::unordered_map<std::uint32_t, RenderGlyphSet> render_glyph_sets_;
     std::unordered_map<std::uint32_t, CursorRecord> cursors_;
+    std::unordered_map<std::uint32_t, Region> xfixes_regions_;
+    std::unordered_map<std::uint32_t, XFixesBarrierRecord> xfixes_barriers_;
+    std::vector<XFixesSelectionSubscription> xfixes_selection_inputs_;
+    std::vector<XFixesCursorSubscription> xfixes_cursor_inputs_;
+    std::unordered_map<std::uint32_t, std::uint32_t> cursor_hide_counts_;
+    std::unordered_map<std::uint32_t, std::vector<SaveSetEntry>> save_sets_;
     std::unordered_map<std::uint32_t, std::vector<SyncWaitCondition>>
         sync_counter_waits_;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
@@ -593,6 +675,8 @@ private:
     InputState input_;
     std::optional<KeyRepeat> key_repeat_;
     std::vector<PassiveGrab> passive_grabs_;
+    std::shared_ptr<CursorImage> displayed_cursor_;
+    std::uint32_t next_cursor_serial_ = 1;
     bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
@@ -610,6 +694,12 @@ private:
         std::vector<PlannedEvent> &events) const;
     [[nodiscard]] std::uint16_t client_sequence(
         std::uint32_t client) const noexcept;
+    [[nodiscard]] std::shared_ptr<CursorImage> current_cursor_for(
+        std::uint32_t pointer_window,
+        const ActiveGrab *pointer_grab) const noexcept;
+    [[nodiscard]] EventDelivery append_cursor_change(
+        const std::shared_ptr<CursorImage> &cursor,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] std::uint32_t deepest_window_at(
         std::uint32_t parent, std::int32_t x, std::int32_t y) const;
     [[nodiscard]] EventDelivery route_input_event(
@@ -635,6 +725,11 @@ private:
     void erase_window_tree(std::uint32_t id) noexcept;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
+    void apply_save_set(std::uint32_t owner);
+    void constrain_pointer_by_barriers(std::int32_t old_x,
+                                       std::int32_t old_y,
+                                       std::int32_t &new_x,
+                                       std::int32_t &new_y) const noexcept;
     void revert_focus_from(std::uint32_t window) noexcept;
     void composite_scene();
     void composite_window(std::uint32_t id, std::int64_t parent_x,

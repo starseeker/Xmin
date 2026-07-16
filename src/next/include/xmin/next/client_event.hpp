@@ -60,6 +60,25 @@ struct SyncAlarmNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct XFixesSelectionNotifyEvent {
+    std::uint8_t subtype = 0;
+    std::uint32_t window = 0;
+    std::uint32_t owner = 0;
+    std::uint32_t selection = 0;
+    std::uint32_t time = 0;
+    std::uint32_t selection_time = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct XFixesCursorNotifyEvent {
+    std::uint8_t subtype = 0;
+    std::uint32_t window = 0;
+    std::uint32_t cursor_serial = 0;
+    std::uint32_t time = 0;
+    std::uint32_t name = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -105,7 +124,8 @@ struct FocusEvent {
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
     ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
-    CoreInputEvent, CrossingEvent, FocusEvent>;
+    XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent, CoreInputEvent,
+    CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next
 

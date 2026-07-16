@@ -132,7 +132,7 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
-SHAPE 1.1, SYNC 3.1, and RENDER 0.11.
+SHAPE 1.1, SYNC 3.1, RENDER 0.11, and XFIXES 6.0.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -155,6 +155,13 @@ Core and RENDER cursors use shared image ownership across windows, grabs, and
 animation frames.  Pictures retain freed pixmaps and alpha-map pictures with
 budget-accounted ownership, while window destruction invalidates its pictures,
 matching X resource lifetime without dangling IDs.
+XFIXES implements every 6.0 request with typed regions, selection and cursor
+subscriptions, nested cursor visibility, cursor naming and live-reference
+replacement, save sets, disconnect modes, and pointer barriers.  Its regions reuse
+the same canonical algebra as SHAPE, GC clips, window shapes, and RENDER picture
+clips.  Selection ownership changes and displayed-cursor changes atomically enqueue
+typed extension events before any later reply, while client teardown rescues save-set
+windows and removes owned regions, barriers, subscriptions, and visibility state.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

@@ -77,6 +77,12 @@ picture attributes and lifetime, every operator class, gradients, transforms,
 filters, clips, A1/A8 staging, trapezoids/triangles/traps, shared glyph sets and
 8/16/32-bit composition streams, core/ARGB/animated cursor lifecycle, exact extension
 errors, and an independent generated-libxcb pixel oracle against both servers,
+all XFIXES 6.0 requests through a generated-libxcb oracle against both servers,
+including canonical region operations, GC/window/picture clip installation, selection
+and cursor notifications followed immediately by reply-producing requests, cursor
+names/replacement/visibility, save-set validation, pointer barriers, disconnect mode,
+typed resource cleanup, exact extension errors, and raw native/opposite-endian region
+and barrier coverage,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

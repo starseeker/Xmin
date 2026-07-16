@@ -503,6 +503,32 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *selection =
+            std::get_if<XFixesSelectionNotifyEvent>(&event)) {
+        writer.u8(xfixes_extension.first_event);
+        writer.u8(selection->subtype);
+        writer.u16(selection->sequence);
+        writer.u32(selection->window);
+        writer.u32(selection->owner);
+        writer.u32(selection->selection);
+        writer.u32(selection->time);
+        writer.u32(selection->selection_time);
+        writer.pad(8);
+        return writer.data();
+    }
+
+    if (const auto *cursor = std::get_if<XFixesCursorNotifyEvent>(&event)) {
+        writer.u8(xfixes_extension.first_event + 1);
+        writer.u8(cursor->subtype);
+        writer.u16(cursor->sequence);
+        writer.u32(cursor->window);
+        writer.u32(cursor->cursor_serial);
+        writer.u32(cursor->time);
+        writer.u32(cursor->name);
+        writer.pad(12);
+        return writer.data();
+    }
+
     if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
         writer.u8(input->type);
         writer.u8(input->detail);
@@ -1167,20 +1193,37 @@ Connection::handle_change_window_attributes(const RequestContext &context)
         }
     }
 
-    if (event_mask) {
-        if (*event_mask == 0)
-            window->event_masks.erase(config_.resource_base);
-        else {
-            try {
-                window->event_masks.insert_or_assign(config_.resource_base,
-                                                      *event_mask);
-            }
-            catch (const std::bad_alloc &) {
-                return send_error(context.order, bad_alloc, context.opcode,
-                                  context.sequence);
-            }
+    std::optional<std::uint32_t> previous_event_mask;
+    if (event_mask && *event_mask != 0) {
+        const auto previous = window->event_masks.find(config_.resource_base);
+        if (previous != window->event_masks.end())
+            previous_event_mask = previous->second;
+        try {
+            window->event_masks.insert_or_assign(config_.resource_base,
+                                                  *event_mask);
+        }
+        catch (const std::bad_alloc &) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
         }
     }
+    const auto cursor_update = server_.set_window_cursor(
+        *window, std::move(cursor_image));
+    if (cursor_update != XFixesUpdate::updated) {
+        if (event_mask && *event_mask != 0) {
+            if (previous_event_mask) {
+                window->event_masks.find(config_.resource_base)->second =
+                    *previous_event_mask;
+            }
+            else {
+                window->event_masks.erase(config_.resource_base);
+            }
+        }
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    if (event_mask && *event_mask == 0)
+        window->event_masks.erase(config_.resource_base);
     window->bit_gravity = bit_gravity;
     window->window_gravity = window_gravity;
     window->backing_store = backing_store;
@@ -1192,9 +1235,8 @@ Connection::handle_change_window_attributes(const RequestContext &context)
     window->colormap = colormap;
     window->background_pixel = background_pixel;
     window->border_pixel = border_pixel;
-    window->cursor = std::move(cursor_image);
     server_.invalidate_scene();
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -1254,6 +1296,34 @@ Connection::handle_destroy_window(const RequestContext &context)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     return drain_pending_events();
+}
+
+Result<void>
+Connection::handle_change_save_set(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated ChangeSaveSet request");
+    const auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    if (window->owner == config_.resource_base)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    const auto updated = server_.alter_save_set(
+        config_.resource_base, *id, context.data == 0, false, true);
+    if (updated != XFixesUpdate::updated)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
 }
 
 Result<void>
@@ -2004,7 +2074,7 @@ Connection::handle_set_selection_owner(const RequestContext &context)
     if (updated == SelectionUpdate::event_queue_full)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -2340,12 +2410,17 @@ Connection::handle_change_active_pointer_grab(
         !timestamp_later(effective_time, server_.current_time()) &&
         !timestamp_earlier(effective_time,
                            input.pointer_grab->activated_at)) {
-        input.pointer_grab->event_mask = *event_mask;
-        input.pointer_grab->cursor = *cursor == 0
+        auto cursor_image = *cursor == 0
             ? std::shared_ptr<CursorImage>{}
             : server_.cursor(*cursor)->image;
+        if (server_.set_pointer_grab_cursor(
+                *event_mask, std::move(cursor_image)) !=
+            XFixesUpdate::updated) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        }
     }
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -6235,6 +6310,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_sync(context);
         case ExtensionKind::render:
             return handle_render(context);
+        case ExtensionKind::xfixes:
+            return handle_xfixes(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {
@@ -6251,6 +6328,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_destroy_subwindows;
         table[opcode_index(CoreOpcode::ReparentWindow)] =
             &Connection::handle_reparent_window;
+        table[opcode_index(CoreOpcode::ChangeSaveSet)] =
+            &Connection::handle_change_save_set;
         table[opcode_index(CoreOpcode::MapWindow)] =
             &Connection::handle_map_window;
         table[opcode_index(CoreOpcode::MapSubwindows)] =

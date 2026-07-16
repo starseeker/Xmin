@@ -642,19 +642,27 @@ ServerState::effective_cursor(std::uint32_t id) const noexcept
 }
 
 std::shared_ptr<CursorImage>
+ServerState::current_cursor_for(
+    std::uint32_t pointer, const ActiveGrab *pointer_grab) const noexcept
+{
+    if (pointer_grab == nullptr)
+        return effective_cursor(pointer);
+    if (pointer_grab->cursor)
+        return pointer_grab->cursor;
+    const std::uint32_t base =
+        pointer == pointer_grab->window ||
+            is_descendant(pointer, pointer_grab->window)
+        ? pointer
+        : pointer_grab->window;
+    return effective_cursor(base);
+}
+
+std::shared_ptr<CursorImage>
 ServerState::current_cursor() const noexcept
 {
-    const std::uint32_t pointer = pointer_window();
-    if (!input_.pointer_grab)
-        return effective_cursor(pointer);
-    if (input_.pointer_grab->cursor)
-        return input_.pointer_grab->cursor;
-    const std::uint32_t base =
-        pointer == input_.pointer_grab->window ||
-            is_descendant(pointer, input_.pointer_grab->window)
-        ? pointer
-        : input_.pointer_grab->window;
-    return effective_cursor(base);
+    return current_cursor_for(
+        pointer_window(),
+        input_.pointer_grab ? &*input_.pointer_grab : nullptr);
 }
 
 Surface *
@@ -743,6 +751,18 @@ ServerState::update_window_mappings(
                 (input_.pointer_grab ? &*input_.pointer_grab : nullptr),
             new_focus, events);
     }
+    const auto prospective_cursor = current_cursor_for(
+        new_pointer_window,
+        pointer_grab_lost || !input_.pointer_grab
+            ? nullptr
+            : &*input_.pointer_grab);
+    const EventDelivery cursor =
+        pointer_ungrab == EventDelivery::queue_full ||
+            keyboard_ungrab == EventDelivery::queue_full ||
+            crossing == EventDelivery::queue_full ||
+            focus == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : append_cursor_change(prospective_cursor, events);
     for (std::size_t index = 0; index < count; ++index) {
         auto *candidate = window(changed[index]);
         if (candidate != nullptr && candidate->id != root_window_id)
@@ -752,6 +772,7 @@ ServerState::update_window_mappings(
         keyboard_ungrab == EventDelivery::queue_full ||
         crossing == EventDelivery::queue_full ||
         focus == EventDelivery::queue_full ||
+        cursor == EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
         return EventDelivery::queue_full;
     }
@@ -766,11 +787,13 @@ ServerState::update_window_mappings(
         input_.pointer_grab.reset();
     if (keyboard_grab_lost)
         input_.keyboard_grab.reset();
+    displayed_cursor_ = prospective_cursor;
     invalidate_scene();
     return pointer_ungrab == EventDelivery::delivered ||
             keyboard_ungrab == EventDelivery::delivered ||
             crossing == EventDelivery::delivered ||
-            focus == EventDelivery::delivered
+            focus == EventDelivery::delivered ||
+            cursor == EventDelivery::delivered
         ? EventDelivery::delivered
         : EventDelivery::no_recipient;
 }
@@ -998,13 +1021,21 @@ ServerState::activate_pointer_grab(ActiveGrab grab)
     const EventDelivery crossing = append_crossing_events(
         old_window, grab.window, input_.pointer_x, input_.pointer_y,
         input_.modifier_button_mask, 1, nullptr, input_.focus, events);
+    const auto prospective_cursor = current_cursor_for(pointer_window, &grab);
+    const EventDelivery cursor = crossing == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : append_cursor_change(prospective_cursor, events);
     if (crossing == EventDelivery::queue_full ||
+        cursor == EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
         return EventDelivery::queue_full;
     }
     input_.pointer_grab_time = grab.activated_at;
     input_.pointer_grab = std::move(grab);
-    return crossing;
+    displayed_cursor_ = prospective_cursor;
+    return cursor == EventDelivery::delivered
+        ? cursor
+        : crossing;
 }
 
 EventDelivery
@@ -1019,12 +1050,20 @@ ServerState::deactivate_pointer_grab()
         input_.pointer_grab->window, pointer_window,
         input_.pointer_x, input_.pointer_y,
         input_.modifier_button_mask, 2, nullptr, input_.focus, events);
+    const auto prospective_cursor = current_cursor_for(pointer_window, nullptr);
+    const EventDelivery cursor = crossing == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : append_cursor_change(prospective_cursor, events);
     if (crossing == EventDelivery::queue_full ||
+        cursor == EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
         return EventDelivery::queue_full;
     }
     input_.pointer_grab.reset();
-    return crossing;
+    displayed_cursor_ = prospective_cursor;
+    return cursor == EventDelivery::delivered
+        ? cursor
+        : crossing;
 }
 
 EventDelivery
@@ -1271,9 +1310,18 @@ ServerState::set_window_shape(WindowRecord &candidate, std::uint8_t kind,
     catch (const std::bad_alloc &) {
         return ShapeUpdate::queue_full;
     }
-    if (!queue_events_atomically(events))
-        return ShapeUpdate::queue_full;
+    auto previous = std::move(candidate.shapes[kind]);
     candidate.shapes[kind] = std::move(shape);
+    const auto prospective_cursor = current_cursor();
+    shape = std::move(candidate.shapes[kind]);
+    candidate.shapes[kind] = std::move(previous);
+    if (append_cursor_change(prospective_cursor, events) ==
+            EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return ShapeUpdate::queue_full;
+    }
+    candidate.shapes[kind] = std::move(shape);
+    displayed_cursor_ = prospective_cursor;
     invalidate_scene();
     return ShapeUpdate::updated;
 }
@@ -1477,6 +1525,11 @@ ServerState::add_cursor(CursorRecord cursor, std::uint32_t owner)
     const std::uint32_t id = cursor.id;
     if (!cursor.image || !resources_.insert(id, ResourceKind::cursor, owner))
         return false;
+    if (cursor.image->serial == 0) {
+        cursor.image->serial = next_cursor_serial_++;
+        if (next_cursor_serial_ == 0)
+            next_cursor_serial_ = 1;
+    }
     try {
         if (!cursors_.emplace(id, std::move(cursor)).second) {
             static_cast<void>(resources_.erase(id));
@@ -1497,6 +1550,364 @@ ServerState::erase_cursor(std::uint32_t id)
         return false;
     static_cast<void>(resources_.erase(id));
     return true;
+}
+
+EventDelivery
+ServerState::append_cursor_change(
+    const std::shared_ptr<CursorImage> &current,
+    std::vector<PlannedEvent> &events) const
+{
+    if (current == displayed_cursor_)
+        return EventDelivery::no_recipient;
+
+    const std::size_t original_size = events.size();
+    try {
+        if (xfixes_cursor_inputs_.size() >
+            events.max_size() - events.size()) {
+            return EventDelivery::queue_full;
+        }
+        events.reserve(events.size() + xfixes_cursor_inputs_.size());
+        for (const auto &selection : xfixes_cursor_inputs_) {
+            if ((selection.event_mask & 1U) == 0)
+                continue;
+            events.emplace_back(
+                selection.client,
+                XFixesCursorNotifyEvent{
+                    0, selection.window, current ? current->serial : 0,
+                    current_time_, current ? current->name : 0});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    return events.size() == original_size
+        ? EventDelivery::no_recipient
+        : EventDelivery::delivered;
+}
+
+EventDelivery
+ServerState::cursor_maybe_changed()
+{
+    const auto current = current_cursor();
+    std::vector<PlannedEvent> events;
+    const EventDelivery delivery = append_cursor_change(current, events);
+    if (delivery == EventDelivery::queue_full)
+        return delivery;
+    if (!queue_events_atomically(events))
+        return EventDelivery::queue_full;
+    displayed_cursor_ = current;
+    return delivery;
+}
+
+XFixesUpdate
+ServerState::set_window_cursor(
+    WindowRecord &candidate, std::shared_ptr<CursorImage> cursor_image)
+{
+    const auto previous = candidate.cursor;
+    candidate.cursor = cursor_image;
+    const auto current = current_cursor();
+    candidate.cursor = previous;
+
+    std::vector<PlannedEvent> events;
+    if (append_cursor_change(current, events) == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return XFixesUpdate::queue_full;
+    }
+    candidate.cursor = std::move(cursor_image);
+    displayed_cursor_ = current;
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::set_pointer_grab_cursor(
+    std::uint32_t event_mask, std::shared_ptr<CursorImage> cursor_image)
+{
+    if (!input_.pointer_grab)
+        return XFixesUpdate::invalid;
+    ActiveGrab prospective = *input_.pointer_grab;
+    prospective.event_mask = event_mask;
+    prospective.cursor = cursor_image;
+    const auto current = current_cursor_for(pointer_window(), &prospective);
+    std::vector<PlannedEvent> events;
+    if (append_cursor_change(current, events) == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return XFixesUpdate::queue_full;
+    }
+    input_.pointer_grab->event_mask = event_mask;
+    input_.pointer_grab->cursor = std::move(cursor_image);
+    displayed_cursor_ = current;
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::replace_cursor(
+    const std::shared_ptr<CursorImage> &source,
+    const std::shared_ptr<CursorImage> &destination)
+{
+    if (!source || !destination)
+        return XFixesUpdate::invalid;
+    const auto previous = current_cursor();
+    const auto current = previous == destination ? source : previous;
+    std::vector<PlannedEvent> events;
+    if (append_cursor_change(current, events) == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return XFixesUpdate::queue_full;
+    }
+    for (auto &entry : cursors_) {
+        if (entry.second.image == destination)
+            entry.second.image = source;
+    }
+    for (auto &entry : windows_) {
+        if (entry.second.cursor == destination)
+            entry.second.cursor = source;
+    }
+    for (auto &grab : passive_grabs_) {
+        if (grab.cursor == destination)
+            grab.cursor = source;
+    }
+    if (input_.pointer_grab && input_.pointer_grab->cursor == destination)
+        input_.pointer_grab->cursor = source;
+    if (input_.keyboard_grab && input_.keyboard_grab->cursor == destination)
+        input_.keyboard_grab->cursor = source;
+    displayed_cursor_ = current;
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::replace_cursor_by_name(
+    const std::shared_ptr<CursorImage> &source, AtomId name)
+{
+    if (!source || name == 0)
+        return XFixesUpdate::invalid;
+    const auto matches = [&](const std::shared_ptr<CursorImage> &image) {
+        return image && image != source && image->name == name;
+    };
+    const auto previous = current_cursor();
+    const auto current = matches(previous) ? source : previous;
+    std::vector<PlannedEvent> events;
+    if (append_cursor_change(current, events) == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return XFixesUpdate::queue_full;
+    }
+    for (auto &entry : cursors_) {
+        if (matches(entry.second.image))
+            entry.second.image = source;
+    }
+    for (auto &entry : windows_) {
+        if (matches(entry.second.cursor))
+            entry.second.cursor = source;
+    }
+    for (auto &grab : passive_grabs_) {
+        if (matches(grab.cursor))
+            grab.cursor = source;
+    }
+    if (input_.pointer_grab && matches(input_.pointer_grab->cursor))
+        input_.pointer_grab->cursor = source;
+    if (input_.keyboard_grab && matches(input_.keyboard_grab->cursor))
+        input_.keyboard_grab->cursor = source;
+    displayed_cursor_ = current;
+    return XFixesUpdate::updated;
+}
+
+Region *
+ServerState::xfixes_region(std::uint32_t id)
+{
+    const auto found = xfixes_regions_.find(id);
+    return found == xfixes_regions_.end() ? nullptr : &found->second;
+}
+
+const Region *
+ServerState::xfixes_region(std::uint32_t id) const
+{
+    const auto found = xfixes_regions_.find(id);
+    return found == xfixes_regions_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_xfixes_region(std::uint32_t id, Region region,
+                               std::uint32_t owner)
+{
+    if (xfixes_regions_.size() >= maximum_xfixes_regions ||
+        !resources_.insert(id, ResourceKind::xfixes_region, owner)) {
+        return false;
+    }
+    try {
+        if (!xfixes_regions_.emplace(id, std::move(region)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_xfixes_region(std::uint32_t id)
+{
+    if (xfixes_regions_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+XFixesUpdate
+ServerState::select_xfixes_selection_input(
+    std::uint32_t client, std::uint32_t window_id, AtomId selection,
+    std::uint32_t event_mask)
+{
+    const auto matches = [=](const XFixesSelectionSubscription &entry) {
+        return entry.client == client && entry.window == window_id &&
+            entry.selection == selection;
+    };
+    const auto found = std::find_if(
+        xfixes_selection_inputs_.begin(), xfixes_selection_inputs_.end(),
+        matches);
+    if (event_mask == 0) {
+        if (found != xfixes_selection_inputs_.end())
+            xfixes_selection_inputs_.erase(found);
+        return XFixesUpdate::updated;
+    }
+    if (found != xfixes_selection_inputs_.end()) {
+        found->event_mask = event_mask;
+        return XFixesUpdate::updated;
+    }
+    if (xfixes_selection_inputs_.size() >= maximum_xfixes_subscriptions)
+        return XFixesUpdate::resource_exhausted;
+    try {
+        xfixes_selection_inputs_.push_back(
+            {client, window_id, selection, event_mask});
+    }
+    catch (const std::bad_alloc &) {
+        return XFixesUpdate::resource_exhausted;
+    }
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::select_xfixes_cursor_input(
+    std::uint32_t client, std::uint32_t window_id,
+    std::uint32_t event_mask)
+{
+    const auto matches = [=](const XFixesCursorSubscription &entry) {
+        return entry.client == client && entry.window == window_id;
+    };
+    const auto found = std::find_if(
+        xfixes_cursor_inputs_.begin(), xfixes_cursor_inputs_.end(), matches);
+    if (event_mask == 0) {
+        if (found != xfixes_cursor_inputs_.end())
+            xfixes_cursor_inputs_.erase(found);
+        return XFixesUpdate::updated;
+    }
+    if (found != xfixes_cursor_inputs_.end()) {
+        found->event_mask = event_mask;
+        return XFixesUpdate::updated;
+    }
+    if (xfixes_cursor_inputs_.size() >= maximum_xfixes_subscriptions)
+        return XFixesUpdate::resource_exhausted;
+    try {
+        xfixes_cursor_inputs_.push_back({client, window_id, event_mask});
+    }
+    catch (const std::bad_alloc &) {
+        return XFixesUpdate::resource_exhausted;
+    }
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::hide_cursor(std::uint32_t client)
+{
+    try {
+        auto &count = cursor_hide_counts_[client];
+        if (count != std::numeric_limits<std::uint32_t>::max())
+            ++count;
+    }
+    catch (const std::bad_alloc &) {
+        return XFixesUpdate::resource_exhausted;
+    }
+    return XFixesUpdate::updated;
+}
+
+XFixesUpdate
+ServerState::show_cursor(std::uint32_t client)
+{
+    const auto found = cursor_hide_counts_.find(client);
+    if (found == cursor_hide_counts_.end())
+        return XFixesUpdate::invalid;
+    if (--found->second == 0)
+        cursor_hide_counts_.erase(found);
+    return XFixesUpdate::updated;
+}
+
+bool
+ServerState::add_xfixes_barrier(XFixesBarrierRecord barrier,
+                                std::uint32_t owner)
+{
+    const std::uint32_t id = barrier.id;
+    if (xfixes_barriers_.size() >= maximum_xfixes_barriers ||
+        !resources_.insert(id, ResourceKind::xfixes_barrier, owner)) {
+        return false;
+    }
+    try {
+        if (!xfixes_barriers_.emplace(id, std::move(barrier)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_xfixes_barrier(std::uint32_t id, std::uint32_t owner)
+{
+    const auto record = resources_.find(id);
+    if (!record || record->kind != ResourceKind::xfixes_barrier ||
+        record->owner != owner || xfixes_barriers_.erase(id) == 0) {
+        return false;
+    }
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+XFixesUpdate
+ServerState::alter_save_set(std::uint32_t client, std::uint32_t window_id,
+                            bool insert, bool to_root, bool map)
+{
+    auto found = save_sets_.find(client);
+    if (!insert) {
+        if (found == save_sets_.end())
+            return XFixesUpdate::updated;
+        auto &entries = found->second;
+        entries.erase(
+            std::remove_if(entries.begin(), entries.end(),
+                           [window_id](const SaveSetEntry &entry) {
+                               return entry.window == window_id;
+                           }),
+            entries.end());
+        if (entries.empty())
+            save_sets_.erase(found);
+        return XFixesUpdate::updated;
+    }
+    try {
+        auto &entries = save_sets_[client];
+        if (std::none_of(
+                entries.begin(), entries.end(),
+                [window_id](const SaveSetEntry &entry) {
+                    return entry.window == window_id;
+                })) {
+            entries.push_back({window_id, to_root, map});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return XFixesUpdate::resource_exhausted;
+    }
+    return XFixesUpdate::updated;
 }
 
 SyncCounterRecord *
@@ -1989,9 +2400,7 @@ ServerState::set_selection_owner(AtomId selection, std::uint32_t window_id,
     const bool clear_previous = found != selections_.end() &&
         found->second.window != 0 &&
         (window_id == 0 || found->second.client != client);
-    if (clear_previous && !can_queue_event(found->second.client))
-        return SelectionUpdate::event_queue_full;
-
+    const bool inserted = found == selections_.end();
     if (found == selections_.end()) {
         try {
             found = selections_.emplace(selection, SelectionRecord{}).first;
@@ -2001,16 +2410,39 @@ ServerState::set_selection_owner(AtomId selection, std::uint32_t window_id,
         }
     }
     const SelectionRecord previous = found->second;
-    found->second = SelectionRecord{
-        window_id, window_id == 0 ? 0 : client, effective_time};
-    if (clear_previous) {
-        const SelectionClearEvent event{
-            effective_time, previous.window, selection};
-        if (!queue_event(previous.client, event)) {
-            found->second = previous;
-            return SelectionUpdate::event_queue_full;
+    std::vector<PlannedEvent> events;
+    try {
+        events.reserve(xfixes_selection_inputs_.size() + 1);
+        if (clear_previous) {
+            events.emplace_back(
+                previous.client,
+                SelectionClearEvent{
+                    effective_time, previous.window, selection});
+        }
+        for (const auto &subscription : xfixes_selection_inputs_) {
+            if (subscription.selection != selection ||
+                (subscription.event_mask & 1U) == 0) {
+                continue;
+            }
+            events.emplace_back(
+                subscription.client,
+                XFixesSelectionNotifyEvent{
+                    0, subscription.window, window_id, selection,
+                    current_time_, effective_time});
         }
     }
+    catch (const std::bad_alloc &) {
+        if (inserted)
+            selections_.erase(found);
+        return SelectionUpdate::event_queue_full;
+    }
+    if (!queue_events_atomically(events)) {
+        if (inserted)
+            selections_.erase(found);
+        return SelectionUpdate::event_queue_full;
+    }
+    found->second = SelectionRecord{
+        window_id, window_id == 0 ? 0 : client, effective_time};
     return SelectionUpdate::updated;
 }
 
@@ -2757,6 +3189,10 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     const bool key_event = type == 2 || type == 3;
     const bool button_event = type == 4 || type == 5;
     const bool motion_event = type == 6;
+    if (motion_event) {
+        constrain_pointer_by_barriers(
+            input_.pointer_x, input_.pointer_y, root_x, root_y);
+    }
     const std::uint16_t state_before = input_.modifier_button_mask;
     const std::int32_t event_x = motion_event ? root_x : input_.pointer_x;
     const std::int32_t event_y = motion_event ? root_y : input_.pointer_y;
@@ -2932,6 +3368,20 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         if (grab_focus == EventDelivery::queue_full)
             return grab_focus;
     }
+    std::optional<ActiveGrab> prospective_pointer_grab = input_.pointer_grab;
+    if (activated && button_event)
+        prospective_pointer_grab = *activated;
+    if (automatic)
+        prospective_pointer_grab = *automatic;
+    if (releases_pointer_grab)
+        prospective_pointer_grab.reset();
+    const auto prospective_cursor = current_cursor_for(
+        pointer_window,
+        prospective_pointer_grab ? &*prospective_pointer_grab : nullptr);
+    const EventDelivery cursor = append_cursor_change(
+        prospective_cursor, events);
+    if (cursor == EventDelivery::queue_full)
+        return cursor;
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
     const EventDelivery delivered =
@@ -2955,8 +3405,8 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         input_.pressed_buttons.set(detail, type == 4);
     }
     else if (motion_event) {
-        input_.pointer_x = root_x;
-        input_.pointer_y = root_y;
+        input_.pointer_x = event_x;
+        input_.pointer_y = event_y;
     }
     refresh_modifier_button_mask();
     if (activated) {
@@ -2990,7 +3440,10 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     else if (type == 3 && key_repeat_ && key_repeat_->key == detail) {
         key_repeat_.reset();
     }
-    return delivered;
+    displayed_cursor_ = prospective_cursor;
+    return cursor == EventDelivery::delivered
+        ? EventDelivery::delivered
+        : delivered;
 }
 
 bool
@@ -3093,6 +3546,33 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
         passive_grabs_.end());
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
+    xfixes_selection_inputs_.erase(
+        std::remove_if(
+            xfixes_selection_inputs_.begin(), xfixes_selection_inputs_.end(),
+            [id](const XFixesSelectionSubscription &entry) {
+                return entry.window == id;
+            }),
+        xfixes_selection_inputs_.end());
+    xfixes_cursor_inputs_.erase(
+        std::remove_if(
+            xfixes_cursor_inputs_.begin(), xfixes_cursor_inputs_.end(),
+            [id](const XFixesCursorSubscription &entry) {
+                return entry.window == id;
+            }),
+        xfixes_cursor_inputs_.end());
+    for (auto save_set = save_sets_.begin(); save_set != save_sets_.end();) {
+        auto &entries = save_set->second;
+        entries.erase(
+            std::remove_if(entries.begin(), entries.end(),
+                           [id](const SaveSetEntry &entry) {
+                               return entry.window == id;
+                           }),
+            entries.end());
+        if (entries.empty())
+            save_set = save_sets_.erase(save_set);
+        else
+            ++save_set;
+    }
     for (const auto &property : found->second.properties)
         property_bytes_ -= property.second.data.size();
     for (auto picture = render_pictures_.begin();
@@ -3116,6 +3596,7 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
     windows_.erase(found);
     static_cast<void>(resources_.erase(id));
     invalidate_scene();
+    static_cast<void>(cursor_maybe_changed());
 }
 
 EventDelivery
@@ -3265,6 +3746,19 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
                 (input_.pointer_grab ? &*input_.pointer_grab : nullptr),
             new_focus, events);
     }
+    const auto prospective_cursor = current_cursor_for(
+        new_pointer_window,
+        pointer_grab_lost || !input_.pointer_grab
+            ? nullptr
+            : &*input_.pointer_grab);
+    const EventDelivery cursor =
+        pointer_ungrab == EventDelivery::queue_full ||
+            keyboard_ungrab == EventDelivery::queue_full ||
+            focus == EventDelivery::queue_full ||
+            unmap_crossing == EventDelivery::queue_full ||
+            map_crossing == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : append_cursor_change(prospective_cursor, events);
 
     candidate->mapped = was_mapped;
     candidate->parent = old_parent_id;
@@ -3278,6 +3772,7 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
         focus == EventDelivery::queue_full ||
         unmap_crossing == EventDelivery::queue_full ||
         map_crossing == EventDelivery::queue_full ||
+        cursor == EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
         return ReparentUpdate::queue_full;
     }
@@ -3293,6 +3788,7 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
         input_.pointer_grab.reset();
     if (keyboard_grab_lost)
         input_.keyboard_grab.reset();
+    displayed_cursor_ = prospective_cursor;
     invalidate_scene();
     return ReparentUpdate::updated;
 }
@@ -3376,6 +3872,23 @@ ServerState::clear_selections_for_window(std::uint32_t window_id)
 {
     for (auto &selection : selections_) {
         if (selection.second.window == window_id) {
+            std::vector<PlannedEvent> events;
+            try {
+                for (const auto &subscription : xfixes_selection_inputs_) {
+                    if (subscription.selection != selection.first ||
+                        (subscription.event_mask & 2U) == 0) {
+                        continue;
+                    }
+                    events.emplace_back(
+                        subscription.client,
+                        XFixesSelectionNotifyEvent{
+                            1, subscription.window, 0, selection.first,
+                            current_time_, selection.second.changed_at});
+                }
+                static_cast<void>(queue_events_atomically(events));
+            }
+            catch (const std::bad_alloc &) {
+            }
             selection.second.window = 0;
             selection.second.client = 0;
             selection.second.changed_at = current_time_;
@@ -3384,8 +3897,182 @@ ServerState::clear_selections_for_window(std::uint32_t window_id)
 }
 
 void
+ServerState::apply_save_set(std::uint32_t owner)
+{
+    const auto found = save_sets_.find(owner);
+    if (found == save_sets_.end())
+        return;
+    std::vector<SaveSetEntry> entries = std::move(found->second);
+    save_sets_.erase(found);
+    const auto set_mapped_without_failure = [this](WindowRecord &candidate,
+                                                   bool mapped) {
+        if (set_window_mapped(candidate, mapped) !=
+            EventDelivery::queue_full) {
+            return;
+        }
+        candidate.mapped = mapped;
+        if (!mapped) {
+            if (input_.focus.kind == FocusKind::window &&
+                map_state(input_.focus.window) != 2) {
+                input_.focus = reverted_focus_state();
+            }
+            if (input_.pointer_grab &&
+                (map_state(input_.pointer_grab->window) != 2 ||
+                 (input_.pointer_grab->confine_to != 0 &&
+                  map_state(input_.pointer_grab->confine_to) != 2))) {
+                input_.pointer_grab.reset();
+            }
+            if (input_.keyboard_grab &&
+                map_state(input_.keyboard_grab->window) != 2) {
+                input_.keyboard_grab.reset();
+            }
+        }
+        invalidate_scene();
+        static_cast<void>(cursor_maybe_changed());
+    };
+    const auto reparent_without_failure =
+        [this](WindowRecord &candidate, std::uint32_t parent_id,
+               std::int16_t x, std::int16_t y) {
+            if (reparent_window(candidate.id, parent_id, x, y) !=
+                ReparentUpdate::queue_full) {
+                return;
+            }
+            auto *old_parent = window(candidate.parent);
+            auto *new_parent = window(parent_id);
+            if (old_parent == nullptr || new_parent == nullptr)
+                return;
+            try {
+                new_parent->children.reserve(new_parent->children.size() + 1);
+            }
+            catch (const std::bad_alloc &) {
+                return;
+            }
+            old_parent->children.erase(
+                std::remove(old_parent->children.begin(),
+                            old_parent->children.end(), candidate.id),
+                old_parent->children.end());
+            new_parent->children.push_back(candidate.id);
+            candidate.parent = parent_id;
+            candidate.x = x;
+            candidate.y = y;
+            invalidate_scene();
+            static_cast<void>(cursor_maybe_changed());
+        };
+    for (const auto &entry : entries) {
+        auto *candidate = window(entry.window);
+        if (candidate == nullptr || candidate->owner == owner)
+            continue;
+        std::uint32_t parent_id = entry.to_root
+            ? root_window_id
+            : candidate->parent;
+        while (parent_id != 0 && parent_id != root_window_id) {
+            const auto *parent = window(parent_id);
+            if (parent == nullptr || parent->owner != owner)
+                break;
+            parent_id = parent->parent;
+        }
+        if (parent_id == 0 || window(parent_id) == nullptr)
+            parent_id = root_window_id;
+        if (candidate->parent != parent_id) {
+            const auto absolute = absolute_position(candidate->id);
+            const auto parent_absolute = absolute_position(parent_id);
+            const auto x = wire_coordinate(
+                absolute.first - parent_absolute.first);
+            const auto y = wire_coordinate(
+                absolute.second - parent_absolute.second);
+            if (!entry.map)
+                set_mapped_without_failure(*candidate, false);
+            reparent_without_failure(*candidate, parent_id, x, y);
+            candidate = window(entry.window);
+            if (candidate == nullptr)
+                continue;
+        }
+        if (entry.map)
+            set_mapped_without_failure(*candidate, true);
+    }
+}
+
+void
+ServerState::constrain_pointer_by_barriers(
+    std::int32_t old_x, std::int32_t old_y,
+    std::int32_t &new_x, std::int32_t &new_y) const noexcept
+{
+    for (const auto &entry : xfixes_barriers_) {
+        const auto &barrier = entry.second;
+        if (!barrier.devices.empty() &&
+            std::find(barrier.devices.begin(), barrier.devices.end(), 2) ==
+                barrier.devices.end()) {
+            continue;
+        }
+        if (barrier.x1 == barrier.x2) {
+            const std::int32_t coordinate = barrier.x1;
+            const std::int32_t low = std::min<std::int32_t>(
+                barrier.y1, barrier.y2);
+            const std::int32_t high = std::max<std::int32_t>(
+                barrier.y1, barrier.y2);
+            const bool meets_span =
+                std::max(std::min(old_y, new_y), low) <=
+                std::min(std::max(old_y, new_y), high);
+            if (!meets_span)
+                continue;
+            if (old_x < coordinate && new_x >= coordinate &&
+                (barrier.directions & 1U) == 0) {
+                new_x = coordinate - 1;
+            }
+            else if (old_x >= coordinate && new_x < coordinate &&
+                     (barrier.directions & 4U) == 0) {
+                new_x = coordinate;
+            }
+        }
+        else if (barrier.y1 == barrier.y2) {
+            const std::int32_t coordinate = barrier.y1;
+            const std::int32_t low = std::min<std::int32_t>(
+                barrier.x1, barrier.x2);
+            const std::int32_t high = std::max<std::int32_t>(
+                barrier.x1, barrier.x2);
+            const bool meets_span =
+                std::max(std::min(old_x, new_x), low) <=
+                std::min(std::max(old_x, new_x), high);
+            if (!meets_span)
+                continue;
+            if (old_y < coordinate && new_y >= coordinate &&
+                (barrier.directions & 2U) == 0) {
+                new_y = coordinate - 1;
+            }
+            else if (old_y >= coordinate && new_y < coordinate &&
+                     (barrier.directions & 8U) == 0) {
+                new_y = coordinate;
+            }
+        }
+    }
+}
+
+void
 ServerState::disconnect_client(std::uint32_t owner)
 {
+    apply_save_set(owner);
+    for (auto &selection : selections_) {
+        if (selection.second.client != owner)
+            continue;
+        std::vector<PlannedEvent> events;
+        try {
+            for (const auto &subscription : xfixes_selection_inputs_) {
+                if (subscription.client == owner ||
+                    subscription.selection != selection.first ||
+                    (subscription.event_mask & 4U) == 0) {
+                    continue;
+                }
+                events.emplace_back(
+                    subscription.client,
+                    XFixesSelectionNotifyEvent{
+                        2, subscription.window, 0, selection.first,
+                        current_time_, selection.second.changed_at});
+            }
+            static_cast<void>(queue_events_atomically(events));
+        }
+        catch (const std::bad_alloc &) {
+        }
+    }
     clients_.erase(
         std::remove_if(
             clients_.begin(), clients_.end(),
@@ -3400,6 +4087,21 @@ ServerState::disconnect_client(std::uint32_t owner)
         clients.erase(std::remove(clients.begin(), clients.end(), owner),
                       clients.end());
     }
+    xfixes_selection_inputs_.erase(
+        std::remove_if(
+            xfixes_selection_inputs_.begin(), xfixes_selection_inputs_.end(),
+            [owner](const XFixesSelectionSubscription &entry) {
+                return entry.client == owner;
+            }),
+        xfixes_selection_inputs_.end());
+    xfixes_cursor_inputs_.erase(
+        std::remove_if(
+            xfixes_cursor_inputs_.begin(), xfixes_cursor_inputs_.end(),
+            [owner](const XFixesCursorSubscription &entry) {
+                return entry.client == owner;
+            }),
+        xfixes_cursor_inputs_.end());
+    cursor_hide_counts_.erase(owner);
     sync_counter_waits_.erase(owner);
     sync_fence_waits_.erase(owner);
     sync_priorities_.erase(owner);
@@ -3480,6 +4182,14 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto cursors = resources_.owned_by(owner, ResourceKind::cursor);
     for (const auto id : cursors)
         static_cast<void>(erase_cursor(id));
+    const auto regions =
+        resources_.owned_by(owner, ResourceKind::xfixes_region);
+    for (const auto id : regions)
+        static_cast<void>(erase_xfixes_region(id));
+    const auto barriers =
+        resources_.owned_by(owner, ResourceKind::xfixes_barrier);
+    for (const auto id : barriers)
+        static_cast<void>(erase_xfixes_barrier(id, owner));
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)

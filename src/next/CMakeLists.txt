@@ -13,6 +13,7 @@ add_library(xmin_next_core STATIC
   surface.cpp
   wire.cpp
   xauthority.cpp
+  xfixes_protocol.cpp
 )
 add_library(Xmin::next_core ALIAS xmin_next_core)
 target_compile_features(xmin_next_core PUBLIC cxx_std_17)

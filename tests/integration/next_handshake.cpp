@@ -272,7 +272,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 7> extensions{{
+    constexpr std::array<std::string_view, 8> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -280,6 +280,7 @@ extension_list_payload()
         "SHAPE",
         "SYNC",
         "RENDER",
+        "XFIXES",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -297,7 +298,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 7 && get16(reply, 2, little) == sequence &&
+        reply[1] == 8 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -914,6 +915,160 @@ check_shape(int descriptor, bool little, std::uint32_t resource_base)
         get16(reply, 2, little) == 22 &&
         get32(reply, 4, little) == 3 && get16(reply, 8, little) == 8 &&
         reply[10] == shape_opcode;
+}
+
+bool
+check_xfixes(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t xfixes_opcode = 135;
+    constexpr std::uint8_t xfixes_event = 67;
+    constexpr std::uint8_t xfixes_error = 136;
+    const std::uint32_t region = resource_base;
+    const std::uint32_t barrier = resource_base + 1;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "XFIXES", 1,
+                         xfixes_opcode, reply, xfixes_event,
+                         xfixes_error)) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = xfixes_opcode; // only QueryVersion is legal initially
+    request[1] = 4;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 4 || reply[10] != xfixes_opcode) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = xfixes_opcode; // QueryVersion 6.0
+    put16(request, 2, 3, little);
+    put32(request, 4, 6, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get32(reply, 8, little) != 6 || get32(reply, 12, little) != 0) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = xfixes_opcode; // CreateRegion([2,3 12x9])
+    request[1] = 5;
+    put16(request, 2, 4, little);
+    put32(request, 4, region, little);
+    put16(request, 8, 2, little);
+    put16(request, 10, 3, little);
+    put16(request, 12, 12, little);
+    put16(request, 14, 9, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = xfixes_opcode; // TranslateRegion(-1,+2)
+    request[1] = 17;
+    put16(request, 2, 3, little);
+    put32(request, 4, region, little);
+    put16(request, 8, static_cast<std::uint16_t>(-1), little);
+    put16(request, 10, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = xfixes_opcode; // FetchRegion
+    request[1] = 19;
+    put16(request, 2, 2, little);
+    put32(request, 4, region, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 ||
+        get16(reply, 2, little) != 6 || get32(reply, 4, little) != 2 ||
+        get16(reply, 8, little) != 1 || get16(reply, 10, little) != 5 ||
+        get16(reply, 12, little) != 12 || get16(reply, 14, little) != 9 ||
+        get16(reply, 32, little) != 1 || get16(reply, 34, little) != 5 ||
+        get16(reply, 36, little) != 12 || get16(reply, 38, little) != 9) {
+        return false;
+    }
+
+    request.assign(28, 0);
+    request[0] = xfixes_opcode; // vertical barrier at x=180
+    request[1] = 31;
+    put16(request, 2, 7, little);
+    put32(request, 4, barrier, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 180, little);
+    put16(request, 16, 180, little);
+    put16(request, 18, 240, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 41; // WarpPointer across the barrier
+    put16(request, 2, 6, little);
+    put32(request, 8, root_window, little);
+    put16(request, 20, 200, little);
+    put16(request, 22, 120, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 38; // QueryPointer observes the barrier clamp
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 9 ||
+        get16(reply, 16, little) != 179 ||
+        get16(reply, 18, little) != 120) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xfixes_opcode; // DeletePointerBarrier
+    request[1] = 32;
+    put16(request, 2, 2, little);
+    put32(request, 4, barrier, little);
+    if (!write_all(descriptor, request) || !write_all(descriptor, request) ||
+        !read_reply(descriptor, reply) || reply[0] != 0 ||
+        reply[1] != xfixes_error + 1 || get16(reply, 2, little) != 11 ||
+        get32(reply, 4, little) != barrier ||
+        get16(reply, 8, little) != 32 || reply[10] != xfixes_opcode) {
+        return false;
+    }
+
+    request.assign(32, 0);
+    request[0] = xfixes_opcode; // only the core master pointer is exposed
+    request[1] = 31;
+    put16(request, 2, 8, little);
+    put32(request, 4, barrier, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 180, little);
+    put16(request, 16, 180, little);
+    put16(request, 18, 240, little);
+    put16(request, 26, 1, little);
+    put16(request, 28, 999, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 12 || get32(reply, 4, little) != 999 ||
+        get16(reply, 8, little) != 31 || reply[10] != xfixes_opcode) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xfixes_opcode;
+    request[1] = 10; // DestroyRegion
+    put16(request, 2, 2, little);
+    put32(request, 4, region, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[1] = 19; // destroyed region is BadRegion
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 0 && reply[1] == xfixes_error &&
+        get16(reply, 2, little) == 14 &&
+        get32(reply, 4, little) == region &&
+        get16(reply, 8, little) == 19 && reply[10] == xfixes_opcode;
 }
 
 bool
@@ -3261,6 +3416,22 @@ run_shape_case(const char *server, bool little)
 }
 
 bool
+run_xfixes_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_xfixes(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_sync_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3415,6 +3586,11 @@ main(int argc, char **argv)
     if (!run_render_case(argv[1], native) ||
         !run_render_case(argv[1], !native)) {
         std::cerr << "RENDER extension case failed\n";
+        return 1;
+    }
+    if (!run_xfixes_case(argv[1], native) ||
+        !run_xfixes_case(argv[1], !native)) {
+        std::cerr << "XFIXES extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

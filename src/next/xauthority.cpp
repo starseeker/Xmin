@@ -152,13 +152,13 @@ int
 match_score(const Record &record, std::string_view display,
             std::string_view hostname)
 {
-    if (record.number != display || record.name != cookie_protocol ||
+    if (record.name != cookie_protocol ||
         record.data.empty() || record.data.size() > 256) {
         return 0;
     }
     if (record.family == family_wild)
-        return 1;
-    if (record.family != family_local)
+        return record.number.empty() || record.number == display ? 1 : 0;
+    if (record.family != family_local || record.number != display)
         return 0;
     if (record.address.empty())
         return 2;

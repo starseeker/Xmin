@@ -65,13 +65,27 @@ parse_screen(std::string_view text, ServerConfig &config)
     const auto separator = text.find('x');
     if (separator == std::string_view::npos)
         return false;
+    const auto depth_separator = text.find('x', separator + 1);
     unsigned width = 0;
     unsigned height = 0;
     if (!parse_unsigned(text.substr(0, separator), width) ||
-        !parse_unsigned(text.substr(separator + 1), height) || width == 0 ||
+        !parse_unsigned(
+            text.substr(
+                separator + 1,
+                depth_separator == std::string_view::npos
+                    ? std::string_view::npos
+                    : depth_separator - separator - 1),
+            height) || width == 0 ||
         height == 0 || width > std::numeric_limits<std::uint16_t>::max() ||
         height > std::numeric_limits<std::uint16_t>::max()) {
         return false;
+    }
+    if (depth_separator != std::string_view::npos) {
+        unsigned depth = 0;
+        if (!parse_unsigned(text.substr(depth_separator + 1), depth) ||
+            depth != 24) {
+            return false;
+        }
     }
     config.width = static_cast<std::uint16_t>(width);
     config.height = static_cast<std::uint16_t>(height);
@@ -158,7 +172,8 @@ run(int argc, char **argv)
             std::cout << "Xmin-next " << XMIN_VERSION << '\n';
             return 0;
         }
-        if (argument == "--client-fd" || argument == "--display-fd") {
+        if (argument == "--client-fd" || argument == "--display-fd" ||
+            argument == "-displayfd") {
             if (++index >= argc)
                 return fail(std::string(argument) + " requires a value");
             unsigned parsed = 0;
@@ -183,7 +198,7 @@ run(int argc, char **argv)
             authentication = Authentication::cookie;
             continue;
         }
-        if (argument == "--auth") {
+        if (argument == "--auth" || argument == "-auth") {
             if (++index >= argc)
                 return fail("--auth requires a file");
             if (authentication != Authentication::unspecified ||
@@ -201,9 +216,34 @@ run(int argc, char **argv)
             authentication = Authentication::disabled;
             continue;
         }
-        if (argument == "--screen") {
-            if (++index >= argc || !parse_screen(argv[index], config))
+        if (argument == "--screen" || argument == "-screen") {
+            if (++index >= argc)
                 return fail("--screen requires WIDTHxHEIGHT");
+            if (argument == "-screen") {
+                unsigned screen = 0;
+                if (!parse_unsigned(std::string_view(argv[index]), screen) ||
+                    screen != 0 || ++index >= argc) {
+                    return fail("-screen requires 0 WIDTHxHEIGHTx24");
+                }
+            }
+            if (!parse_screen(argv[index], config))
+                return fail("--screen requires WIDTHxHEIGHT[x24]");
+            continue;
+        }
+        if (argument == "-noreset")
+            continue;
+        if (argument == "-nolisten") {
+            if (++index >= argc || std::string_view(argv[index]) != "tcp")
+                return fail("only -nolisten tcp is supported");
+            continue;
+        }
+        if (argument == "-dpi") {
+            unsigned dpi = 0;
+            if (++index >= argc ||
+                !parse_unsigned(std::string_view(argv[index]), dpi) ||
+                dpi == 0) {
+                return fail("-dpi requires a positive integer");
+            }
             continue;
         }
         if (argument == "--max-clients") {

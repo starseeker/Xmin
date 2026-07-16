@@ -106,6 +106,8 @@ bool
 test_xauthority(const std::string &root)
 {
     const std::string valid_path = root + "/authority";
+    const std::string wildcard_path = root + "/wildcard-authority";
+    const std::string local_empty_path = root + "/local-empty-authority";
     const std::string invalid_path = root + "/invalid-authority";
     const std::vector<std::uint8_t> wildcard_cookie{1, 2, 3, 4};
     const std::vector<std::uint8_t> local_cookie{5, 6, 7, 8};
@@ -113,17 +115,28 @@ test_xauthority(const std::string &root)
     append_authority(records, 65535, {}, "7", wildcard_cookie);
     append_authority(records, 256, {}, "7", local_cookie);
     append_authority(records, 65535, {}, "8", wildcard_cookie);
+    std::vector<std::uint8_t> wildcard_record;
+    append_authority(wildcard_record, 65535, {}, {}, wildcard_cookie);
+    std::vector<std::uint8_t> local_empty_record;
+    append_authority(local_empty_record, 256, {}, {}, local_cookie);
     if (!write_bytes(valid_path, records) ||
+        !write_bytes(wildcard_path, wildcard_record) ||
+        !write_bytes(local_empty_path, local_empty_record) ||
         !write_bytes(invalid_path, std::vector<std::uint8_t>{0xff})) {
         return false;
     }
 
     auto selected = xmin::next::load_xauthority_cookie(valid_path, 7);
     auto missing = xmin::next::load_xauthority_cookie(valid_path, 9);
+    auto wildcard = xmin::next::load_xauthority_cookie(wildcard_path, 9);
+    auto local_empty = xmin::next::load_xauthority_cookie(local_empty_path, 9);
     auto malformed = xmin::next::load_xauthority_cookie(invalid_path, 7);
     const bool passed = selected && selected.value() == local_cookie &&
-        !missing && !malformed;
+        !missing && wildcard && wildcard.value() == wildcard_cookie &&
+        !local_empty && !malformed;
     static_cast<void>(::unlink(valid_path.c_str()));
+    static_cast<void>(::unlink(wildcard_path.c_str()));
+    static_cast<void>(::unlink(local_empty_path.c_str()));
     static_cast<void>(::unlink(invalid_path.c_str()));
     return passed;
 }

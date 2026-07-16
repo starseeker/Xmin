@@ -19,6 +19,8 @@ enum class ResourceKind {
     render_picture,
     render_glyph_set,
     cursor,
+    xfixes_region,
+    xfixes_barrier,
 };
 
 struct ResourceRecord {

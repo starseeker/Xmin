@@ -82,6 +82,7 @@ private:
     Result<void> handle_destroy_window(const RequestContext &context);
     Result<void> handle_destroy_subwindows(const RequestContext &context);
     Result<void> handle_reparent_window(const RequestContext &context);
+    Result<void> handle_change_save_set(const RequestContext &context);
     Result<void> handle_map_window(const RequestContext &context);
     Result<void> handle_map_subwindows(const RequestContext &context);
     Result<void> handle_unmap_window(const RequestContext &context);
@@ -182,6 +183,7 @@ private:
     Result<void> handle_shape(const RequestContext &context);
     Result<void> handle_sync(const RequestContext &context);
     Result<void> handle_render(const RequestContext &context);
+    Result<void> handle_xfixes(const RequestContext &context);
     Result<void> update_shape(
         const RequestContext &context, WindowRecord &window,
         std::uint8_t operation, std::uint8_t kind,
@@ -206,6 +208,8 @@ private:
     std::size_t setup_padded_name_size_ = 0;
     std::uint16_t sequence_ = 0;
     bool big_requests_enabled_ = false;
+    std::uint8_t xfixes_major_version_ = 0;
+    std::uint32_t xfixes_disconnect_mode_ = 0;
     bool resume_sync_input_ = false;
     bool prepared_ = false;
     bool close_after_output_ = false;

@@ -16,6 +16,7 @@
 #include <fcntl.h>
 #include <iostream>
 #include <limits>
+#include <memory>
 #include <optional>
 #include <string>
 #include <variant>
@@ -3300,6 +3301,226 @@ test_sync_state()
 }
 
 bool
+test_xfixes_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t observer = 0x00400000;
+    constexpr std::uint32_t parent_id = owner + 1;
+    constexpr std::uint32_t child_id = observer + 1;
+    constexpr std::uint32_t source_cursor_id = owner + 2;
+    constexpr std::uint32_t target_cursor_id = owner + 3;
+    constexpr std::uint32_t region_id = owner + 4;
+    constexpr std::uint32_t barrier_id = owner + 5;
+    xmin::next::ServerState server(64, 48);
+    if (!expect(server.register_client(owner) &&
+                    server.register_client(observer),
+                "XFIXES client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 17);
+    server.note_client_sequence(observer, 31);
+
+    xmin::next::WindowRecord parent;
+    parent.id = parent_id;
+    parent.parent = xmin::next::root_window_id;
+    parent.width = 20;
+    parent.height = 16;
+    xmin::next::WindowRecord child;
+    child.id = child_id;
+    child.parent = parent_id;
+    child.x = 3;
+    child.y = 4;
+    child.width = 8;
+    child.height = 6;
+    if (!expect(server.add_window(std::move(parent), owner) &&
+                    server.add_window(std::move(child), observer),
+                "XFIXES save-set window insertion failed")) {
+        return false;
+    }
+    static_cast<void>(
+        server.set_window_mapped(*server.window(parent_id), true));
+    if (!expect(server.alter_save_set(
+                    owner, child_id, true, true, true) ==
+                    xmin::next::XFixesUpdate::updated,
+                "XFIXES save-set insertion failed")) {
+        return false;
+    }
+
+    xmin::next::Region region;
+    const std::vector<xmin::next::Rectangle> rectangles{{2, 3, 9, 7}};
+    if (!expect(xmin::next::Region::canonicalize(rectangles, region) &&
+                    server.add_xfixes_region(
+                        region_id, std::move(region), owner),
+                "typed XFIXES region insertion failed") ||
+        !expect(server.xfixes_region(region_id) != nullptr &&
+                    server.xfixes_region(region_id)->extents().width == 9,
+                "typed XFIXES region lookup failed")) {
+        return false;
+    }
+
+    const auto selection = server.atoms().intern("XMIN_XFIXES_SELECTION");
+    if (!expect(server.select_xfixes_selection_input(
+                    observer, xmin::next::root_window_id, selection, 7) ==
+                    xmin::next::XFixesUpdate::updated,
+                "XFIXES selection subscription failed") ||
+        !expect(server.set_selection_owner(
+                    selection, parent_id, owner, 0) ==
+                    xmin::next::SelectionUpdate::updated,
+                "XFIXES selection owner update failed")) {
+        return false;
+    }
+    const auto *event = server.next_event(observer);
+    const auto *selection_notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XFixesSelectionNotifyEvent>(event);
+    if (!expect(selection_notify != nullptr &&
+                    selection_notify->subtype == 0 &&
+                    selection_notify->window == xmin::next::root_window_id &&
+                    selection_notify->owner == parent_id &&
+                    selection_notify->selection == selection &&
+                    selection_notify->sequence == 31,
+                "XFIXES selection notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(observer);
+
+    auto source = std::make_shared<xmin::next::CursorImage>();
+    auto target = std::make_shared<xmin::next::CursorImage>();
+    source->name = server.atoms().intern("source-cursor");
+    target->name = server.atoms().intern("target-cursor");
+    source->width = target->width = 1;
+    source->height = target->height = 1;
+    source->pixels = {0xff112233U};
+    target->pixels = {0xff445566U};
+    if (!expect(server.add_cursor({source_cursor_id, source}, owner) &&
+                    server.add_cursor({target_cursor_id, target}, owner) &&
+                    source->serial != 0 && target->serial != 0 &&
+                    source->serial != target->serial,
+                "XFIXES cursor insertion did not allocate serials") ||
+        !expect(server.select_xfixes_cursor_input(
+                    observer, xmin::next::root_window_id, 1) ==
+                    xmin::next::XFixesUpdate::updated,
+                "XFIXES cursor subscription failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->cursor = target;
+    if (!expect(server.cursor_maybe_changed() ==
+                    xmin::next::EventDelivery::delivered,
+                "XFIXES initial displayed cursor was not reported")) {
+        return false;
+    }
+    event = server.next_event(observer);
+    auto *cursor_notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XFixesCursorNotifyEvent>(event);
+    if (!expect(cursor_notify != nullptr &&
+                    cursor_notify->cursor_serial == target->serial &&
+                    cursor_notify->name == target->name &&
+                    cursor_notify->sequence == 31,
+                "XFIXES cursor notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(observer);
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.broadcast_mapping_notify(1, 96, 1),
+                    "XFIXES cursor queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.replace_cursor(source, target) ==
+                    xmin::next::XFixesUpdate::queue_full &&
+                    server.current_cursor() == target,
+                "failed XFIXES cursor notification partially replaced state")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    while (server.has_pending_event(observer))
+        server.pop_event(observer);
+    if (!expect(server.replace_cursor(source, target) ==
+                    xmin::next::XFixesUpdate::updated &&
+                    server.current_cursor() == source,
+                "XFIXES cursor replacement missed a live reference")) {
+        return false;
+    }
+    event = server.next_event(observer);
+    cursor_notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XFixesCursorNotifyEvent>(event);
+    if (!expect(cursor_notify != nullptr &&
+                    cursor_notify->cursor_serial == source->serial,
+                "XFIXES cursor replacement omitted CursorNotify")) {
+        return false;
+    }
+    server.pop_event(observer);
+    if (!expect(server.hide_cursor(owner) ==
+                    xmin::next::XFixesUpdate::updated &&
+                    server.hide_cursor(owner) ==
+                    xmin::next::XFixesUpdate::updated &&
+                    server.cursor_hidden(),
+                "nested XFIXES cursor hiding failed") ||
+        !expect(server.show_cursor(owner) ==
+                    xmin::next::XFixesUpdate::updated &&
+                    server.cursor_hidden() &&
+                    server.show_cursor(owner) ==
+                    xmin::next::XFixesUpdate::updated &&
+                    !server.cursor_hidden() &&
+                    server.show_cursor(owner) ==
+                    xmin::next::XFixesUpdate::invalid,
+                "nested XFIXES cursor showing failed")) {
+        return false;
+    }
+
+    if (!expect(server.inject_input(6, 0, 20, 24) ==
+                    xmin::next::EventDelivery::no_recipient,
+                "XFIXES barrier pointer setup delivered an event")) {
+        return false;
+    }
+    xmin::next::XFixesBarrierRecord barrier;
+    barrier.id = barrier_id;
+    barrier.window = xmin::next::root_window_id;
+    barrier.x1 = 30;
+    barrier.x2 = 30;
+    barrier.y2 = 48;
+    if (!expect(server.add_xfixes_barrier(std::move(barrier), owner),
+                "XFIXES pointer barrier insertion failed") ||
+        !expect(server.inject_input(6, 0, 40, 24) ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.input().pointer_x == 29 &&
+                    server.input().pointer_y == 24,
+                "XFIXES pointer barrier did not constrain motion")) {
+        return false;
+    }
+
+    server.disconnect_client(owner);
+    event = server.next_event(observer);
+    selection_notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XFixesSelectionNotifyEvent>(event);
+    const auto *saved_child = server.window(child_id);
+    const bool passed =
+        expect(saved_child != nullptr &&
+                   saved_child->parent == xmin::next::root_window_id &&
+                   saved_child->mapped,
+               "XFIXES save set did not rescue and map a foreign window") &&
+        expect(server.window(parent_id) == nullptr,
+               "disconnect retained the save-set owner window") &&
+        expect(server.xfixes_region(region_id) == nullptr &&
+                   !server.resource_exists(barrier_id) &&
+                   server.cursor(source_cursor_id) == nullptr &&
+                   server.cursor(target_cursor_id) == nullptr,
+               "disconnect retained typed XFIXES resources") &&
+        expect(selection_notify != nullptr &&
+                   selection_notify->subtype == 2 &&
+                   selection_notify->owner == 0 &&
+                   selection_notify->selection == selection,
+               "selection owner disconnect omitted XFIXES notification");
+    server.disconnect_client(observer);
+    return passed;
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -3362,6 +3583,7 @@ main()
             test_render_engine() &&
             test_scene_composition() && test_shape_state() &&
             test_window_tree_mutations() && test_sync_state() &&
+            test_xfixes_state() &&
             test_colormap_state() &&
             test_result()
         ? 0
