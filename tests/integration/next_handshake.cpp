@@ -1126,11 +1126,67 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request))
         return false;
 
+    request.assign(28, 0);
+    request[0] = 18; // first property for RotateProperties
+    put16(request, 2, 7, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little); // INTEGER
+    request[16] = 32;
+    put32(request, 20, 1, little);
+    put32(request, 24, 0x11111111U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    put32(request, 8, 20, little); // predefined atom used as second property
+    put32(request, 24, 0x22222222U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 114; // RotateProperties
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 2, little);
+    put16(request, 10, 1, little);
+    put32(request, 12, atom, little);
+    put32(request, 16, 20, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 20; // first property now has the second value
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little);
+    put32(request, 20, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        reply[0] != 1 || reply[1] != 32 ||
+        get16(reply, 2, little) != 92 || get32(reply, 16, little) != 1 ||
+        get32(reply, 32, little) != 0x22222222U) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 97; // QueryBestSize rounds a short tile width
+    request[1] = 1;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 13, little);
+    put16(request, 10, 7, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 93 ||
+        get16(reply, 8, little) != 16 || get16(reply, 10, little) != 7) {
+        return false;
+    }
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 89;
+        reply[0] == 1 && get16(reply, 2, little) == 94;
 }
 
 bool

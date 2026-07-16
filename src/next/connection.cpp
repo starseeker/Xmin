@@ -4,6 +4,7 @@
 #include "xmin/next/color.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
 
+#include <algorithm>
 #include <array>
 #include <bitset>
 #include <cerrno>
@@ -1589,6 +1590,92 @@ Connection::handle_list_properties(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_rotate_properties(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto window_id = reader.u32();
+    const auto atom_count = reader.u16();
+    const auto encoded_delta = reader.u16();
+    if (!window_id || !atom_count || !encoded_delta)
+        return malformed("truncated RotateProperties request");
+    const auto atom_bytes = checked_multiply(
+        static_cast<std::size_t>(*atom_count), sizeof(AtomId));
+    const auto expected_size = atom_bytes
+        ? checked_add(std::size_t{12}, *atom_bytes)
+        : std::optional<std::size_t>{};
+    if (!atom_bytes || !expected_size ||
+        context.request.size() != *expected_size) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+
+    auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (*atom_count == 0)
+        return Result<void>::success();
+
+    try {
+        std::vector<AtomId> atoms;
+        atoms.reserve(*atom_count);
+        for (std::size_t index = 0; index < *atom_count; ++index) {
+            const auto atom = reader.u32();
+            if (!atom)
+                return malformed("truncated RotateProperties atom list");
+            atoms.push_back(*atom);
+        }
+
+        auto sorted_atoms = atoms;
+        std::sort(sorted_atoms.begin(), sorted_atoms.end());
+        for (const auto atom : atoms) {
+            if (!server_.atoms().name(atom))
+                return send_error(context.order, bad_atom, context.opcode,
+                                  context.sequence, atom);
+            const auto duplicates = std::equal_range(
+                sorted_atoms.begin(), sorted_atoms.end(), atom);
+            if (duplicates.second - duplicates.first > 1) {
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence);
+            }
+            if (window->properties.find(atom) == window->properties.end()) {
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, atom);
+            }
+        }
+
+        const auto signed_delta = static_cast<std::int32_t>(
+            signed_word(*encoded_delta));
+        const auto count = static_cast<std::int32_t>(*atom_count);
+        std::int32_t delta = signed_delta % count;
+        if (delta < 0)
+            delta += count;
+        if (delta == 0)
+            return Result<void>::success();
+
+        std::vector<PropertyValue> values;
+        values.reserve(atoms.size());
+        for (const auto atom : atoms)
+            values.push_back(std::move(window->properties.find(atom)->second));
+        for (std::size_t index = 0; index < atoms.size(); ++index) {
+            const auto destination = (index + static_cast<std::size_t>(delta)) %
+                atoms.size();
+            window->properties.find(atoms[destination])->second =
+                std::move(values[index]);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_set_selection_owner(const RequestContext &context)
 {
     if (context.request.size() != 16)
@@ -3033,6 +3120,58 @@ Connection::handle_lookup_color(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_query_best_size(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 2)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto drawable = reader.u32();
+    const auto requested_width = reader.u16();
+    const auto requested_height = reader.u16();
+    if (!drawable || !requested_width || !requested_height)
+        return malformed("truncated QueryBestSize request");
+
+    const auto *window = server_.window(*drawable);
+    if (window == nullptr && server_.pixmap(*drawable) == nullptr) {
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable);
+    }
+    if (context.data != 0 && window != nullptr &&
+        window->window_class == WindowClass::input_only) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+
+    std::uint16_t width = *requested_width;
+    std::uint16_t height = *requested_height;
+    if (context.data == 0) {
+        width = std::min(width, server_.width());
+        height = std::min(height, server_.height());
+    }
+    else if (width < 32 && (width & (width - 1)) != 0) {
+        std::uint16_t rounded = 1;
+        while (rounded < width)
+            rounded = static_cast<std::uint16_t>(rounded << 1);
+        width = rounded;
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u16(width);
+    reply.u16(height);
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_input_focus(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -3141,6 +3280,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_get_property;
         table[opcode_index(CoreOpcode::ListProperties)] =
             &Connection::handle_list_properties;
+        table[opcode_index(CoreOpcode::RotateProperties)] =
+            &Connection::handle_rotate_properties;
         table[opcode_index(CoreOpcode::SetSelectionOwner)] =
             &Connection::handle_set_selection_owner;
         table[opcode_index(CoreOpcode::GetSelectionOwner)] =
@@ -3211,6 +3352,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_query_colors;
         table[opcode_index(CoreOpcode::LookupColor)] =
             &Connection::handle_lookup_color;
+        table[opcode_index(CoreOpcode::QueryBestSize)] =
+            &Connection::handle_query_best_size;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryExtension)] =

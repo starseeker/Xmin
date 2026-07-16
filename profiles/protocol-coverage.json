@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "00fa32ba9c4a6d0ed6f46619416eb1994f198256a6cc6cbdf4b95b2e0d6ad8a7",
+    "policy_sha256": "54ec543f64081a71dda687b4ebb4940de3164e9211050dda7a34679250288030",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -811,7 +811,7 @@
       "name": "QueryBestSize",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 98,
@@ -930,7 +930,7 @@
       "name": "RotateProperties",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 115,

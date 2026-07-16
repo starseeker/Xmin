@@ -21,6 +21,22 @@ checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
 }
 
 static int
+checked_error(xcb_connection_t *connection, xcb_void_cookie_t cookie,
+              uint8_t expected, const char *operation)
+{
+    xcb_generic_error_t *error = xcb_request_check(connection, cookie);
+
+    if (error != NULL && error->error_code == expected) {
+        free(error);
+        return 1;
+    }
+    fprintf(stderr, "%s returned X11 error %u instead of %u\n", operation,
+            error == NULL ? 0 : error->error_code, expected);
+    free(error);
+    return 0;
+}
+
+static int
 atom_is_listed(const xcb_list_properties_reply_t *properties, xcb_atom_t atom)
 {
     xcb_atom_t *atoms = xcb_list_properties_atoms(properties);
@@ -102,6 +118,7 @@ main(void)
     xcb_intern_atom_reply_t *selection_atom = NULL;
     xcb_intern_atom_reply_t *message_atom = NULL;
     xcb_get_property_reply_t *property = NULL;
+    xcb_get_property_reply_t *rotated_property = NULL;
     xcb_list_properties_reply_t *properties = NULL;
     xcb_query_tree_reply_t *tree = NULL;
     xcb_get_geometry_reply_t *geometry = NULL;
@@ -114,6 +131,7 @@ main(void)
     xcb_list_installed_colormaps_reply_t *installed_colormaps = NULL;
     xcb_query_colors_reply_t *queried_color = NULL;
     xcb_get_image_reply_t *image = NULL;
+    xcb_query_best_size_reply_t *best_size = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
@@ -129,6 +147,7 @@ main(void)
     const char *stage = "connecting";
     int selection_owned = 0;
     int property_created = 0;
+    int message_property_created = 0;
     int result = 1;
 
     connection = xcb_connect(NULL, &screen_number);
@@ -186,12 +205,111 @@ main(void)
         properties == NULL ||
         !atom_is_listed(properties, property_atom->atom))
         goto cleanup;
+
+    stage = "rotating property values";
+    {
+        const uint32_t rotated_value = 0x524f5441U;
+        const xcb_atom_t atoms[] = {
+            property_atom->atom, message_atom->atom
+        };
+
+        if (!checked(connection,
+                     xcb_change_property_checked(
+                         connection, XCB_PROP_MODE_REPLACE, screen->root,
+                         message_atom->atom, XCB_ATOM_INTEGER, 32, 1,
+                         &rotated_value),
+                     "ChangeProperty before RotateProperties")) {
+            goto cleanup;
+        }
+        message_property_created = 1;
+        {
+            const xcb_atom_t duplicates[] = {
+                property_atom->atom, property_atom->atom
+            };
+            const xcb_atom_t missing[] = {
+                property_atom->atom, selection_atom->atom
+            };
+
+            if (!checked_error(
+                    connection,
+                    xcb_rotate_properties_checked(
+                        connection, screen->root, 2, 1, duplicates),
+                    XCB_MATCH, "RotateProperties duplicate validation") ||
+                !checked_error(
+                    connection,
+                    xcb_rotate_properties_checked(
+                        connection, screen->root, 2, 1, missing),
+                    XCB_MATCH, "RotateProperties missing validation")) {
+                goto cleanup;
+            }
+        }
+        if (!checked(connection,
+                     xcb_rotate_properties_checked(
+                         connection, screen->root, 2, 1, atoms),
+                     "RotateProperties")) {
+            goto cleanup;
+        }
+        free(property);
+        property = xcb_get_property_reply(
+            connection,
+            xcb_get_property(connection, 0, screen->root,
+                             property_atom->atom, XCB_ATOM_INTEGER, 0, 2),
+            &error);
+        rotated_property = xcb_get_property_reply(
+            connection,
+            xcb_get_property(connection, 0, screen->root,
+                             message_atom->atom, XCB_ATOM_INTEGER, 0, 2),
+            &error);
+        if (error != NULL || property == NULL ||
+            property->type != XCB_ATOM_INTEGER || property->format != 32 ||
+            property->value_len != 1 ||
+            memcmp(xcb_get_property_value(property), &rotated_value,
+                   sizeof(rotated_value)) != 0 || rotated_property == NULL ||
+            rotated_property->type != XCB_ATOM_INTEGER ||
+            rotated_property->format != 32 ||
+            rotated_property->value_len != 2 ||
+            memcmp(xcb_get_property_value(rotated_property), property_values,
+                   sizeof(property_values)) != 0) {
+            goto cleanup;
+        }
+        if (!checked(connection,
+                     xcb_rotate_properties_checked(
+                         connection, screen->root, 2, -1, atoms),
+                     "RotateProperties with negative delta")) {
+            goto cleanup;
+        }
+        free(property);
+        property = xcb_get_property_reply(
+            connection,
+            xcb_get_property(connection, 0, screen->root,
+                             property_atom->atom, XCB_ATOM_INTEGER, 0, 2),
+            &error);
+        free(rotated_property);
+        rotated_property = xcb_get_property_reply(
+            connection,
+            xcb_get_property(connection, 0, screen->root,
+                             message_atom->atom, XCB_ATOM_INTEGER, 0, 2),
+            &error);
+        if (error != NULL || property == NULL || property->value_len != 2 ||
+            memcmp(xcb_get_property_value(property), property_values,
+                   sizeof(property_values)) != 0 || rotated_property == NULL ||
+            rotated_property->value_len != 1 ||
+            memcmp(xcb_get_property_value(rotated_property), &rotated_value,
+                   sizeof(rotated_value)) != 0) {
+            goto cleanup;
+        }
+    }
     if (!checked(connection,
                  xcb_delete_property_checked(connection, screen->root,
                                              property_atom->atom),
-                 "DeleteProperty"))
+                 "DeleteProperty") ||
+        !checked(connection,
+                 xcb_delete_property_checked(connection, screen->root,
+                                             message_atom->atom),
+                 "Delete rotated property"))
         goto cleanup;
     property_created = 0;
+    message_property_created = 0;
 
     stage = "creating and configuring a window hierarchy";
     parent = xcb_generate_id(connection);
@@ -245,6 +363,27 @@ main(void)
         geometry->height != 9 || translated == NULL ||
         translated->dst_x != 7 || translated->dst_y != 9)
         goto cleanup;
+
+    stage = "querying the preferred tile size";
+    best_size = xcb_query_best_size_reply(
+        connection,
+        xcb_query_best_size(connection, XCB_QUERY_SHAPE_OF_FASTEST_TILE,
+                            child, 13, 7),
+        &error);
+    if (error != NULL || best_size == NULL || best_size->width != 16 ||
+        best_size->height != 7)
+        goto cleanup;
+    free(best_size);
+    best_size = xcb_query_best_size_reply(
+        connection,
+        xcb_query_best_size(connection, XCB_QUERY_SHAPE_OF_LARGEST_CURSOR,
+                            screen->root, UINT16_MAX, UINT16_MAX),
+        &error);
+    if (error != NULL || best_size == NULL ||
+        best_size->width != screen->width_in_pixels ||
+        best_size->height != screen->height_in_pixels) {
+        goto cleanup;
+    }
 
     stage = "copying pixmap pixels into a window";
     pixmap = xcb_generate_id(connection);
@@ -583,6 +722,9 @@ cleanup:
         if (property_created)
             xcb_delete_property(connection, screen->root,
                                 property_atom->atom);
+        if (message_property_created)
+            xcb_delete_property(connection, screen->root,
+                                message_atom->atom);
         if (graphics != XCB_NONE)
             xcb_free_gc(connection, graphics);
         if (bitmap_graphics != XCB_NONE)
@@ -600,6 +742,7 @@ cleanup:
         xcb_flush(connection);
     }
     free(error);
+    free(best_size);
     free(image);
     free(queried_color);
     free(installed_colormaps);
@@ -613,6 +756,7 @@ cleanup:
     free(tree);
     free(properties);
     free(property);
+    free(rotated_property);
     free(message_atom);
     free(selection_atom);
     free(property_atom);

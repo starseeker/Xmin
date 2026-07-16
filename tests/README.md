@@ -56,7 +56,8 @@ request receives `BadLength` without terminating the connection. The `Xmin-next`
 variant additionally exercises the same semantic handlers in both byte orders for
 atoms, window lifecycle/configuration/reparenting/subwindow operations/coordinate
 translation, mutable attributes and GCs, background clearing, and property mutation,
-partial retrieval, listing, deletion, selection ownership, fixed TrueColor named-color
+partial retrieval, listing, deletion, signed rotation, framebuffer best-size queries,
+selection ownership, fixed TrueColor named-color
 queries and colormap install/copy/free semantics, and synthetic client-message
 delivery. It checks an unadvertised opcode at 255
 cannot escape the 128-slot core table, and proves that one client's window is visible

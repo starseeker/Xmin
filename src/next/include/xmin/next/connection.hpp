@@ -91,6 +91,7 @@ private:
     Result<void> handle_delete_property(const RequestContext &context);
     Result<void> handle_get_property(const RequestContext &context);
     Result<void> handle_list_properties(const RequestContext &context);
+    Result<void> handle_rotate_properties(const RequestContext &context);
     Result<void> handle_set_selection_owner(const RequestContext &context);
     Result<void> handle_get_selection_owner(const RequestContext &context);
     Result<void> handle_send_event(const RequestContext &context);
@@ -129,6 +130,7 @@ private:
     Result<void> handle_store_named_color(const RequestContext &context);
     Result<void> handle_query_colors(const RequestContext &context);
     Result<void> handle_lookup_color(const RequestContext &context);
+    Result<void> handle_query_best_size(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
