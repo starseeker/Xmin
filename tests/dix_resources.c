@@ -1,3 +1,5 @@
+#include <dix-config.h>
+
 #include "callback.h"
 #include "dix.h"
 #include "dixstruct.h"

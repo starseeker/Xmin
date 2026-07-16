@@ -1,0 +1,16 @@
+diff --git a/third_party/xorg-server/include/list.h b/third_party/xorg-server/include/list.h
+--- a/third_party/xorg-server/include/list.h
++++ b/third_party/xorg-server/include/list.h
+@@ -274,9 +274,12 @@
+  * compiler.
+  */
+-#ifdef HAVE_TYPEOF
++#if defined(HAVE_TYPEOF)
+ #define __container_of(ptr, sample, member)			\
+     container_of(ptr, typeof(*sample), member)
++#elif defined(__GNUC__) || defined(__clang__)
++#define __container_of(ptr, sample, member)			\
++    container_of(ptr, __typeof__(*sample), member)
+ #else
+ /* This implementation of __container_of has undefined behavior according
+  * to the C standard, but it works in many cases.  If your compiler doesn't

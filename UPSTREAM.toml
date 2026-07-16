@@ -82,6 +82,10 @@ patches = [
   "patches/xorg-server/0005-skip-absent-tcp-xtrans.patch",
   "patches/xorg-server/0006-enable-xmin-indirect-glx.patch",
   "patches/xorg-server/0007-lock-dynamic-display-allocation.patch",
+  "patches/xorg-server/0008-use-compiler-typeof-for-list-container.patch",
+  "patches/xorg-server/0009-use-typed-noop-callbacks.patch",
+  "patches/xorg-server/0010-use-type-safe-reply-swap-adapters.patch",
+  "patches/xorg-server/0011-use-type-safe-pixman-shape-adapters.patch",
 ]
 importer = "tools/import-xorg.sh"
 
@@ -166,7 +170,10 @@ retained_paths = [
   "upstream builtins/file.c replaced by src/fonts/xmin_builtin_file.c; util/miscutil.c replaced by src/fonts/xmin_xfont_registry.c",
 ]
 license_paths = ["LICENSES/libXfont2/COPYING"]
-patches = ["patches/libXfont2/0001-builtins-only-fontfile-fpe.patch"]
+patches = [
+  "patches/libXfont2/0001-builtins-only-fontfile-fpe.patch",
+  "patches/libXfont2/0002-construct-pcf-words-unsigned.patch",
+]
 importer = "tools/import-xorg.sh"
 generator = "Python 3 standard library via tools/generate-builtin-fonts.py"
 

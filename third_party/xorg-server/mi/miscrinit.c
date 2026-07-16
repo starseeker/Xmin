@@ -57,6 +57,16 @@ typedef struct {
     int width;                  /* delta to add to a framebuffer addr to move one row down */
 } miScreenInitParmsRec, *miScreenInitParmsPtr;
 
+static void
+miBlockHandlerNoop(ScreenPtr pScreen, void *timeout)
+{
+}
+
+static void
+miWakeupHandlerNoop(ScreenPtr pScreen, int result)
+{
+}
+
 /* this plugs into pScreen->ModifyPixmapHeader */
 Bool
 miModifyPixmapHeader(PixmapPtr pPixmap, int width, int height, int depth,
@@ -275,8 +285,8 @@ miScreenInit(ScreenPtr pScreen, void *pbits,  /* pointer to screen bits */
     /* CreateColormap, DestroyColormap, InstallColormap, UninstallColormap */
     /* ListInstalledColormaps, StoreColors, ResolveColor */
     /* BitmapToRegion */
-    pScreen->BlockHandler = (ScreenBlockHandlerProcPtr) NoopDDA;
-    pScreen->WakeupHandler = (ScreenWakeupHandlerProcPtr) NoopDDA;
+    pScreen->BlockHandler = miBlockHandlerNoop;
+    pScreen->WakeupHandler = miWakeupHandlerNoop;
     pScreen->MarkWindow = miMarkWindow;
     pScreen->MarkOverlappedWindows = miMarkOverlappedWindows;
     pScreen->MoveWindow = miMoveWindow;

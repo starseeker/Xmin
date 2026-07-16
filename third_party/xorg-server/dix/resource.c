@@ -428,9 +428,15 @@ FindGCSubRes(void *value, FindAllRes func, void *cdata)
 
 static struct ResourceType *resourceTypes;
 
+static int
+NoopDeleteResource(void *value, XID id)
+{
+    return Success;
+}
+
 static const struct ResourceType predefTypes[] = {
     [RT_NONE & (RC_LASTPREDEF - 1)] = {
-                                       .deleteFunc = (DeleteType) NoopDDA,
+                                       .deleteFunc = NoopDeleteResource,
                                        .sizeFunc = GetDefaultBytes,
                                        .findSubResFunc = DefaultFindSubRes,
                                        .errorValue = BadValue,

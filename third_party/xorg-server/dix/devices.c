@@ -656,6 +656,11 @@ CoreKeyboardProc(DeviceIntPtr pDev, int what)
 /**
  * Device control function for the Virtual Core Pointer.
  */
+static void
+NoopPointerControl(DeviceIntPtr device, PtrCtrl *ctrl)
+{
+}
+
 int
 CorePointerProc(DeviceIntPtr pDev, int what)
 {
@@ -686,7 +691,7 @@ CorePointerProc(DeviceIntPtr pDev, int what)
 
         if (!InitPointerDeviceStruct
             ((DevicePtr) pDev, map, NBUTTONS, btn_labels,
-             (PtrCtrlProcPtr) NoopDDA, GetMotionHistorySize(), NAXES,
+             NoopPointerControl, GetMotionHistorySize(), NAXES,
              axes_labels)) {
             ErrorF("Could not initialize device '%s'. Out of memory.\n",
                    pDev->name);

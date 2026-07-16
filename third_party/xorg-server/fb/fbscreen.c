@@ -90,6 +90,16 @@ _fbSetWindowPixmap(WindowPtr pWindow, PixmapPtr pPixmap)
     dixSetPrivate(&pWindow->devPrivates, fbGetWinPrivateKey(pWindow), pPixmap);
 }
 
+static void
+fbDestroyColormapNoop(ColormapPtr pColormap)
+{
+}
+
+static void
+fbStoreColorsNoop(ColormapPtr pColormap, int ndef, xColorItem *pdef)
+{
+}
+
 Bool
 fbSetupScreen(ScreenPtr pScreen, void *pbits, /* pointer to screen bitmap */
               int xsize,        /* in pixels */
@@ -119,11 +129,11 @@ fbSetupScreen(ScreenPtr pScreen, void *pbits, /* pointer to screen bitmap */
     pScreen->UnrealizeFont = fbUnrealizeFont;
     pScreen->CreateGC = fbCreateGC;
     pScreen->CreateColormap = fbInitializeColormap;
-    pScreen->DestroyColormap = (void (*)(ColormapPtr)) NoopDDA;
+    pScreen->DestroyColormap = fbDestroyColormapNoop;
     pScreen->InstallColormap = fbInstallColormap;
     pScreen->UninstallColormap = fbUninstallColormap;
     pScreen->ListInstalledColormaps = fbListInstalledColormaps;
-    pScreen->StoreColors = (void (*)(ColormapPtr, int, xColorItem *)) NoopDDA;
+    pScreen->StoreColors = fbStoreColorsNoop;
     pScreen->ResolveColor = fbResolveColor;
     pScreen->BitmapToRegion = fbPixmapToRegion;
 

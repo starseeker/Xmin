@@ -371,6 +371,7 @@ add_test(NAME xmin.dix-callbacks COMMAND xmin_dix_callbacks)
 
 add_executable(xmin_dix_resources dix_resources.c)
 target_compile_features(xmin_dix_resources PRIVATE c_std_11)
+target_compile_definitions(xmin_dix_resources PRIVATE HAVE_DIX_CONFIG_H=1)
 target_link_libraries(xmin_dix_resources PRIVATE Xmin::dix)
 xmin_enable_warnings(xmin_dix_resources)
 add_test(NAME xmin.dix-resources COMMAND xmin_dix_resources)
@@ -423,7 +424,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   if(APPLE)
     target_link_options(xmin_damage_report PRIVATE "LINKER:-dead_strip")
   else()
-    target_link_options(xmin_damage_report PRIVATE "LINKER:--gc-sections")
+    target_link_options(xmin_damage_report PRIVATE
+      "LINKER:--gc-sections"
+      "LINKER:--no-export-dynamic"
+    )
   endif()
 endif()
 xmin_enable_warnings(xmin_damage_report)
@@ -457,7 +461,13 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   if(APPLE)
     target_link_options(xmin_xi_property PRIVATE "LINKER:-dead_strip")
   else()
-    target_link_options(xmin_xi_property PRIVATE "LINKER:--gc-sections")
+    # Clang's AddressSanitizer adds --export-dynamic, which roots every global
+    # function and defeats the section GC these isolated upstream-TU tests
+    # rely on. Keep only the helper reachable from the test executable.
+    target_link_options(xmin_xi_property PRIVATE
+      "LINKER:--gc-sections"
+      "LINKER:--no-export-dynamic"
+    )
   endif()
 endif()
 xmin_enable_warnings(xmin_xi_property)
@@ -477,7 +487,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   if(APPLE)
     target_link_options(xmin_sync_fence PRIVATE "LINKER:-dead_strip")
   else()
-    target_link_options(xmin_sync_fence PRIVATE "LINKER:--gc-sections")
+    target_link_options(xmin_sync_fence PRIVATE
+      "LINKER:--gc-sections"
+      "LINKER:--no-export-dynamic"
+    )
   endif()
 endif()
 xmin_enable_warnings(xmin_sync_fence)
@@ -497,7 +510,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   if(APPLE)
     target_link_options(xmin_present_msc PRIVATE "LINKER:-dead_strip")
   else()
-    target_link_options(xmin_present_msc PRIVATE "LINKER:--gc-sections")
+    target_link_options(xmin_present_msc PRIVATE
+      "LINKER:--gc-sections"
+      "LINKER:--no-export-dynamic"
+    )
   endif()
 endif()
 xmin_enable_warnings(xmin_present_msc)
@@ -525,7 +541,10 @@ if(CMAKE_C_COMPILER_ID MATCHES "GNU|Clang")
   if(APPLE)
     target_link_options(xmin_xkb_embedded PRIVATE "LINKER:-dead_strip")
   else()
-    target_link_options(xmin_xkb_embedded PRIVATE "LINKER:--gc-sections")
+    target_link_options(xmin_xkb_embedded PRIVATE
+      "LINKER:--gc-sections"
+      "LINKER:--no-export-dynamic"
+    )
   endif()
 endif()
 xmin_enable_warnings(xmin_xkb_embedded)

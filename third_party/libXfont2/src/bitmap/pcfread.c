@@ -73,12 +73,12 @@ static int  position;
 static int
 pcfGetLSB32(FontFilePtr file)
 {
-    int         c;
+    CARD32      c;
 
-    c = FontFileGetc(file);
-    c |= FontFileGetc(file) << 8;
-    c |= FontFileGetc(file) << 16;
-    c |= FontFileGetc(file) << 24;
+    c = (CARD32) FontFileGetc(file);
+    c |= (CARD32) FontFileGetc(file) << 8;
+    c |= (CARD32) FontFileGetc(file) << 16;
+    c |= (CARD32) FontFileGetc(file) << 24;
     position += 4;
     return c;
 }
@@ -86,18 +86,18 @@ pcfGetLSB32(FontFilePtr file)
 static int
 pcfGetINT32(FontFilePtr file, CARD32 format)
 {
-    int         c;
+    CARD32      c;
 
     if (PCF_BYTE_ORDER(format) == MSBFirst) {
-	c = FontFileGetc(file) << 24;
-	c |= FontFileGetc(file) << 16;
-	c |= FontFileGetc(file) << 8;
-	c |= FontFileGetc(file);
+	c = (CARD32) FontFileGetc(file) << 24;
+	c |= (CARD32) FontFileGetc(file) << 16;
+	c |= (CARD32) FontFileGetc(file) << 8;
+	c |= (CARD32) FontFileGetc(file);
     } else {
-	c = FontFileGetc(file);
-	c |= FontFileGetc(file) << 8;
-	c |= FontFileGetc(file) << 16;
-	c |= FontFileGetc(file) << 24;
+	c = (CARD32) FontFileGetc(file);
+	c |= (CARD32) FontFileGetc(file) << 8;
+	c |= (CARD32) FontFileGetc(file) << 16;
+	c |= (CARD32) FontFileGetc(file) << 24;
     }
     position += 4;
     return c;

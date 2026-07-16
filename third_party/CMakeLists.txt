@@ -186,6 +186,10 @@ xmin_add_component(xfont2
   PUBLIC_INCLUDE_DIRS "${xmin_xfont2_source_dir}/include"
   PUBLIC_LIBRARIES Xmin::xorgproto ${XMIN_M_LIBRARY}
 )
+# libXfont2 is not exposed as a host client library in Xmin; it is an internal
+# server component. Keep its callback ABI consistent with Xorg's 32-bit XID
+# and Mask types on LP64 hosts.
+target_compile_definitions(xmin_xfont2 PUBLIC _XSERVER64=1)
 
 if(XMIN_BUILD_GLX)
   include("${CMAKE_CURRENT_SOURCE_DIR}/osmesa/osmesa-sources.cmake")

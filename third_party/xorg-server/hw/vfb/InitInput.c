@@ -78,6 +78,11 @@ vfbKeybdProc(DeviceIntPtr pDevice, int onoff)
     return Success;
 }
 
+static void
+vfbPointerControl(DeviceIntPtr device, PtrCtrl *ctrl)
+{
+}
+
 static int
 vfbMouseProc(DeviceIntPtr pDevice, int onoff)
 {
@@ -103,7 +108,7 @@ vfbMouseProc(DeviceIntPtr pDevice, int onoff)
         axes_labels[1] = XIGetKnownProperty(AXIS_LABEL_PROP_REL_Y);
 
         InitPointerDeviceStruct(pDev, map, NBUTTONS, btn_labels,
-                                (PtrCtrlProcPtr) NoopDDA,
+                                vfbPointerControl,
                                 GetMotionHistorySize(), NAXES, axes_labels);
         break;
 

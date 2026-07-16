@@ -89,6 +89,34 @@ typedef void (*CompositeShapesFunc) (pixman_op_t op,
                                      int n_shapes, const uint8_t * shapes);
 
 static void
+fbCompositeTrapezoids(pixman_op_t op,
+                      pixman_image_t *src,
+                      pixman_image_t *dst,
+                      pixman_format_code_t mask_format,
+                      int x_src, int y_src,
+                      int x_dst, int y_dst,
+                      int n_shapes, const uint8_t *shapes)
+{
+    pixman_composite_trapezoids(op, src, dst, mask_format,
+                                x_src, y_src, x_dst, y_dst, n_shapes,
+                                (const pixman_trapezoid_t *) shapes);
+}
+
+static void
+fbCompositeTriangles(pixman_op_t op,
+                     pixman_image_t *src,
+                     pixman_image_t *dst,
+                     pixman_format_code_t mask_format,
+                     int x_src, int y_src,
+                     int x_dst, int y_dst,
+                     int n_shapes, const uint8_t *shapes)
+{
+    pixman_composite_triangles(op, src, dst, mask_format,
+                               x_src, y_src, x_dst, y_dst, n_shapes,
+                               (const pixman_triangle_t *) shapes);
+}
+
+static void
 fbShapes(CompositeShapesFunc composite,
          pixman_op_t op,
          PicturePtr pSrc,
@@ -164,7 +192,7 @@ fbTrapezoids(CARD8 op,
     xSrc -= (traps[0].left.p1.x >> 16);
     ySrc -= (traps[0].left.p1.y >> 16);
 
-    fbShapes((CompositeShapesFunc) pixman_composite_trapezoids,
+    fbShapes(fbCompositeTrapezoids,
              op, pSrc, pDst, maskFormat,
              xSrc, ySrc, ntrap, sizeof(xTrapezoid), (const uint8_t *) traps);
 }
@@ -179,7 +207,7 @@ fbTriangles(CARD8 op,
     xSrc -= (tris[0].p1.x >> 16);
     ySrc -= (tris[0].p1.y >> 16);
 
-    fbShapes((CompositeShapesFunc) pixman_composite_triangles,
+    fbShapes(fbCompositeTriangles,
              op, pSrc, pDst, maskFormat,
              xSrc, ySrc, ntris, sizeof(xTriangle), (const uint8_t *) tris);
 }

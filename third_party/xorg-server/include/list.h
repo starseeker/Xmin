@@ -274,9 +274,12 @@ xorg_list_is_empty(struct xorg_list *head)
 #define xorg_list_last_entry(ptr, type, member) \
     xorg_list_entry((ptr)->prev, type, member)
 
-#ifdef HAVE_TYPEOF
+#if defined(HAVE_TYPEOF)
 #define __container_of(ptr, sample, member)			\
     container_of(ptr, typeof(*sample), member)
+#elif defined(__GNUC__) || defined(__clang__)
+#define __container_of(ptr, sample, member)			\
+    container_of(ptr, __typeof__(*sample), member)
 #else
 /* This implementation of __container_of has undefined behavior according
  * to the C standard, but it works in many cases.  If your compiler doesn't

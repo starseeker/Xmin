@@ -248,6 +248,14 @@ patch -s -V none -d "$root" -p1 < \
     "$root/patches/xorg-server/0006-enable-xmin-indirect-glx.patch"
 patch -s -V none -d "$root" -p1 < \
     "$root/patches/xorg-server/0007-lock-dynamic-display-allocation.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/xorg-server/0008-use-compiler-typeof-for-list-container.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/xorg-server/0009-use-typed-noop-callbacks.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/xorg-server/0010-use-type-safe-reply-swap-adapters.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/xorg-server/0011-use-type-safe-pixman-shape-adapters.patch"
 
 install -d "$root/LICENSES/xorg-server"
 cp -p "$xserver/COPYING" "$root/LICENSES/xorg-server/COPYING"
@@ -300,6 +308,8 @@ install -d "$root/LICENSES/libXfont2"
 cp -p "$libxfont2/COPYING" "$root/LICENSES/libXfont2/COPYING"
 patch -s -V none -d "$root" -p1 < \
     "$root/patches/libXfont2/0001-builtins-only-fontfile-fpe.patch"
+patch -s -V none -d "$root" -p1 < \
+    "$root/patches/libXfont2/0002-construct-pcf-words-unsigned.patch"
 python3 "$root/tools/generate-builtin-fonts.py" \
     "$libxfont2/src/builtins/fonts.c" \
     "$root/data/fonts/xmin_builtin_fonts.c"
