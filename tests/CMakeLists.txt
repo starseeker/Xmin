@@ -233,6 +233,14 @@ if(TARGET Xmin::run)
         Xmin::gl_client
         ${qt_gui_target}
       )
+      # Ubuntu's toolchain enables --as-needed by default.  Qt resolves its
+      # OpenGL entry points at runtime, so no static undefined reference keeps
+      # Xmin's libGL on the executable's DT_NEEDED list without this override.
+      if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        target_link_options(xmin_${qt_suffix}_opengl PRIVATE
+          "LINKER:--no-as-needed"
+        )
+      endif()
       xmin_enable_warnings(xmin_${qt_suffix}_opengl)
       add_test(NAME xmin.${qt_suffix}-opengl
         COMMAND Xmin::run

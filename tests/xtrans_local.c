@@ -43,7 +43,10 @@ main(void)
         return 1;
     unlink(path);
 
-    local = _XSERVTransOpenCOTSServer(path);
+    /* Linux maps xtrans's "local" transport to an abstract socket.  Select
+     * "unix" explicitly because this test validates pathname creation and
+     * removal, not just AF_UNIX connectivity. */
+    local = _XSERVTransOpenCOTSServer("unix/:xmin-xtrans-test");
     if (local == NULL)
         return 2;
     if (_XSERVTransCreateListener(local, path, 0) != 0) {

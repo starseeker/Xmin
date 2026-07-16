@@ -33,6 +33,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# glibc and musl hide a number of APIs used by the retained Xorg code when C11
+# is requested without extensions.  Define the Linux feature-test macro on the
+# compiler command line so it is active before every system header, including
+# in CMake's platform probes.
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  add_compile_definitions(_GNU_SOURCE)
+  list(APPEND CMAKE_REQUIRED_DEFINITIONS -D_GNU_SOURCE)
+endif()
+
 xmin_configure_platform()
 
 # Xorg's retained static extension registry uses this traditional build
