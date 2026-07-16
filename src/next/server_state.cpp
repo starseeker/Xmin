@@ -65,6 +65,115 @@ wire_size(std::uint32_t value) noexcept
         value, std::numeric_limits<std::uint16_t>::max()));
 }
 
+bool
+sync_trigger_fired(const SyncTrigger &trigger, std::int64_t old_value,
+                   std::int64_t new_value) noexcept
+{
+    switch (trigger.test_type) {
+    case SyncTestType::positive_transition:
+        return old_value < trigger.test_value &&
+            new_value >= trigger.test_value;
+    case SyncTestType::negative_transition:
+        return old_value > trigger.test_value &&
+            new_value <= trigger.test_value;
+    case SyncTestType::positive_comparison:
+        return new_value >= trigger.test_value;
+    case SyncTestType::negative_comparison:
+        return new_value <= trigger.test_value;
+    }
+    return false;
+}
+
+std::int64_t
+signed_from_bits(std::uint64_t bits) noexcept
+{
+    constexpr auto signed_max =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (bits <= signed_max)
+        return static_cast<std::int64_t>(bits);
+    return -1 - static_cast<std::int64_t>(
+        std::numeric_limits<std::uint64_t>::max() - bits);
+}
+
+std::uint64_t
+nonnegative_distance(std::int64_t greater, std::int64_t lesser) noexcept
+{
+    return static_cast<std::uint64_t>(greater) -
+        static_cast<std::uint64_t>(lesser);
+}
+
+struct AdvancedAlarm {
+    std::int64_t test_value;
+    std::uint8_t state;
+};
+
+AdvancedAlarm
+advance_alarm(const SyncAlarmRecord &alarm, std::int64_t counter_value) noexcept
+{
+    constexpr std::uint8_t active = 0;
+    constexpr std::uint8_t inactive = 1;
+    if (alarm.state != active)
+        return {alarm.trigger.test_value, alarm.state};
+
+    if (alarm.delta == 0 &&
+        (alarm.trigger.test_type == SyncTestType::positive_comparison ||
+         alarm.trigger.test_type == SyncTestType::negative_comparison)) {
+        return {alarm.trigger.test_value, inactive};
+    }
+
+    if (alarm.trigger.test_type == SyncTestType::positive_transition ||
+        alarm.trigger.test_type == SyncTestType::negative_transition) {
+        const auto next = checked_add(alarm.trigger.test_value, alarm.delta);
+        return next ? AdvancedAlarm{*next, active}
+                    : AdvancedAlarm{alarm.trigger.test_value, inactive};
+    }
+
+    const bool positive =
+        alarm.trigger.test_type == SyncTestType::positive_comparison;
+    const std::uint64_t magnitude = positive
+        ? static_cast<std::uint64_t>(alarm.delta)
+        : std::uint64_t{0} - static_cast<std::uint64_t>(alarm.delta);
+    if (magnitude == 0)
+        return {alarm.trigger.test_value, inactive};
+
+    const std::uint64_t distance = positive
+        ? nonnegative_distance(counter_value, alarm.trigger.test_value)
+        : nonnegative_distance(alarm.trigger.test_value, counter_value);
+    const std::uint64_t quotient = distance / magnitude;
+    if (quotient == std::numeric_limits<std::uint64_t>::max())
+        return {alarm.trigger.test_value, inactive};
+    const std::uint64_t steps = quotient + 1;
+    if (steps > std::numeric_limits<std::uint64_t>::max() / magnitude)
+        return {alarm.trigger.test_value, inactive};
+    const std::uint64_t movement = steps * magnitude;
+    const std::uint64_t available = positive
+        ? nonnegative_distance(std::numeric_limits<std::int64_t>::max(),
+                               alarm.trigger.test_value)
+        : nonnegative_distance(alarm.trigger.test_value,
+                               std::numeric_limits<std::int64_t>::min());
+    if (movement > available)
+        return {alarm.trigger.test_value, inactive};
+    const std::uint64_t bits = positive
+        ? static_cast<std::uint64_t>(alarm.trigger.test_value) + movement
+        : static_cast<std::uint64_t>(alarm.trigger.test_value) - movement;
+    return {signed_from_bits(bits), active};
+}
+
+bool
+sync_notification_eligible(const SyncWaitCondition &condition,
+                           std::int64_t value) noexcept
+{
+    const auto difference = checked_subtract(
+        value, condition.trigger.test_value);
+    if (!difference)
+        return false;
+    const bool positive =
+        condition.trigger.test_type == SyncTestType::positive_transition ||
+        condition.trigger.test_type == SyncTestType::positive_comparison;
+    return positive ? *difference >= condition.event_threshold
+                    : *difference <= condition.event_threshold;
+}
+
 } // namespace
 
 PassiveGrabDomain
@@ -235,6 +344,15 @@ bool
 ServerState::resource_exists(std::uint32_t id) const
 {
     return resources_.find(id).has_value();
+}
+
+std::optional<std::uint32_t>
+ServerState::resource_owner(std::uint32_t id) const
+{
+    const auto resource = resources_.find(id);
+    if (!resource)
+        return std::nullopt;
+    return resource->owner;
 }
 
 bool
@@ -878,8 +996,15 @@ ServerState::register_client(std::uint32_t client)
         return true;
     try {
         clients_.emplace_back(client, 0);
+        sync_priorities_.emplace(client, 0);
     }
     catch (const std::bad_alloc &) {
+        clients_.erase(
+            std::remove_if(
+                clients_.begin(), clients_.end(),
+                [client](const auto &entry) { return entry.first == client; }),
+            clients_.end());
+        sync_priorities_.erase(client);
         return false;
     }
     return true;
@@ -1085,6 +1210,473 @@ ServerState::shape_events_selected(const WindowRecord &candidate,
                candidate.shape_event_clients.begin(),
                candidate.shape_event_clients.end(), client) !=
         candidate.shape_event_clients.end();
+}
+
+SyncCounterRecord *
+ServerState::sync_counter(std::uint32_t id)
+{
+    const auto found = sync_counters_.find(id);
+    return found == sync_counters_.end() ? nullptr : &found->second;
+}
+
+const SyncCounterRecord *
+ServerState::sync_counter(std::uint32_t id) const
+{
+    const auto found = sync_counters_.find(id);
+    return found == sync_counters_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_sync_counter(SyncCounterRecord counter, std::uint32_t owner)
+{
+    const std::uint32_t id = counter.id;
+    if (!resources_.insert(id, ResourceKind::sync_counter, owner))
+        return false;
+    try {
+        if (!sync_counters_.emplace(id, std::move(counter)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::append_sync_alarm_event(
+    const SyncAlarmRecord &alarm, std::int64_t counter_value,
+    std::int64_t alarm_value, std::uint8_t state,
+    std::vector<PlannedEvent> &events) const
+{
+    try {
+        for (const auto client : alarm.event_clients) {
+            events.emplace_back(
+                client, SyncAlarmNotifyEvent{
+                    alarm.id, counter_value, alarm_value, current_time_,
+                    state});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+SyncUpdate
+ServerState::update_sync_counter(SyncCounterRecord &counter,
+                                 std::int64_t value, bool destroying)
+{
+    const std::int64_t old_value = counter.value;
+    std::vector<SyncAlarmRecord> revised_alarms;
+    std::vector<std::uint32_t> completed_waits;
+    std::vector<PlannedEvent> events;
+    try {
+        revised_alarms.reserve(sync_alarms_.size());
+        completed_waits.reserve(sync_counter_waits_.size());
+
+        for (const auto &entry : sync_alarms_) {
+            if (entry.second.trigger.counter != counter.id)
+                continue;
+            SyncAlarmRecord revised = entry.second;
+            if (destroying) {
+                if (!append_sync_alarm_event(
+                        revised, old_value, revised.trigger.test_value, 1,
+                        events)) {
+                    return SyncUpdate::resource_exhausted;
+                }
+                revised.state = 1;
+                revised.trigger.counter = 0;
+                revised_alarms.push_back(std::move(revised));
+                continue;
+            }
+            if (!sync_trigger_fired(revised.trigger, old_value, value))
+                continue;
+            const std::int64_t alarm_value = revised.trigger.test_value;
+            const AdvancedAlarm advanced = advance_alarm(revised, value);
+            if (!append_sync_alarm_event(
+                    revised, value, alarm_value, advanced.state, events)) {
+                return SyncUpdate::resource_exhausted;
+            }
+            revised.trigger.test_value = advanced.test_value;
+            revised.state = advanced.state;
+            revised_alarms.push_back(std::move(revised));
+        }
+
+        for (const auto &entry : sync_counter_waits_) {
+            bool fired = false;
+            for (const auto &condition : entry.second) {
+                if (condition.trigger.counter != counter.id)
+                    continue;
+                if (destroying || sync_trigger_fired(
+                        condition.trigger, old_value, value)) {
+                    fired = true;
+                    break;
+                }
+            }
+            if (!fired)
+                continue;
+
+            std::vector<SyncCounterNotifyEvent> notifications;
+            notifications.reserve(entry.second.size());
+            for (const auto &condition : entry.second) {
+                const bool destroyed = destroying &&
+                    condition.trigger.counter == counter.id;
+                std::int64_t current = 0;
+                if (condition.trigger.counter == counter.id) {
+                    current = destroying ? old_value : value;
+                }
+                else {
+                    const auto *other = sync_counter(
+                        condition.trigger.counter);
+                    if (other == nullptr)
+                        continue;
+                    current = other->value;
+                }
+                if (!destroyed &&
+                    !sync_notification_eligible(condition, current)) {
+                    continue;
+                }
+                notifications.push_back(SyncCounterNotifyEvent{
+                    condition.trigger.counter,
+                    condition.trigger.test_value, current, current_time_, 0,
+                    destroyed});
+            }
+            for (std::size_t index = 0; index < notifications.size();
+                 ++index) {
+                notifications[index].count = static_cast<std::uint16_t>(
+                    notifications.size() - index - 1);
+                events.emplace_back(entry.first, notifications[index]);
+            }
+            completed_waits.push_back(entry.first);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return SyncUpdate::resource_exhausted;
+    }
+
+    if (!queue_events_atomically(events))
+        return SyncUpdate::queue_full;
+    for (auto &alarm : revised_alarms) {
+        const auto found = sync_alarms_.find(alarm.id);
+        if (found != sync_alarms_.end())
+            found->second = std::move(alarm);
+    }
+    for (const auto client : completed_waits)
+        sync_counter_waits_.erase(client);
+    if (!destroying)
+        counter.value = value;
+    return SyncUpdate::updated;
+}
+
+SyncUpdate
+ServerState::set_sync_counter(SyncCounterRecord &counter, std::int64_t value)
+{
+    return update_sync_counter(counter, value, false);
+}
+
+SyncUpdate
+ServerState::erase_sync_counter(std::uint32_t id)
+{
+    auto found = sync_counters_.find(id);
+    if (found == sync_counters_.end())
+        return SyncUpdate::invalid;
+    const auto updated = update_sync_counter(found->second, 0, true);
+    if (updated != SyncUpdate::updated)
+        return updated;
+    sync_counters_.erase(found);
+    static_cast<void>(resources_.erase(id));
+    return SyncUpdate::updated;
+}
+
+SyncAlarmRecord *
+ServerState::sync_alarm(std::uint32_t id)
+{
+    const auto found = sync_alarms_.find(id);
+    return found == sync_alarms_.end() ? nullptr : &found->second;
+}
+
+const SyncAlarmRecord *
+ServerState::sync_alarm(std::uint32_t id) const
+{
+    const auto found = sync_alarms_.find(id);
+    return found == sync_alarms_.end() ? nullptr : &found->second;
+}
+
+SyncUpdate
+ServerState::commit_sync_alarm(SyncAlarmRecord alarm, bool creating)
+{
+    std::vector<PlannedEvent> events;
+    const auto *counter = sync_counter(alarm.trigger.counter);
+    alarm.state = counter == nullptr ? 1 : 0;
+    if (counter != nullptr && sync_trigger_fired(
+            alarm.trigger, counter->value, counter->value)) {
+        const std::int64_t alarm_value = alarm.trigger.test_value;
+        const AdvancedAlarm advanced = advance_alarm(alarm, counter->value);
+        if (!append_sync_alarm_event(
+                alarm, counter->value, alarm_value, advanced.state, events)) {
+            return SyncUpdate::resource_exhausted;
+        }
+        alarm.trigger.test_value = advanced.test_value;
+        alarm.state = advanced.state;
+    }
+
+    if (creating) {
+        if (!resources_.insert(
+                alarm.id, ResourceKind::sync_alarm, alarm.owner)) {
+            return SyncUpdate::invalid;
+        }
+        try {
+            if (!sync_alarms_.emplace(alarm.id, alarm).second) {
+                static_cast<void>(resources_.erase(alarm.id));
+                return SyncUpdate::invalid;
+            }
+        }
+        catch (const std::bad_alloc &) {
+            static_cast<void>(resources_.erase(alarm.id));
+            return SyncUpdate::resource_exhausted;
+        }
+    }
+
+    if (!queue_events_atomically(events)) {
+        if (creating) {
+            sync_alarms_.erase(alarm.id);
+            static_cast<void>(resources_.erase(alarm.id));
+        }
+        return SyncUpdate::queue_full;
+    }
+    if (creating) {
+        sync_alarms_.find(alarm.id)->second = std::move(alarm);
+    }
+    else {
+        const auto found = sync_alarms_.find(alarm.id);
+        if (found == sync_alarms_.end())
+            return SyncUpdate::invalid;
+        found->second = std::move(alarm);
+    }
+    return SyncUpdate::updated;
+}
+
+SyncUpdate
+ServerState::add_sync_alarm(SyncAlarmRecord alarm, std::uint32_t owner)
+{
+    alarm.owner = owner;
+    return commit_sync_alarm(std::move(alarm), true);
+}
+
+SyncUpdate
+ServerState::change_sync_alarm(SyncAlarmRecord alarm)
+{
+    if (sync_alarm(alarm.id) == nullptr)
+        return SyncUpdate::invalid;
+    return commit_sync_alarm(std::move(alarm), false);
+}
+
+SyncUpdate
+ServerState::erase_sync_alarm(std::uint32_t id)
+{
+    const auto found = sync_alarms_.find(id);
+    if (found == sync_alarms_.end())
+        return SyncUpdate::invalid;
+    std::vector<PlannedEvent> events;
+    if (const auto *counter = sync_counter(found->second.trigger.counter)) {
+        if (!append_sync_alarm_event(
+                found->second, counter->value,
+                found->second.trigger.test_value, 2, events)) {
+            return SyncUpdate::resource_exhausted;
+        }
+    }
+    if (!queue_events_atomically(events))
+        return SyncUpdate::queue_full;
+    sync_alarms_.erase(found);
+    static_cast<void>(resources_.erase(id));
+    return SyncUpdate::updated;
+}
+
+SyncFenceRecord *
+ServerState::sync_fence(std::uint32_t id)
+{
+    const auto found = sync_fences_.find(id);
+    return found == sync_fences_.end() ? nullptr : &found->second;
+}
+
+const SyncFenceRecord *
+ServerState::sync_fence(std::uint32_t id) const
+{
+    const auto found = sync_fences_.find(id);
+    return found == sync_fences_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_sync_fence(SyncFenceRecord fence, std::uint32_t owner)
+{
+    const std::uint32_t id = fence.id;
+    if (!resources_.insert(id, ResourceKind::sync_fence, owner))
+        return false;
+    try {
+        if (!sync_fences_.emplace(id, std::move(fence)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+SyncUpdate
+ServerState::trigger_sync_fence(std::uint32_t id)
+{
+    auto *fence = sync_fence(id);
+    if (fence == nullptr)
+        return SyncUpdate::invalid;
+    fence->triggered = true;
+    for (auto iterator = sync_fence_waits_.begin();
+         iterator != sync_fence_waits_.end();) {
+        if (std::find(iterator->second.begin(), iterator->second.end(), id) !=
+            iterator->second.end()) {
+            iterator = sync_fence_waits_.erase(iterator);
+        }
+        else {
+            ++iterator;
+        }
+    }
+    return SyncUpdate::updated;
+}
+
+bool
+ServerState::reset_sync_fence(std::uint32_t id) noexcept
+{
+    auto *fence = sync_fence(id);
+    if (fence == nullptr || !fence->triggered)
+        return false;
+    fence->triggered = false;
+    return true;
+}
+
+SyncUpdate
+ServerState::erase_sync_fence(std::uint32_t id)
+{
+    if (sync_fence(id) == nullptr)
+        return SyncUpdate::invalid;
+    for (auto iterator = sync_fence_waits_.begin();
+         iterator != sync_fence_waits_.end();) {
+        if (std::find(iterator->second.begin(), iterator->second.end(), id) !=
+            iterator->second.end()) {
+            iterator = sync_fence_waits_.erase(iterator);
+        }
+        else {
+            ++iterator;
+        }
+    }
+    sync_fences_.erase(id);
+    static_cast<void>(resources_.erase(id));
+    return SyncUpdate::updated;
+}
+
+SyncUpdate
+ServerState::begin_sync_counter_await(
+    std::uint32_t client, std::vector<SyncWaitCondition> conditions)
+{
+    if (conditions.empty() ||
+        conditions.size() > maximum_sync_wait_conditions ||
+        sync_waiting(client)) {
+        return SyncUpdate::invalid;
+    }
+    bool fired = false;
+    for (const auto &condition : conditions) {
+        const auto *counter = sync_counter(condition.trigger.counter);
+        if (counter == nullptr)
+            return SyncUpdate::invalid;
+        if (sync_trigger_fired(
+                condition.trigger, counter->value, counter->value)) {
+            fired = true;
+        }
+    }
+    if (fired) {
+        std::vector<PlannedEvent> events;
+        try {
+            std::vector<SyncCounterNotifyEvent> notifications;
+            notifications.reserve(conditions.size());
+            for (const auto &condition : conditions) {
+                const auto *counter = sync_counter(condition.trigger.counter);
+                if (counter != nullptr &&
+                    sync_notification_eligible(condition, counter->value)) {
+                    notifications.push_back(SyncCounterNotifyEvent{
+                        counter->id, condition.trigger.test_value,
+                        counter->value, current_time_, 0, false});
+                }
+            }
+            for (std::size_t index = 0; index < notifications.size();
+                 ++index) {
+                notifications[index].count = static_cast<std::uint16_t>(
+                    notifications.size() - index - 1);
+                events.emplace_back(client, notifications[index]);
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return SyncUpdate::resource_exhausted;
+        }
+        return queue_events_atomically(events) ? SyncUpdate::updated
+                                               : SyncUpdate::queue_full;
+    }
+    try {
+        sync_counter_waits_.emplace(client, std::move(conditions));
+    }
+    catch (const std::bad_alloc &) {
+        return SyncUpdate::resource_exhausted;
+    }
+    return SyncUpdate::updated;
+}
+
+SyncUpdate
+ServerState::begin_sync_fence_await(
+    std::uint32_t client, std::vector<std::uint32_t> fences)
+{
+    if (fences.empty() || fences.size() > maximum_sync_wait_conditions ||
+        sync_waiting(client)) {
+        return SyncUpdate::invalid;
+    }
+    for (const auto id : fences) {
+        const auto *fence = sync_fence(id);
+        if (fence == nullptr)
+            return SyncUpdate::invalid;
+        if (fence->triggered)
+            return SyncUpdate::updated;
+    }
+    try {
+        sync_fence_waits_.emplace(client, std::move(fences));
+    }
+    catch (const std::bad_alloc &) {
+        return SyncUpdate::resource_exhausted;
+    }
+    return SyncUpdate::updated;
+}
+
+bool
+ServerState::sync_waiting(std::uint32_t client) const noexcept
+{
+    return sync_counter_waits_.find(client) != sync_counter_waits_.end() ||
+        sync_fence_waits_.find(client) != sync_fence_waits_.end();
+}
+
+void
+ServerState::set_sync_priority(std::uint32_t client, std::int32_t priority)
+{
+    const auto found = sync_priorities_.find(client);
+    if (found != sync_priorities_.end())
+        found->second = priority;
+}
+
+std::int32_t
+ServerState::sync_priority(std::uint32_t client) const noexcept
+{
+    const auto found = sync_priorities_.find(client);
+    return found == sync_priorities_.end() ? 0 : found->second;
 }
 
 SelectionUpdate
@@ -2510,6 +3102,14 @@ ServerState::disconnect_client(std::uint32_t owner)
         clients.erase(std::remove(clients.begin(), clients.end(), owner),
                       clients.end());
     }
+    sync_counter_waits_.erase(owner);
+    sync_fence_waits_.erase(owner);
+    sync_priorities_.erase(owner);
+    for (auto &entry : sync_alarms_) {
+        auto &clients = entry.second.event_clients;
+        clients.erase(std::remove(clients.begin(), clients.end(), owner),
+                      clients.end());
+    }
     const auto queued = event_queues_.find(owner);
     if (queued != event_queues_.end()) {
         pending_events_ -= queued->second.size();
@@ -2535,6 +3135,42 @@ ServerState::disconnect_client(std::uint32_t owner)
             selection.second.changed_at = current_time_;
         }
     }
+    const auto alarms = resources_.owned_by(owner, ResourceKind::sync_alarm);
+    for (const auto id : alarms) {
+        if (erase_sync_alarm(id) != SyncUpdate::updated) {
+            sync_alarms_.erase(id);
+            static_cast<void>(resources_.erase(id));
+        }
+    }
+    const auto counters =
+        resources_.owned_by(owner, ResourceKind::sync_counter);
+    for (const auto id : counters) {
+        if (erase_sync_counter(id) == SyncUpdate::updated)
+            continue;
+        for (auto &entry : sync_alarms_) {
+            if (entry.second.trigger.counter == id) {
+                entry.second.trigger.counter = 0;
+                entry.second.state = 1;
+            }
+        }
+        for (auto iterator = sync_counter_waits_.begin();
+             iterator != sync_counter_waits_.end();) {
+            const bool references = std::any_of(
+                iterator->second.begin(), iterator->second.end(),
+                [id](const SyncWaitCondition &condition) {
+                    return condition.trigger.counter == id;
+                });
+            if (references)
+                iterator = sync_counter_waits_.erase(iterator);
+            else
+                ++iterator;
+        }
+        sync_counters_.erase(id);
+        static_cast<void>(resources_.erase(id));
+    }
+    const auto fences = resources_.owned_by(owner, ResourceKind::sync_fence);
+    for (const auto id : fences)
+        static_cast<void>(erase_sync_fence(id));
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)

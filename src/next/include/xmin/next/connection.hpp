@@ -176,6 +176,7 @@ private:
     Result<void> handle_generic_event(const RequestContext &context);
     Result<void> handle_xtest(const RequestContext &context);
     Result<void> handle_shape(const RequestContext &context);
+    Result<void> handle_sync(const RequestContext &context);
     Result<void> update_shape(
         const RequestContext &context, WindowRecord &window,
         std::uint8_t operation, std::uint8_t kind,
@@ -200,6 +201,7 @@ private:
     std::size_t setup_padded_name_size_ = 0;
     std::uint16_t sequence_ = 0;
     bool big_requests_enabled_ = false;
+    bool resume_sync_input_ = false;
     bool prepared_ = false;
     bool close_after_output_ = false;
     bool finished_ = false;

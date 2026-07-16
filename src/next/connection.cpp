@@ -111,6 +111,36 @@ signed_dword(std::uint32_t value) noexcept
             : widened - (std::int64_t{1} << 32));
 }
 
+std::int64_t
+signed_qword(std::uint64_t value) noexcept
+{
+    constexpr auto signed_max =
+        static_cast<std::uint64_t>(std::numeric_limits<std::int64_t>::max());
+    if (value <= signed_max)
+        return static_cast<std::int64_t>(value);
+    return -1 - static_cast<std::int64_t>(
+        std::numeric_limits<std::uint64_t>::max() - value);
+}
+
+std::optional<std::int64_t>
+read_sync_int64(WireReader &reader)
+{
+    const auto high = reader.u32();
+    const auto low = reader.u32();
+    if (!high || !low)
+        return std::nullopt;
+    return signed_qword(
+        (static_cast<std::uint64_t>(*high) << 32) | *low);
+}
+
+void
+write_sync_int64(WireWriter &writer, std::int64_t value)
+{
+    const auto bits = static_cast<std::uint64_t>(value);
+    writer.u32(static_cast<std::uint32_t>(bits >> 32));
+    writer.u32(static_cast<std::uint32_t>(bits));
+}
+
 std::int16_t
 wire_coordinate(std::int32_t value) noexcept
 {
@@ -327,12 +357,18 @@ Connection::poll_events() const noexcept
     if (finished_)
         return 0;
     short events = 0;
-    if (!close_after_output_)
+    const bool sync_waiting = state_ == State::requests &&
+        server_.sync_waiting(config_.resource_base);
+    if (!close_after_output_ && !sync_waiting)
         events |= POLLIN;
     if (output_offset_ < output_.size())
         events |= POLLOUT;
     if (!close_after_output_ && state_ == State::requests && order_ &&
         server_.has_pending_event(config_.resource_base)) {
+        events |= POLLOUT;
+    }
+    if (!close_after_output_ && resume_sync_input_ && !sync_waiting &&
+        !input_.empty()) {
         events |= POLLOUT;
     }
     return events;
@@ -437,6 +473,33 @@ Connection::encode_event(const ClientEvent &event) const
         writer.u32(shape->time);
         writer.u8(shape->shaped ? 1 : 0);
         writer.pad(11);
+        return writer.data();
+    }
+
+    if (const auto *counter = std::get_if<SyncCounterNotifyEvent>(&event)) {
+        writer.u8(sync_extension.first_event);
+        writer.u8(0); // CounterNotify
+        writer.u16(counter->sequence);
+        writer.u32(counter->counter);
+        write_sync_int64(writer, counter->wait_value);
+        write_sync_int64(writer, counter->counter_value);
+        writer.u32(counter->time);
+        writer.u16(counter->count);
+        writer.u8(counter->destroyed ? 1 : 0);
+        writer.u8(0);
+        return writer.data();
+    }
+
+    if (const auto *alarm = std::get_if<SyncAlarmNotifyEvent>(&event)) {
+        writer.u8(sync_extension.first_event + 1);
+        writer.u8(1); // AlarmNotify
+        writer.u16(alarm->sequence);
+        writer.u32(alarm->alarm);
+        write_sync_int64(writer, alarm->counter_value);
+        write_sync_int64(writer, alarm->alarm_value);
+        writer.u32(alarm->time);
+        writer.u8(alarm->state);
+        writer.pad(3);
         return writer.data();
     }
 
@@ -5571,6 +5634,550 @@ Connection::handle_xtest(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_sync(const RequestContext &context)
+{
+    constexpr std::uint8_t bad_counter = sync_extension.first_error;
+    constexpr std::uint8_t bad_alarm = sync_extension.first_error + 1;
+    constexpr std::uint8_t bad_fence = sync_extension.first_error + 2;
+    const auto sync_error = [&](std::uint8_t code, std::uint32_t value) {
+        return send_error(context.order, code, context.opcode,
+                          context.sequence, value, context.data);
+    };
+    const auto allocation_error = [&]() {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence, 0, context.data);
+    };
+    const auto finish_update = [&](SyncUpdate update) -> Result<void> {
+        if (update == SyncUpdate::updated)
+            return drain_pending_events();
+        if (update == SyncUpdate::resource_exhausted ||
+            update == SyncUpdate::queue_full) {
+            return allocation_error();
+        }
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, 0, context.data);
+    };
+
+    switch (context.data) {
+    case 0: { // Initialize
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        if (!reader.u8() || !reader.u8() || !reader.skip(2))
+            return malformed("truncated SYNC Initialize request");
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u8(sync_extension.major_version);
+        reply.u8(static_cast<std::uint8_t>(sync_extension.minor_version));
+        reply.pad(22);
+        return queue(reply.data());
+    }
+    case 1: { // ListSystemCounters
+        if (context.request.size() != 4)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u32(0); // Xmin has no server-maintained system counters
+        reply.pad(20);
+        return queue(reply.data());
+    }
+    case 2: { // CreateCounter
+        if (context.request.size() != 16)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 12, context.order);
+        const auto id = reader.u32();
+        const auto value = read_sync_int64(reader);
+        if (!id || !value)
+            return malformed("truncated SYNC CreateCounter request");
+        if (!server_.valid_client_resource(*id, config_.resource_base))
+            return sync_error(bad_id_choice, *id);
+        if (server_.resource_limit_reached(config_.resource_base))
+            return allocation_error();
+        if (!server_.add_sync_counter({*id, *value}, config_.resource_base))
+            return allocation_error();
+        return Result<void>::success();
+    }
+    case 3: // SetCounter
+    case 4: { // ChangeCounter
+        if (context.request.size() != 16)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 12, context.order);
+        const auto id = reader.u32();
+        const auto operand = read_sync_int64(reader);
+        if (!id || !operand)
+            return malformed("truncated SYNC counter update request");
+        auto *counter = server_.sync_counter(*id);
+        if (counter == nullptr)
+            return sync_error(bad_counter, *id);
+        std::int64_t value = *operand;
+        if (context.data == 4) {
+            const auto changed = checked_add(counter->value, *operand);
+            if (!changed) {
+                const auto high = static_cast<std::uint32_t>(
+                    static_cast<std::uint64_t>(*operand) >> 32);
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, high, context.data);
+            }
+            value = *changed;
+        }
+        return finish_update(server_.set_sync_counter(*counter, value));
+    }
+    case 5: { // QueryCounter
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC QueryCounter request");
+        const auto *counter = server_.sync_counter(*id);
+        if (counter == nullptr)
+            return sync_error(bad_counter, *id);
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        write_sync_int64(reply, counter->value);
+        reply.pad(16);
+        return queue(reply.data());
+    }
+    case 6: { // DestroyCounter
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC DestroyCounter request");
+        if (server_.sync_counter(*id) == nullptr)
+            return sync_error(bad_counter, *id);
+        return finish_update(server_.erase_sync_counter(*id));
+    }
+    case 7: { // Await
+        if ((context.request.size() - 4) % 28 != 0) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        const std::size_t count = (context.request.size() - 4) / 28;
+        if (count == 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, 0, context.data);
+        if (count > maximum_sync_wait_conditions)
+            return allocation_error();
+        WireReader reader(context.request.data() + 4,
+                          context.request.size() - 4, context.order);
+        std::vector<SyncWaitCondition> conditions;
+        try {
+            conditions.reserve(count);
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto id = reader.u32();
+                const auto value_type = reader.u32();
+                const auto wait_value = read_sync_int64(reader);
+                const auto test_type = reader.u32();
+                const auto threshold = read_sync_int64(reader);
+                if (!id || !value_type || !wait_value || !test_type ||
+                    !threshold) {
+                    return malformed("truncated SYNC Await condition");
+                }
+                const auto *counter = server_.sync_counter(*id);
+                if (counter == nullptr)
+                    return sync_error(bad_counter, *id);
+                if (*value_type > 1)
+                    return send_error(context.order, bad_value,
+                                      context.opcode, context.sequence,
+                                      *value_type, context.data);
+                if (*test_type > 3)
+                    return send_error(context.order, bad_value,
+                                      context.opcode, context.sequence,
+                                      *test_type, context.data);
+                std::int64_t test_value = *wait_value;
+                if (*value_type == 1) {
+                    const auto relative = checked_add(
+                        counter->value, *wait_value);
+                    if (!relative) {
+                        const auto high = static_cast<std::uint32_t>(
+                            static_cast<std::uint64_t>(*wait_value) >> 32);
+                        return send_error(
+                            context.order, bad_value, context.opcode,
+                            context.sequence, high, context.data);
+                    }
+                    test_value = *relative;
+                }
+                SyncTrigger trigger;
+                trigger.counter = *id;
+                trigger.wait_value = *wait_value;
+                trigger.test_value = test_value;
+                trigger.value_type = static_cast<std::uint8_t>(*value_type);
+                trigger.test_type = static_cast<SyncTestType>(*test_type);
+                conditions.push_back(SyncWaitCondition{trigger, *threshold});
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return allocation_error();
+        }
+        return finish_update(server_.begin_sync_counter_await(
+            config_.resource_base, std::move(conditions)));
+    }
+    case 8: // CreateAlarm
+    case 9: { // ChangeAlarm
+        if (context.request.size() < 12)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader header(context.request.data() + 4, 8, context.order);
+        const auto id = header.u32();
+        const auto mask = header.u32();
+        if (!id || !mask)
+            return malformed("truncated SYNC alarm request");
+        if ((*mask & ~std::uint32_t{0x3f}) != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *mask, context.data);
+        std::size_t words = 0;
+        for (std::uint32_t bit = 1; bit <= 32; bit <<= 1) {
+            if ((*mask & bit) != 0)
+                words += (bit == 4 || bit == 16) ? 2 : 1;
+        }
+        if (context.request.size() != 12 + words * 4)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+
+        const bool creating = context.data == 8;
+        SyncAlarmRecord alarm;
+        if (creating) {
+            if (!server_.valid_client_resource(*id, config_.resource_base))
+                return sync_error(bad_id_choice, *id);
+            if (server_.resource_limit_reached(config_.resource_base))
+                return allocation_error();
+            alarm.id = *id;
+            alarm.owner = config_.resource_base;
+            try {
+                alarm.event_clients.push_back(config_.resource_base);
+            }
+            catch (const std::bad_alloc &) {
+                return allocation_error();
+            }
+        }
+        else {
+            const auto *existing = server_.sync_alarm(*id);
+            if (existing == nullptr)
+                return sync_error(bad_alarm, *id);
+            try {
+                alarm = *existing;
+            }
+            catch (const std::bad_alloc &) {
+                return allocation_error();
+            }
+        }
+
+        WireReader values(context.request.data() + 12,
+                          context.request.size() - 12, context.order);
+        std::uint32_t selected_counter = alarm.trigger.counter;
+        bool value_type_changed = false;
+        bool wait_value_changed = false;
+        bool test_type_changed = false;
+        bool delta_changed = false;
+        if ((*mask & 1) != 0) {
+            const auto value = values.u32();
+            if (!value)
+                return malformed("truncated SYNC alarm counter");
+            if (*value != 0 && server_.sync_counter(*value) == nullptr)
+                return sync_error(bad_counter, *value);
+            selected_counter = *value;
+        }
+        if ((*mask & 2) != 0) {
+            const auto value = values.u32();
+            if (!value)
+                return malformed("truncated SYNC alarm value type");
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value, context.data);
+            alarm.trigger.value_type = static_cast<std::uint8_t>(*value);
+            value_type_changed = true;
+        }
+        if ((*mask & 4) != 0) {
+            const auto value = read_sync_int64(values);
+            if (!value)
+                return malformed("truncated SYNC alarm value");
+            alarm.trigger.wait_value = *value;
+            wait_value_changed = true;
+        }
+        if ((*mask & 8) != 0) {
+            const auto value = values.u32();
+            if (!value)
+                return malformed("truncated SYNC alarm test type");
+            if (*value > 3)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value, context.data);
+            alarm.trigger.test_type = static_cast<SyncTestType>(*value);
+            test_type_changed = true;
+        }
+        if ((*mask & 16) != 0) {
+            const auto value = read_sync_int64(values);
+            if (!value)
+                return malformed("truncated SYNC alarm delta");
+            alarm.delta = *value;
+            delta_changed = true;
+        }
+        if ((*mask & 32) != 0) {
+            const auto enabled = values.u32();
+            if (!enabled)
+                return malformed("truncated SYNC alarm events value");
+            if (*enabled > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *enabled, context.data);
+            const auto selected = std::find(
+                alarm.event_clients.begin(), alarm.event_clients.end(),
+                config_.resource_base);
+            if (*enabled == 0) {
+                if (selected != alarm.event_clients.end())
+                    alarm.event_clients.erase(selected);
+            }
+            else if (selected == alarm.event_clients.end()) {
+                try {
+                    alarm.event_clients.push_back(config_.resource_base);
+                }
+                catch (const std::bad_alloc &) {
+                    return allocation_error();
+                }
+            }
+        }
+        alarm.trigger.counter = selected_counter;
+        if (value_type_changed || wait_value_changed) {
+            if (alarm.trigger.value_type == 0) {
+                alarm.trigger.test_value = alarm.trigger.wait_value;
+            }
+            else {
+                const auto *counter = server_.sync_counter(selected_counter);
+                if (counter == nullptr)
+                    return send_error(context.order, bad_match,
+                                      context.opcode, context.sequence, 0,
+                                      context.data);
+                const auto relative = checked_add(
+                    counter->value, alarm.trigger.wait_value);
+                if (!relative) {
+                    const auto high = static_cast<std::uint32_t>(
+                        static_cast<std::uint64_t>(
+                            alarm.trigger.wait_value) >> 32);
+                    return send_error(context.order, bad_value,
+                                      context.opcode, context.sequence, high,
+                                      context.data);
+                }
+                alarm.trigger.test_value = *relative;
+            }
+        }
+        if (test_type_changed || delta_changed) {
+            const bool positive =
+                alarm.trigger.test_type ==
+                    SyncTestType::positive_transition ||
+                alarm.trigger.test_type ==
+                    SyncTestType::positive_comparison;
+            if ((positive && alarm.delta < 0) ||
+                (!positive && alarm.delta > 0)) {
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, 0, context.data);
+            }
+        }
+        const SyncUpdate update = creating
+            ? server_.add_sync_alarm(std::move(alarm), config_.resource_base)
+            : server_.change_sync_alarm(std::move(alarm));
+        return finish_update(update);
+    }
+    case 10: { // QueryAlarm
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC QueryAlarm request");
+        const auto *alarm = server_.sync_alarm(*id);
+        if (alarm == nullptr)
+            return sync_error(bad_alarm, *id);
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(2);
+        reply.u32(alarm->trigger.counter);
+        reply.u32(0); // relative values are consumed when configured
+        write_sync_int64(reply, alarm->trigger.test_value);
+        reply.u32(static_cast<std::uint32_t>(alarm->trigger.test_type));
+        write_sync_int64(reply, alarm->delta);
+        reply.u8(std::find(
+                     alarm->event_clients.begin(),
+                     alarm->event_clients.end(), alarm->owner) !=
+                         alarm->event_clients.end()
+                     ? 1
+                     : 0);
+        reply.u8(alarm->state);
+        reply.pad(2);
+        return queue(reply.data());
+    }
+    case 11: { // DestroyAlarm
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC DestroyAlarm request");
+        if (server_.sync_alarm(*id) == nullptr)
+            return sync_error(bad_alarm, *id);
+        return finish_update(server_.erase_sync_alarm(*id));
+    }
+    case 12: { // SetPriority
+        if (context.request.size() != 12)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 8, context.order);
+        const auto id = reader.u32();
+        const auto priority = reader.u32();
+        if (!id || !priority)
+            return malformed("truncated SYNC SetPriority request");
+        std::uint32_t client = config_.resource_base;
+        if (*id != 0) {
+            const auto owner = server_.resource_owner(*id);
+            if (!owner || *owner == 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *id, context.data);
+            client = *owner;
+        }
+        server_.set_sync_priority(client, signed_dword(*priority));
+        return Result<void>::success();
+    }
+    case 13: { // GetPriority
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC GetPriority request");
+        std::uint32_t client = config_.resource_base;
+        if (*id != 0) {
+            const auto owner = server_.resource_owner(*id);
+            if (!owner || *owner == 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *id, context.data);
+            client = *owner;
+        }
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u32(static_cast<std::uint32_t>(
+            server_.sync_priority(client)));
+        reply.pad(20);
+        return queue(reply.data());
+    }
+    case 14: { // CreateFence
+        if (context.request.size() != 16)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 12, context.order);
+        const auto drawable = reader.u32();
+        const auto id = reader.u32();
+        const auto triggered = reader.u8();
+        if (!drawable || !id || !triggered || !reader.skip(3))
+            return malformed("truncated SYNC CreateFence request");
+        if (server_.drawable_surface(*drawable) == nullptr)
+            return send_error(context.order, bad_drawable, context.opcode,
+                              context.sequence, *drawable, context.data);
+        if (*triggered > 1)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *triggered, context.data);
+        if (!server_.valid_client_resource(*id, config_.resource_base))
+            return sync_error(bad_id_choice, *id);
+        if (server_.resource_limit_reached(config_.resource_base))
+            return allocation_error();
+        if (!server_.add_sync_fence(
+                {*id, *triggered != 0}, config_.resource_base)) {
+            return allocation_error();
+        }
+        return Result<void>::success();
+    }
+    case 15: // TriggerFence
+    case 16: // ResetFence
+    case 17: // DestroyFence
+    case 18: { // QueryFence
+        if (context.request.size() != 8)
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        WireReader reader(context.request.data() + 4, 4, context.order);
+        const auto id = reader.u32();
+        if (!id)
+            return malformed("truncated SYNC fence request");
+        const auto *fence = server_.sync_fence(*id);
+        if (fence == nullptr)
+            return sync_error(bad_fence, *id);
+        if (context.data == 15)
+            return finish_update(server_.trigger_sync_fence(*id));
+        if (context.data == 16) {
+            if (!server_.reset_sync_fence(*id))
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, 0, context.data);
+            return Result<void>::success();
+        }
+        if (context.data == 17)
+            return finish_update(server_.erase_sync_fence(*id));
+        WireWriter reply(context.order);
+        reply.u8(1);
+        reply.u8(0);
+        reply.u16(context.sequence);
+        reply.u32(0);
+        reply.u8(fence->triggered ? 1 : 0);
+        reply.pad(23);
+        return queue(reply.data());
+    }
+    case 19: { // AwaitFence
+        if ((context.request.size() - 4) % 4 != 0) {
+            return send_error(context.order, bad_length, context.opcode,
+                              context.sequence, 0, context.data);
+        }
+        const std::size_t count = (context.request.size() - 4) / 4;
+        if (count == 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, 0, context.data);
+        if (count > maximum_sync_wait_conditions)
+            return allocation_error();
+        WireReader reader(context.request.data() + 4,
+                          context.request.size() - 4, context.order);
+        std::vector<std::uint32_t> fences;
+        try {
+            fences.reserve(count);
+            for (std::size_t index = 0; index < count; ++index) {
+                const auto id = reader.u32();
+                if (!id)
+                    return malformed("truncated SYNC AwaitFence request");
+                if (server_.sync_fence(*id) == nullptr)
+                    return sync_error(bad_fence, *id);
+                fences.push_back(*id);
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return allocation_error();
+        }
+        return finish_update(server_.begin_sync_fence_await(
+            config_.resource_base, std::move(fences)));
+    }
+    default:
+        return send_error(context.order, bad_request, context.opcode,
+                          context.sequence, 0, context.data);
+    }
+}
+
+Result<void>
 Connection::handle_no_operation(const RequestContext &)
 {
     return Result<void>::success();
@@ -5591,6 +6198,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_xtest(context);
         case ExtensionKind::shape:
             return handle_shape(context);
+        case ExtensionKind::sync:
+            return handle_sync(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {
@@ -5893,7 +6502,13 @@ Connection::process_request()
 Result<void>
 Connection::process_input()
 {
-    while (!finished_ && !close_after_output_) {
+    if (state_ == State::requests &&
+        !server_.sync_waiting(config_.resource_base)) {
+        resume_sync_input_ = false;
+    }
+    while (!finished_ && !close_after_output_ &&
+           !(state_ == State::requests &&
+             server_.sync_waiting(config_.resource_base))) {
         Result<bool> processed = [&]() {
             switch (state_) {
             case State::setup_prefix:
@@ -5912,6 +6527,10 @@ Connection::process_input()
         }
         if (!processed.value())
             break;
+        if (state_ == State::requests &&
+            server_.sync_waiting(config_.resource_base)) {
+            resume_sync_input_ = true;
+        }
     }
     return Result<void>::success();
 }
@@ -5924,6 +6543,10 @@ Connection::on_readable()
                                      "connection was not prepared");
     if (finished_ || close_after_output_)
         return Result<void>::success();
+    if (state_ == State::requests &&
+        server_.sync_waiting(config_.resource_base)) {
+        return Result<void>::success();
+    }
 
     std::array<std::uint8_t, 16384> bytes{};
     for (;;) {
@@ -5944,6 +6567,10 @@ Connection::on_readable()
                 return processed;
             if (close_after_output_)
                 return Result<void>::success();
+            if (state_ == State::requests &&
+                server_.sync_waiting(config_.resource_base)) {
+                return Result<void>::success();
+            }
             continue;
         }
         if (count == 0) {
@@ -5970,6 +6597,15 @@ Connection::on_writable()
         return Result<void>::failure(ErrorCode::invalid_argument,
                                      "connection was not prepared");
     auto drained = drain_pending_events();
+    if (!drained)
+        return drained;
+    if (resume_sync_input_ &&
+        !server_.sync_waiting(config_.resource_base) && !input_.empty()) {
+        auto processed = process_input();
+        if (!processed)
+            return processed;
+    }
+    drained = drain_pending_events();
     if (!drained)
         return drained;
     while (output_offset_ < output_.size()) {

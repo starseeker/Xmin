@@ -41,6 +41,25 @@ struct ShapeNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct SyncCounterNotifyEvent {
+    std::uint32_t counter = 0;
+    std::int64_t wait_value = 0;
+    std::int64_t counter_value = 0;
+    std::uint32_t time = 0;
+    std::uint16_t count = 0;
+    bool destroyed = false;
+    std::uint16_t sequence = 0;
+};
+
+struct SyncAlarmNotifyEvent {
+    std::uint32_t alarm = 0;
+    std::int64_t counter_value = 0;
+    std::int64_t alarm_value = 0;
+    std::uint32_t time = 0;
+    std::uint8_t state = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -85,7 +104,8 @@ struct FocusEvent {
 
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
-    ShapeNotifyEvent, CoreInputEvent, CrossingEvent, FocusEvent>;
+    ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
+    CoreInputEvent, CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next
 

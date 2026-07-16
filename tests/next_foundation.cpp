@@ -50,7 +50,12 @@ test_checked_arithmetic()
 {
     using xmin::next::checked_add;
     using xmin::next::checked_multiply;
+    using xmin::next::checked_subtract;
     constexpr auto maximum = std::numeric_limits<std::size_t>::max();
+    constexpr auto signed_maximum =
+        std::numeric_limits<std::int64_t>::max();
+    constexpr auto signed_minimum =
+        std::numeric_limits<std::int64_t>::min();
     return expect(checked_add(std::size_t{2}, std::size_t{3}) == 5,
                   "checked_add rejected a valid sum") &&
         expect(!checked_add(maximum, std::size_t{1}),
@@ -58,7 +63,17 @@ test_checked_arithmetic()
         expect(checked_multiply(std::size_t{6}, std::size_t{7}) == 42,
                "checked_multiply rejected a valid product") &&
         expect(!checked_multiply(maximum, std::size_t{2}),
-               "checked_multiply accepted overflow");
+               "checked_multiply accepted overflow") &&
+        expect(checked_add(std::int64_t{-9}, std::int64_t{4}) == -5,
+               "signed checked_add rejected a valid sum") &&
+        expect(!checked_add(signed_maximum, std::int64_t{1}) &&
+                   !checked_add(signed_minimum, std::int64_t{-1}),
+               "signed checked_add accepted overflow") &&
+        expect(checked_subtract(std::int64_t{-9}, std::int64_t{-4}) == -5,
+               "signed checked_subtract rejected a valid difference") &&
+        expect(!checked_subtract(signed_minimum, std::int64_t{1}) &&
+                   !checked_subtract(signed_maximum, std::int64_t{-1}),
+               "signed checked_subtract accepted overflow");
 }
 
 bool
@@ -2644,6 +2659,227 @@ test_window_tree_mutations()
 }
 
 bool
+test_sync_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t waiter = 0x00400000;
+    constexpr std::uint32_t counter_id = owner + 1;
+    constexpr std::uint32_t alarm_id = owner + 2;
+    constexpr std::uint32_t fence_id = owner + 3;
+    xmin::next::ServerState server(32, 24);
+    if (!expect(server.register_client(owner) && server.register_client(waiter),
+                "SYNC clients could not be registered") ||
+        !expect(server.add_sync_counter({counter_id, 0}, owner),
+                "SYNC counter insertion failed")) {
+        return false;
+    }
+
+    xmin::next::SyncTrigger wait_trigger;
+    wait_trigger.counter = counter_id;
+    wait_trigger.wait_value = 2;
+    wait_trigger.test_value = 2;
+    wait_trigger.test_type = xmin::next::SyncTestType::positive_comparison;
+    std::vector<xmin::next::SyncWaitCondition> conditions{
+        {wait_trigger, 0}};
+    if (!expect(server.begin_sync_counter_await(
+                    waiter, std::move(conditions)) ==
+                    xmin::next::SyncUpdate::updated &&
+                   server.sync_waiting(waiter),
+                "SYNC Await did not suspend its client")) {
+        return false;
+    }
+    auto *counter = server.sync_counter(counter_id);
+    if (!expect(counter != nullptr &&
+                   server.set_sync_counter(*counter, 1) ==
+                       xmin::next::SyncUpdate::updated &&
+                   server.sync_waiting(waiter),
+                "SYNC Await resumed before its trigger") ||
+        !expect(server.set_sync_counter(*counter, 2) ==
+                    xmin::next::SyncUpdate::updated &&
+                   !server.sync_waiting(waiter),
+                "SYNC Await did not resume at its trigger")) {
+        return false;
+    }
+    const auto *event = server.next_event(waiter);
+    const auto *counter_event = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::SyncCounterNotifyEvent>(event);
+    if (!expect(counter_event != nullptr &&
+                   counter_event->counter == counter_id &&
+                   counter_event->wait_value == 2 &&
+                   counter_event->counter_value == 2 &&
+                   counter_event->count == 0 && !counter_event->destroyed,
+                "SYNC Await emitted the wrong CounterNotify")) {
+        return false;
+    }
+    server.pop_event(waiter);
+
+    xmin::next::SyncAlarmRecord alarm;
+    alarm.id = alarm_id;
+    alarm.trigger.counter = counter_id;
+    alarm.trigger.wait_value = 3;
+    alarm.trigger.test_value = 3;
+    alarm.trigger.test_type =
+        xmin::next::SyncTestType::positive_comparison;
+    alarm.delta = 2;
+    alarm.event_clients.push_back(owner);
+    if (!expect(server.add_sync_alarm(std::move(alarm), owner) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC alarm insertion failed") ||
+        !expect(server.set_sync_counter(*counter, 7) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC alarm counter update failed")) {
+        return false;
+    }
+    event = server.next_event(owner);
+    const auto *alarm_event = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::SyncAlarmNotifyEvent>(event);
+    const auto *stored_alarm = server.sync_alarm(alarm_id);
+    if (!expect(alarm_event != nullptr && alarm_event->alarm == alarm_id &&
+                   alarm_event->counter_value == 7 &&
+                   alarm_event->alarm_value == 3 && alarm_event->state == 0,
+                "SYNC alarm emitted the wrong AlarmNotify") ||
+        !expect(stored_alarm != nullptr &&
+                   stored_alarm->trigger.test_value == 9 &&
+                   stored_alarm->state == 0,
+                "SYNC alarm did not advance beyond the counter")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    for (std::size_t index = 0;
+         index < xmin::next::maximum_pending_events_per_client; ++index) {
+        if (!expect(server.broadcast_mapping_notify(0, 0, 0),
+                    "SYNC queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.set_sync_counter(*counter, 9) ==
+                    xmin::next::SyncUpdate::queue_full,
+                "SYNC alarm update ignored event queue pressure") ||
+        !expect(counter->value == 7 &&
+                   server.sync_alarm(alarm_id)->trigger.test_value == 9,
+                "SYNC queue pressure left a partial counter/alarm update")) {
+        return false;
+    }
+    for (std::size_t index = 0;
+         index < xmin::next::maximum_pending_events_per_client; ++index) {
+        server.pop_event(owner);
+        server.pop_event(waiter);
+    }
+
+    conditions.assign(1, xmin::next::SyncWaitCondition{wait_trigger, 0});
+    wait_trigger.test_value = 100;
+    conditions[0].trigger = wait_trigger;
+    if (!expect(server.begin_sync_counter_await(
+                    waiter, std::move(conditions)) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC destruction Await setup failed") ||
+        !expect(server.erase_sync_counter(counter_id) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC counter destruction failed")) {
+        return false;
+    }
+    event = server.next_event(waiter);
+    counter_event = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::SyncCounterNotifyEvent>(event);
+    stored_alarm = server.sync_alarm(alarm_id);
+    if (!expect(counter_event != nullptr && counter_event->destroyed &&
+                   counter_event->counter_value == 7 &&
+                   !server.sync_waiting(waiter),
+                "counter destruction did not release SYNC Await") ||
+        !expect(stored_alarm != nullptr &&
+                   stored_alarm->trigger.counter == 0 &&
+                   stored_alarm->state == 1,
+                "counter destruction did not inactivate its alarm")) {
+        return false;
+    }
+    server.pop_event(waiter);
+    event = server.next_event(owner);
+    alarm_event = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::SyncAlarmNotifyEvent>(event);
+    if (!expect(alarm_event != nullptr && alarm_event->state == 1,
+                "counter destruction omitted AlarmNotify")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    if (!expect(server.add_sync_fence({fence_id, false}, owner),
+                "SYNC fence insertion failed") ||
+        !expect(server.begin_sync_fence_await(waiter, {fence_id}) ==
+                    xmin::next::SyncUpdate::updated &&
+                   server.sync_waiting(waiter),
+                "SYNC AwaitFence did not suspend its client") ||
+        !expect(server.trigger_sync_fence(fence_id) ==
+                    xmin::next::SyncUpdate::updated &&
+                   !server.sync_waiting(waiter),
+                "SYNC fence trigger did not resume AwaitFence") ||
+        !expect(server.reset_sync_fence(fence_id),
+                "SYNC fence reset failed") ||
+        !expect(!server.reset_sync_fence(fence_id),
+                "SYNC accepted reset of an untriggered fence")) {
+        return false;
+    }
+
+    server.set_sync_priority(waiter, -7);
+    if (!expect(server.sync_priority(waiter) == -7,
+                "SYNC priority was not retained")) {
+        return false;
+    }
+
+    constexpr std::uint32_t boundary_counter = owner + 4;
+    constexpr std::uint32_t boundary_alarm = owner + 5;
+    if (!expect(server.add_sync_counter(
+                    {boundary_counter,
+                     std::numeric_limits<std::int64_t>::max()}, owner),
+                "SYNC boundary counter insertion failed")) {
+        return false;
+    }
+    xmin::next::SyncAlarmRecord overflow_alarm;
+    overflow_alarm.id = boundary_alarm;
+    overflow_alarm.trigger.counter = boundary_counter;
+    overflow_alarm.trigger.wait_value =
+        std::numeric_limits<std::int64_t>::max();
+    overflow_alarm.trigger.test_value =
+        std::numeric_limits<std::int64_t>::max();
+    overflow_alarm.trigger.test_type =
+        xmin::next::SyncTestType::positive_comparison;
+    overflow_alarm.delta = 1;
+    overflow_alarm.event_clients.push_back(owner);
+    if (!expect(server.add_sync_alarm(std::move(overflow_alarm), owner) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC boundary alarm insertion failed")) {
+        return false;
+    }
+    const auto *bounded_alarm = server.sync_alarm(boundary_alarm);
+    if (!expect(bounded_alarm != nullptr && bounded_alarm->state == 1 &&
+                   bounded_alarm->trigger.test_value ==
+                       std::numeric_limits<std::int64_t>::max(),
+                "SYNC alarm overflow did not become inactive")) {
+        return false;
+    }
+    server.pop_event(owner);
+    if (!expect(server.erase_sync_alarm(boundary_alarm) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC boundary alarm cleanup failed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    if (!expect(server.erase_sync_counter(boundary_counter) ==
+                    xmin::next::SyncUpdate::updated,
+                "SYNC boundary counter cleanup failed")) {
+        return false;
+    }
+    server.disconnect_client(owner);
+    return expect(server.sync_alarm(alarm_id) == nullptr &&
+                      server.sync_fence(fence_id) == nullptr,
+                  "SYNC resources survived owner disconnect");
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -2704,7 +2940,8 @@ main()
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() && test_shape_state() &&
-            test_window_tree_mutations() && test_colormap_state() &&
+            test_window_tree_mutations() && test_sync_state() &&
+            test_colormap_state() &&
             test_result()
         ? 0
         : 1;

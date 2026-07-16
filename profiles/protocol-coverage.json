@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "02a13b15681598c60f6f0d4bd9e252e105036a7dd9284b27e812259fea7379ce",
+    "policy_sha256": "5a5eeca33361d24ad1482cfb2ab0c1c84d697a7f87b794e96058a29e893ff5df",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -1036,7 +1036,7 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },
@@ -1051,63 +1051,63 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Rectangles",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Mask",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 3,
           "name": "Combine",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "Offset",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "QueryExtents",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 6,
           "name": "SelectInput",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 7,
           "name": "InputSelected",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 8,
           "name": "GetRectangles",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },
@@ -1593,7 +1593,7 @@
           "name": "Enable",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },
@@ -1608,140 +1608,140 @@
           "name": "Initialize",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "ListSystemCounters",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "CreateCounter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SetCounter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "ChangeCounter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "QueryCounter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 6,
           "name": "DestroyCounter",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 7,
           "name": "Await",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 8,
           "name": "CreateAlarm",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 9,
           "name": "ChangeAlarm",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 10,
           "name": "QueryAlarm",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 11,
           "name": "DestroyAlarm",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 12,
           "name": "SetPriority",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 13,
           "name": "GetPriority",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 14,
           "name": "CreateFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 15,
           "name": "TriggerFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 16,
           "name": "ResetFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 17,
           "name": "DestroyFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 18,
           "name": "QueryFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 19,
           "name": "AwaitFence",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },
@@ -1932,21 +1932,21 @@
           "name": "GetVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "GetXIDRange",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "GetXIDList",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

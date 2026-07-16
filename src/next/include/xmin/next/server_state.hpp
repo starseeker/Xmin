@@ -34,6 +34,8 @@ constexpr std::size_t maximum_pending_events = 4096;
 constexpr std::size_t maximum_passive_grabs_per_client = 256;
 constexpr std::size_t maximum_passive_grabs = 4096;
 constexpr std::size_t maximum_shape_rectangles = 32768;
+constexpr std::size_t maximum_sync_wait_conditions =
+    maximum_pending_events_per_client;
 constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 inline constexpr auto default_repeat_delay = std::chrono::milliseconds{660};
@@ -268,6 +270,52 @@ enum class ShapeUpdate {
     queue_full,
 };
 
+enum class SyncTestType : std::uint8_t {
+    positive_transition = 0,
+    negative_transition = 1,
+    positive_comparison = 2,
+    negative_comparison = 3,
+};
+
+struct SyncTrigger {
+    std::uint32_t counter = 0;
+    std::int64_t wait_value = 0;
+    std::int64_t test_value = 0;
+    std::uint8_t value_type = 0;
+    SyncTestType test_type = SyncTestType::positive_comparison;
+};
+
+struct SyncCounterRecord {
+    std::uint32_t id = 0;
+    std::int64_t value = 0;
+};
+
+struct SyncAlarmRecord {
+    std::uint32_t id = 0;
+    std::uint32_t owner = 0;
+    SyncTrigger trigger;
+    std::int64_t delta = 1;
+    std::vector<std::uint32_t> event_clients;
+    std::uint8_t state = 1;
+};
+
+struct SyncFenceRecord {
+    std::uint32_t id = 0;
+    bool triggered = false;
+};
+
+struct SyncWaitCondition {
+    SyncTrigger trigger;
+    std::int64_t event_threshold = 0;
+};
+
+enum class SyncUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
+    queue_full,
+};
+
 class ServerState {
 public:
     ServerState(std::uint16_t width, std::uint16_t height,
@@ -283,6 +331,8 @@ public:
     [[nodiscard]] WindowRecord *window(std::uint32_t id);
     [[nodiscard]] const WindowRecord *window(std::uint32_t id) const;
     [[nodiscard]] bool resource_exists(std::uint32_t id) const;
+    [[nodiscard]] std::optional<std::uint32_t>
+    resource_owner(std::uint32_t id) const;
     [[nodiscard]] bool valid_client_resource(std::uint32_t id,
                                              std::uint32_t base) const;
     [[nodiscard]] bool resource_limit_reached(std::uint32_t owner) const;
@@ -343,6 +393,35 @@ public:
         WindowRecord &window, std::uint32_t client, bool enabled);
     [[nodiscard]] bool shape_events_selected(
         const WindowRecord &window, std::uint32_t client) const noexcept;
+    [[nodiscard]] SyncCounterRecord *sync_counter(std::uint32_t id);
+    [[nodiscard]] const SyncCounterRecord *sync_counter(
+        std::uint32_t id) const;
+    [[nodiscard]] bool add_sync_counter(
+        SyncCounterRecord counter, std::uint32_t owner);
+    [[nodiscard]] SyncUpdate set_sync_counter(
+        SyncCounterRecord &counter, std::int64_t value);
+    [[nodiscard]] SyncUpdate erase_sync_counter(std::uint32_t id);
+    [[nodiscard]] SyncAlarmRecord *sync_alarm(std::uint32_t id);
+    [[nodiscard]] const SyncAlarmRecord *sync_alarm(std::uint32_t id) const;
+    [[nodiscard]] SyncUpdate add_sync_alarm(
+        SyncAlarmRecord alarm, std::uint32_t owner);
+    [[nodiscard]] SyncUpdate change_sync_alarm(SyncAlarmRecord alarm);
+    [[nodiscard]] SyncUpdate erase_sync_alarm(std::uint32_t id);
+    [[nodiscard]] SyncFenceRecord *sync_fence(std::uint32_t id);
+    [[nodiscard]] const SyncFenceRecord *sync_fence(std::uint32_t id) const;
+    [[nodiscard]] bool add_sync_fence(
+        SyncFenceRecord fence, std::uint32_t owner);
+    [[nodiscard]] SyncUpdate trigger_sync_fence(std::uint32_t id);
+    [[nodiscard]] bool reset_sync_fence(std::uint32_t id) noexcept;
+    [[nodiscard]] SyncUpdate erase_sync_fence(std::uint32_t id);
+    [[nodiscard]] SyncUpdate begin_sync_counter_await(
+        std::uint32_t client, std::vector<SyncWaitCondition> conditions);
+    [[nodiscard]] SyncUpdate begin_sync_fence_await(
+        std::uint32_t client, std::vector<std::uint32_t> fences);
+    [[nodiscard]] bool sync_waiting(std::uint32_t client) const noexcept;
+    void set_sync_priority(std::uint32_t client, std::int32_t priority);
+    [[nodiscard]] std::int32_t sync_priority(
+        std::uint32_t client) const noexcept;
     [[nodiscard]] EventDelivery inject_input(
         std::uint8_t type, std::uint8_t detail,
         std::int32_t root_x, std::int32_t root_y);
@@ -416,6 +495,14 @@ private:
     std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
+    std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
+    std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
+    std::unordered_map<std::uint32_t, SyncFenceRecord> sync_fences_;
+    std::unordered_map<std::uint32_t, std::vector<SyncWaitCondition>>
+        sync_counter_waits_;
+    std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
+        sync_fence_waits_;
+    std::unordered_map<std::uint32_t, std::int32_t> sync_priorities_;
     std::unordered_map<AtomId, SelectionRecord> selections_;
     std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
     std::vector<std::pair<std::uint32_t, std::uint16_t>> clients_;
@@ -438,6 +525,15 @@ private:
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     [[nodiscard]] bool queue_events_atomically(
         const std::vector<PlannedEvent> &events);
+    [[nodiscard]] SyncUpdate update_sync_counter(
+        SyncCounterRecord &counter, std::int64_t value,
+        bool destroying);
+    [[nodiscard]] SyncUpdate commit_sync_alarm(
+        SyncAlarmRecord alarm, bool creating);
+    [[nodiscard]] bool append_sync_alarm_event(
+        const SyncAlarmRecord &alarm, std::int64_t counter_value,
+        std::int64_t alarm_value, std::uint8_t state,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] std::uint16_t client_sequence(
         std::uint32_t client) const noexcept;
     [[nodiscard]] std::uint32_t deepest_window_at(

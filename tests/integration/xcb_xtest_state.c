@@ -7,6 +7,7 @@
 #include <xcb/bigreq.h>
 #include <xcb/ge.h>
 #include <xcb/shape.h>
+#include <xcb/sync.h>
 #include <xcb/xcb.h>
 #include <xcb/xcbext.h>
 #include <xcb/xc_misc.h>
@@ -119,6 +120,154 @@ cleanup:
 }
 
 static int
+test_sync(xcb_connection_t *connection, xcb_screen_t *screen)
+{
+    xcb_generic_error_t *error = NULL;
+    xcb_sync_initialize_reply_t *version = xcb_sync_initialize_reply(
+        connection, xcb_sync_initialize(connection, 3, 1), &error);
+    xcb_sync_list_system_counters_reply_t *systems = NULL;
+    xcb_sync_query_counter_reply_t *counter_reply = NULL;
+    xcb_sync_query_alarm_reply_t *alarm_reply = NULL;
+    xcb_sync_get_priority_reply_t *priority_reply = NULL;
+    xcb_sync_query_fence_reply_t *fence_reply = NULL;
+    const xcb_sync_counter_t counter = xcb_generate_id(connection);
+    const xcb_sync_alarm_t alarm = xcb_generate_id(connection);
+    const xcb_sync_fence_t fence = xcb_generate_id(connection);
+    const xcb_sync_int64_t initial = { 1, 0x23456789U };
+    int counter_created = 0;
+    int alarm_created = 0;
+    int fence_created = 0;
+    int result = 0;
+
+    if (error != NULL || version == NULL || version->major_version != 3 ||
+        version->minor_version < 1)
+        goto cleanup;
+    systems = xcb_sync_list_system_counters_reply(
+        connection, xcb_sync_list_system_counters(connection), &error);
+    if (error != NULL || systems == NULL)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_sync_create_counter_checked(
+                     connection, counter, initial),
+                 "SYNC CreateCounter"))
+        goto cleanup;
+    counter_created = 1;
+    const xcb_sync_int64_t amount = { 0, 1 };
+    if (!checked(connection,
+                 xcb_sync_change_counter_checked(
+                     connection, counter, amount),
+                 "SYNC ChangeCounter"))
+        goto cleanup;
+    counter_reply = xcb_sync_query_counter_reply(
+        connection, xcb_sync_query_counter(connection, counter), &error);
+    if (error != NULL || counter_reply == NULL ||
+        counter_reply->counter_value.hi != initial.hi ||
+        counter_reply->counter_value.lo != initial.lo + 1)
+        goto cleanup;
+
+    const uint32_t alarm_mask = XCB_SYNC_CA_COUNTER |
+        XCB_SYNC_CA_VALUE_TYPE | XCB_SYNC_CA_VALUE |
+        XCB_SYNC_CA_TEST_TYPE | XCB_SYNC_CA_DELTA | XCB_SYNC_CA_EVENTS;
+    const xcb_sync_create_alarm_value_list_t alarm_values = {
+        .counter = counter,
+        .valueType = XCB_SYNC_VALUETYPE_ABSOLUTE,
+        .value = { 2, 0 },
+        .testType = XCB_SYNC_TESTTYPE_POSITIVE_COMPARISON,
+        .delta = { 0, 1 },
+        .events = 0,
+    };
+    if (!checked(connection,
+                 xcb_sync_create_alarm_aux_checked(
+                     connection, alarm, alarm_mask, &alarm_values),
+                 "SYNC CreateAlarm"))
+        goto cleanup;
+    alarm_created = 1;
+    alarm_reply = xcb_sync_query_alarm_reply(
+        connection, xcb_sync_query_alarm(connection, alarm), &error);
+    if (error != NULL || alarm_reply == NULL ||
+        alarm_reply->trigger.counter != counter ||
+        alarm_reply->trigger.wait_type != XCB_SYNC_VALUETYPE_ABSOLUTE ||
+        alarm_reply->trigger.wait_value.hi != 2 ||
+        alarm_reply->trigger.wait_value.lo != 0 ||
+        alarm_reply->trigger.test_type !=
+            XCB_SYNC_TESTTYPE_POSITIVE_COMPARISON ||
+        alarm_reply->delta.hi != 0 || alarm_reply->delta.lo != 1 ||
+        alarm_reply->events != 0 ||
+        alarm_reply->state != XCB_SYNC_ALARMSTATE_ACTIVE)
+        goto cleanup;
+    free(alarm_reply);
+    alarm_reply = NULL;
+    const xcb_sync_change_alarm_value_list_t changed_alarm = {
+        .delta = { 0, 2 },
+    };
+    if (!checked(connection,
+                 xcb_sync_change_alarm_aux_checked(
+                     connection, alarm, XCB_SYNC_CA_DELTA, &changed_alarm),
+                 "SYNC ChangeAlarm"))
+        goto cleanup;
+    alarm_reply = xcb_sync_query_alarm_reply(
+        connection, xcb_sync_query_alarm(connection, alarm), &error);
+    if (error != NULL || alarm_reply == NULL || alarm_reply->delta.hi != 0 ||
+        alarm_reply->delta.lo != 2)
+        goto cleanup;
+
+    if (!checked(connection,
+                 xcb_sync_set_priority_checked(connection, counter, -7),
+                 "SYNC SetPriority"))
+        goto cleanup;
+    priority_reply = xcb_sync_get_priority_reply(
+        connection, xcb_sync_get_priority(connection, counter), &error);
+    if (error != NULL || priority_reply == NULL ||
+        priority_reply->priority != -7)
+        goto cleanup;
+
+    if (!checked(connection,
+                 xcb_sync_create_fence_checked(
+                     connection, screen->root, fence, 0),
+                 "SYNC CreateFence"))
+        goto cleanup;
+    fence_created = 1;
+    fence_reply = xcb_sync_query_fence_reply(
+        connection, xcb_sync_query_fence(connection, fence), &error);
+    if (error != NULL || fence_reply == NULL || fence_reply->triggered)
+        goto cleanup;
+    free(fence_reply);
+    fence_reply = NULL;
+    if (!checked(connection,
+                 xcb_sync_trigger_fence_checked(connection, fence),
+                 "SYNC TriggerFence"))
+        goto cleanup;
+    fence_reply = xcb_sync_query_fence_reply(
+        connection, xcb_sync_query_fence(connection, fence), &error);
+    if (error != NULL || fence_reply == NULL || !fence_reply->triggered)
+        goto cleanup;
+    if (!checked(connection,
+                 xcb_sync_await_fence_checked(connection, 1, &fence),
+                 "SYNC AwaitFence") ||
+        !checked(connection,
+                 xcb_sync_reset_fence_checked(connection, fence),
+                 "SYNC ResetFence"))
+        goto cleanup;
+    result = 1;
+
+cleanup:
+    if (fence_created)
+        xcb_sync_destroy_fence(connection, fence);
+    if (alarm_created)
+        xcb_sync_destroy_alarm(connection, alarm);
+    if (counter_created)
+        xcb_sync_destroy_counter(connection, counter);
+    free(fence_reply);
+    free(priority_reply);
+    free(alarm_reply);
+    free(counter_reply);
+    free(systems);
+    free(version);
+    free(error);
+    return result;
+}
+
+static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
         const char *operation)
 {
@@ -192,6 +341,11 @@ main(void)
     }
     if (!test_shape(connection, screen)) {
         fprintf(stderr, "SHAPE extension round trip failed\n");
+        xcb_disconnect(connection);
+        return 1;
+    }
+    if (!test_sync(connection, screen)) {
+        fprintf(stderr, "SYNC extension round trip failed\n");
         xcb_disconnect(connection);
         return 1;
     }

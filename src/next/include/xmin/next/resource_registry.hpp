@@ -13,6 +13,9 @@ enum class ResourceKind {
     pixmap,
     graphics_context,
     colormap,
+    sync_counter,
+    sync_alarm,
+    sync_fence,
 };
 
 struct ResourceRecord {

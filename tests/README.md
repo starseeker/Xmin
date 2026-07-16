@@ -69,6 +69,9 @@ extended-header handling with a genuinely oversized request in both byte orders,
 all SHAPE 1.1 requests with canonical region algebra, bitmap masks, exact extents and
 rectangle replies, typed notifications, subscription teardown, atomic queue rollback,
 input hit-testing, bounded composition, and a retained-Xorg XCB oracle,
+all SYNC 3.1 requests in both byte orders, typed counter/alarm notifications,
+cross-client Await and AwaitFence suspension with buffered-request ordering, checked
+64-bit alarm/counter arithmetic, disconnect cleanup, and a retained-Xorg XCB oracle,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

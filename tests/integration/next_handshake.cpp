@@ -60,6 +60,15 @@ put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
     }
 }
 
+void
+put_i64(std::vector<std::uint8_t> &bytes, std::size_t offset,
+        std::int64_t value, bool little)
+{
+    const auto bits = static_cast<std::uint64_t>(value);
+    put32(bytes, offset, static_cast<std::uint32_t>(bits >> 32), little);
+    put32(bytes, offset + 4, static_cast<std::uint32_t>(bits), little);
+}
+
 std::uint16_t
 get16(const std::vector<std::uint8_t> &bytes, std::size_t offset, bool little)
 {
@@ -263,12 +272,13 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 5> extensions{{
+    constexpr std::array<std::string_view, 6> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
         "XTEST",
         "SHAPE",
+        "SYNC",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -286,7 +296,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 5 && get16(reply, 2, little) == sequence &&
+        reply[1] == 6 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -412,6 +422,234 @@ check_foundation_extensions(int descriptor, bool little)
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && get16(reply, 2, little) == 12 &&
         get32(reply, 8, little) == pointer_root;
+}
+
+bool
+check_sync(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t sync_opcode = 133;
+    constexpr std::uint8_t sync_event = 65;
+    constexpr std::uint8_t sync_error = 128;
+    const std::uint32_t counter = resource_base + 1;
+    const std::uint32_t alarm = resource_base + 2;
+    const std::uint32_t fence = resource_base + 3;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "SYNC", 1, sync_opcode,
+                         reply, sync_event, sync_error)) {
+        return false;
+    }
+    request.assign(8, 0);
+    request[0] = sync_opcode; // Initialize 3.1
+    put16(request, 2, 2, little);
+    request[4] = 3;
+    request[5] = 1;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 2 ||
+        reply[8] != 3 || reply[9] != 1) {
+        return false;
+    }
+    request.assign(4, 0);
+    request[0] = sync_opcode; // ListSystemCounters
+    request[1] = 1;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 3 || get32(reply, 8, little) != 0) {
+        return false;
+    }
+    request.assign(16, 0);
+    request[0] = sync_opcode; // CreateCounter(10)
+    request[1] = 2;
+    put16(request, 2, 4, little);
+    put32(request, 4, counter, little);
+    put_i64(request, 8, 10, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = sync_opcode; // QueryCounter
+    request[1] = 5;
+    put16(request, 2, 2, little);
+    put32(request, 4, counter, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 5 || get32(reply, 8, little) != 0 ||
+        get32(reply, 12, little) != 10) {
+        return false;
+    }
+    request.assign(16, 0);
+    request[0] = sync_opcode; // ChangeCounter(+5)
+    request[1] = 4;
+    put16(request, 2, 4, little);
+    put32(request, 4, counter, little);
+    put_i64(request, 8, 5, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(32, 0);
+    request[0] = sync_opcode; // Await: immediately true at 15
+    request[1] = 7;
+    put16(request, 2, 8, little);
+    put32(request, 4, counter, little);
+    put32(request, 8, 0, little); // Absolute
+    put_i64(request, 12, 15, little);
+    put32(request, 20, 2, little); // PositiveComparison
+    put_i64(request, 24, 0, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != sync_event || reply[1] != 0 ||
+        get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != counter ||
+        get32(reply, 16, little) != 0 ||
+        get32(reply, 20, little) != 15 || get16(reply, 28, little) != 0 ||
+        reply[30] != 0) {
+        return false;
+    }
+
+    request.assign(40, 0);
+    request[0] = sync_opcode; // CreateAlarm(counter >= 20, delta 5)
+    request[1] = 8;
+    put16(request, 2, 10, little);
+    put32(request, 4, alarm, little);
+    put32(request, 8, 1 | 4 | 8 | 16 | 32, little);
+    put32(request, 12, counter, little);
+    put_i64(request, 16, 20, little);
+    put32(request, 24, 2, little);
+    put_i64(request, 28, 5, little);
+    put32(request, 36, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(16, 0);
+    request[0] = sync_opcode; // SetCounter(20), firing the alarm
+    request[1] = 3;
+    put16(request, 2, 4, little);
+    put32(request, 4, counter, little);
+    put_i64(request, 8, 20, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != sync_event + 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 9 || get32(reply, 4, little) != alarm ||
+        get32(reply, 12, little) != 20 ||
+        get32(reply, 20, little) != 20 || reply[28] != 0) {
+        return false;
+    }
+    request.assign(8, 0);
+    request[0] = sync_opcode; // QueryAlarm: target advanced to 25
+    request[1] = 10;
+    put16(request, 2, 2, little);
+    put32(request, 4, alarm, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || get16(reply, 2, little) != 10 ||
+        get32(reply, 8, little) != counter ||
+        get32(reply, 20, little) != 25 || get32(reply, 24, little) != 2 ||
+        get32(reply, 32, little) != 5 || reply[36] != 1 || reply[37] != 0) {
+        return false;
+    }
+    request.assign(20, 0);
+    request[0] = sync_opcode; // ChangeAlarm(delta = 0)
+    request[1] = 9;
+    put16(request, 2, 5, little);
+    put32(request, 4, alarm, little);
+    put32(request, 8, 16, little);
+    put_i64(request, 12, 0, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = sync_opcode; // SetPriority(counter owner, -3)
+    request[1] = 12;
+    put16(request, 2, 3, little);
+    put32(request, 4, counter, little);
+    put32(request, 8, 0xfffffffdU, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = sync_opcode; // GetPriority
+    request[1] = 13;
+    put16(request, 2, 2, little);
+    put32(request, 4, counter, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 13 ||
+        get32(reply, 8, little) != 0xfffffffdU) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = sync_opcode; // CreateFence(untriggered)
+    request[1] = 14;
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, fence, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = sync_opcode; // QueryFence(false)
+    request[1] = 18;
+    put16(request, 2, 2, little);
+    put32(request, 4, fence, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 15 || reply[8] != 0) {
+        return false;
+    }
+    request[1] = 15; // TriggerFence
+    if (!write_all(descriptor, request))
+        return false;
+    request[1] = 19; // AwaitFence: already triggered
+    if (!write_all(descriptor, request))
+        return false;
+    request[1] = 18; // QueryFence(true), synchronizes AwaitFence
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 18 || reply[8] != 1) {
+        return false;
+    }
+    request[1] = 16; // ResetFence
+    if (!write_all(descriptor, request))
+        return false;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 8 ||
+        get16(reply, 2, little) != 20 || get16(reply, 8, little) != 16) {
+        return false;
+    }
+    request[1] = 17; // DestroyFence
+    if (!write_all(descriptor, request))
+        return false;
+    request[1] = 18; // BadFence
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != sync_error + 2 ||
+        get16(reply, 2, little) != 22 || get32(reply, 4, little) != fence) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = sync_opcode; // DestroyAlarm emits Destroyed
+    request[1] = 11;
+    put16(request, 2, 2, little);
+    put32(request, 4, alarm, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != sync_event + 1 || get16(reply, 2, little) != 23 ||
+        get32(reply, 4, little) != alarm || reply[28] != 2) {
+        return false;
+    }
+    request[1] = 6; // DestroyCounter
+    put32(request, 4, counter, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[1] = 5; // BadCounter synchronizes destruction
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != sync_error ||
+        get16(reply, 2, little) != 25 ||
+        get32(reply, 4, little) != counter) {
+        return false;
+    }
+    request.assign(4, 0);
+    request[0] = sync_opcode; // Empty Await is BadValue, not BadLength
+    request[1] = 7;
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 26 || get16(reply, 8, little) != 7)
+        return false;
+    request[1] = 19; // Empty AwaitFence has the same rule
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 0 && reply[1] == 2 &&
+        get16(reply, 2, little) == 27 && get16(reply, 8, little) == 19;
 }
 
 bool
@@ -2422,6 +2660,22 @@ run_shape_case(const char *server, bool little)
 }
 
 bool
+run_sync_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_sync(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_foundation_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -2534,6 +2788,11 @@ main(int argc, char **argv)
     }
     if (!run_shape_case(argv[1], !native)) {
         std::cerr << "opposite-order SHAPE extension case failed\n";
+        return 1;
+    }
+    if (!run_sync_case(argv[1], native) ||
+        !run_sync_case(argv[1], !native)) {
+        std::cerr << "SYNC extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

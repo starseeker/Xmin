@@ -282,7 +282,18 @@ Server::run()
         }
 
         std::vector<bool> remove(clients.size(), false);
-        for (std::size_t index = 0; index < polled_client_count; ++index) {
+        std::vector<std::size_t> dispatch_order(polled_client_count);
+        for (std::size_t index = 0; index < polled_client_count; ++index)
+            dispatch_order[index] = index;
+        std::stable_sort(
+            dispatch_order.begin(), dispatch_order.end(),
+            [this, &clients](std::size_t left, std::size_t right) {
+                return state_.sync_priority(
+                           clients[left].connection->client_id()) >
+                    state_.sync_priority(
+                           clients[right].connection->client_id());
+            });
+        for (const auto index : dispatch_order) {
             const short events = descriptors[index + 2].revents;
             const std::uint32_t current_grab = state_.server_grab_owner();
             const bool may_process = current_grab == 0 ||

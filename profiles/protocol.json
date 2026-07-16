@@ -78,7 +78,8 @@
       "name": "SYNC",
       "xml": "sync.xml",
       "version": "3.1",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "XKEYBOARD",

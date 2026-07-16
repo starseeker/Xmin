@@ -301,6 +301,15 @@ put32(std::vector<std::uint8_t> &bytes, std::size_t offset,
     }
 }
 
+void
+put_i64(std::vector<std::uint8_t> &bytes, std::size_t offset,
+        std::int64_t value, bool little)
+{
+    const auto bits = static_cast<std::uint64_t>(value);
+    put32(bytes, offset, static_cast<std::uint32_t>(bits >> 32), little);
+    put32(bytes, offset + 4, static_cast<std::uint32_t>(bits), little);
+}
+
 std::uint16_t
 get16(const std::vector<std::uint8_t> &bytes, std::size_t offset, bool little)
 {
@@ -444,6 +453,163 @@ remains_blocked(int descriptor)
         ready = ::poll(&candidate, 1, 100);
     } while (ready < 0 && errno == EINTR);
     return ready == 0;
+}
+
+bool
+sync_interclient_waits(int owner, bool owner_little,
+                       std::uint32_t owner_base, int waiter,
+                       bool waiter_little)
+{
+    constexpr std::uint8_t sync_opcode = 133;
+    const std::uint32_t counter = owner_base + 10;
+    const std::uint32_t fence = owner_base + 11;
+    std::vector<std::uint8_t> request(16, 0);
+    request[0] = sync_opcode; // owner sequence 2: CreateCounter(0)
+    request[1] = 2;
+    put16(request, 2, 4, owner_little);
+    put32(request, 4, counter, owner_little);
+    put_i64(request, 8, 0, owner_little);
+    if (!write_all(owner, request))
+        return false;
+
+    request.assign(40, 0);
+    request[0] = sync_opcode; // waiter sequence 2: Await(counter >= 1)
+    request[1] = 7;
+    put16(request, 2, 8, waiter_little);
+    put32(request, 4, counter, waiter_little);
+    put32(request, 8, 0, waiter_little); // Absolute
+    put_i64(request, 12, 1, waiter_little);
+    put32(request, 20, 2, waiter_little); // PositiveComparison
+    put_i64(request, 24, 0, waiter_little);
+    request[32] = 14; // sequence 3, buffered GetGeometry
+    put16(request, 34, 2, waiter_little);
+    put32(request, 36, root_window, waiter_little);
+    if (!write_all(waiter, request) || !remains_blocked(waiter))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = sync_opcode; // owner sequence 3: SetCounter(1)
+    request[1] = 3;
+    put16(request, 2, 4, owner_little);
+    put32(request, 4, counter, owner_little);
+    put_i64(request, 8, 1, owner_little);
+    if (!write_all(owner, request))
+        return false;
+    std::vector<std::uint8_t> reply(32);
+    if (!read_exact(waiter, reply) || reply[0] != 65 || reply[1] != 0 ||
+        get16(reply, 2, waiter_little) != 2 ||
+        get32(reply, 4, waiter_little) != counter ||
+        get32(reply, 12, waiter_little) != 1 ||
+        get32(reply, 20, waiter_little) != 1 || reply[30] != 0 ||
+        !read_exact(waiter, reply) || reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, waiter_little) != 3 ||
+        get32(reply, 8, waiter_little) != root_window) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = sync_opcode; // owner sequence 4: CreateFence(false)
+    request[1] = 14;
+    put16(request, 2, 4, owner_little);
+    put32(request, 4, root_window, owner_little);
+    put32(request, 8, fence, owner_little);
+    if (!write_all(owner, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = sync_opcode; // waiter sequence 4: AwaitFence
+    request[1] = 19;
+    put16(request, 2, 2, waiter_little);
+    put32(request, 4, fence, waiter_little);
+    request[8] = 14; // sequence 5, buffered GetGeometry
+    put16(request, 10, 2, waiter_little);
+    put32(request, 12, root_window, waiter_little);
+    if (!write_all(waiter, request) || !remains_blocked(waiter))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = sync_opcode; // owner sequence 5: TriggerFence
+    request[1] = 15;
+    put16(request, 2, 2, owner_little);
+    put32(request, 4, fence, owner_little);
+    if (!write_all(owner, request) || !read_exact(waiter, reply) ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, waiter_little) != 5 ||
+        get32(reply, 8, waiter_little) != root_window) {
+        return false;
+    }
+
+    request[1] = 17; // owner sequence 6: DestroyFence
+    if (!write_all(owner, request))
+        return false;
+    request[1] = 6; // owner sequence 7: DestroyCounter
+    put32(request, 4, counter, owner_little);
+    if (!write_all(owner, request) || !synchronize(owner, owner_little, 8))
+        return false;
+
+    const std::uint32_t destroyed_counter = owner_base + 12;
+    request.assign(16, 0);
+    request[0] = sync_opcode; // owner sequence 9: CreateCounter(0)
+    request[1] = 2;
+    put16(request, 2, 4, owner_little);
+    put32(request, 4, destroyed_counter, owner_little);
+    put_i64(request, 8, 0, owner_little);
+    if (!write_all(owner, request))
+        return false;
+    request.assign(40, 0);
+    request[0] = sync_opcode; // waiter sequence 6: Await(counter >= 100)
+    request[1] = 7;
+    put16(request, 2, 8, waiter_little);
+    put32(request, 4, destroyed_counter, waiter_little);
+    put_i64(request, 12, 100, waiter_little);
+    put32(request, 20, 2, waiter_little);
+    request[32] = 14; // waiter sequence 7: buffered GetGeometry
+    put16(request, 34, 2, waiter_little);
+    put32(request, 36, root_window, waiter_little);
+    if (!write_all(waiter, request) || !remains_blocked(waiter))
+        return false;
+    request.assign(8, 0);
+    request[0] = sync_opcode; // owner sequence 10: DestroyCounter
+    request[1] = 6;
+    put16(request, 2, 2, owner_little);
+    put32(request, 4, destroyed_counter, owner_little);
+    if (!write_all(owner, request) || !read_exact(waiter, reply) ||
+        reply[0] != 65 || get16(reply, 2, waiter_little) != 6 ||
+        get32(reply, 4, waiter_little) != destroyed_counter ||
+        reply[30] != 1 || !read_exact(waiter, reply) ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, waiter_little) != 7) {
+        return false;
+    }
+
+    const std::uint32_t destroyed_fence = owner_base + 13;
+    request.assign(16, 0);
+    request[0] = sync_opcode; // owner sequence 11: CreateFence(false)
+    request[1] = 14;
+    put16(request, 2, 4, owner_little);
+    put32(request, 4, root_window, owner_little);
+    put32(request, 8, destroyed_fence, owner_little);
+    if (!write_all(owner, request))
+        return false;
+    request.assign(16, 0);
+    request[0] = sync_opcode; // waiter sequence 8: AwaitFence
+    request[1] = 19;
+    put16(request, 2, 2, waiter_little);
+    put32(request, 4, destroyed_fence, waiter_little);
+    request[8] = 14; // waiter sequence 9: buffered GetGeometry
+    put16(request, 10, 2, waiter_little);
+    put32(request, 12, root_window, waiter_little);
+    if (!write_all(waiter, request) || !remains_blocked(waiter))
+        return false;
+    request.assign(8, 0);
+    request[0] = sync_opcode; // owner sequence 12: DestroyFence
+    request[1] = 17;
+    put16(request, 2, 2, owner_little);
+    put32(request, 4, destroyed_fence, owner_little);
+    return write_all(owner, request) && read_exact(waiter, reply) &&
+        reply[0] == 1 && reply[1] == 24 &&
+        get16(reply, 2, waiter_little) == 9 &&
+        synchronize(owner, owner_little, 13);
 }
 
 bool
@@ -626,20 +792,29 @@ main(int argc, char **argv)
             Fd first_client = connect_client(root, first.display);
             Fd second_client = connect_client(root, first.display);
             Fd other_server_client = connect_client(root, second.display);
+            Fd other_server_peer = connect_client(root, second.display);
             if (first_client && second_client && other_server_client &&
+                other_server_peer &&
                 send_setup(first_client.get(), native) &&
                 send_setup(second_client.get(), !native) &&
-                send_setup(other_server_client.get(), native)) {
+                send_setup(other_server_client.get(), native) &&
+                send_setup(other_server_peer.get(), !native)) {
                 const auto second_base = read_setup(second_client.get(), !native);
                 const auto first_base = read_setup(first_client.get(), native);
                 const auto other_base =
                     read_setup(other_server_client.get(), native);
+                const auto other_peer_base =
+                    read_setup(other_server_peer.get(), !native);
                 passed = first.display == 0 && second.display == 1 &&
-                    first_base && second_base && other_base &&
+                    first_base && second_base && other_base && other_peer_base &&
                     *first_base != *second_base &&
                     geometry_round_trip(second_client.get(), !native) &&
                     geometry_round_trip(first_client.get(), native) &&
-                    geometry_round_trip(other_server_client.get(), native);
+                    geometry_round_trip(other_server_client.get(), native) &&
+                    geometry_round_trip(other_server_peer.get(), !native) &&
+                    sync_interclient_waits(
+                        other_server_client.get(), native, *other_base,
+                        other_server_peer.get(), !native);
                 if (passed) {
                     passed = send_simple_request(
                         first_client.get(), native, 36) &&
