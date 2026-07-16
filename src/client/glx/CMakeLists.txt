@@ -7,7 +7,14 @@ set_target_properties(xmin_glx_client_api PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
 target_compile_features(xmin_glx_client_api PRIVATE c_std_11)
-target_compile_definitions(xmin_glx_client_api PRIVATE _POSIX_C_SOURCE=200809L)
+target_compile_definitions(xmin_glx_client_api PRIVATE
+  _POSIX_C_SOURCE=200809L
+  # The adapter reads Mesa's internal GLcontext/GLframebuffer structures to
+  # install its default-framebuffer dispatch hooks.  Their layout includes
+  # _glthread_Mutex, so it must match the PTHREADS setting used by the OSMesa
+  # objects linked into the same DSO.
+  PTHREADS
+)
 target_include_directories(xmin_glx_client_api PRIVATE
   "${xmin_client_gl_include}"
   "${PROJECT_BINARY_DIR}/generated"
