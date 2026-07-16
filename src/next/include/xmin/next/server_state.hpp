@@ -5,6 +5,7 @@
 #include "xmin/next/client_event.hpp"
 #include "xmin/next/clock.hpp"
 #include "xmin/next/generated/core_keymap.hpp"
+#include "xmin/next/render.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/surface.hpp"
 
@@ -393,6 +394,17 @@ public:
         WindowRecord &window, std::uint32_t client, bool enabled);
     [[nodiscard]] bool shape_events_selected(
         const WindowRecord &window, std::uint32_t client) const noexcept;
+    [[nodiscard]] RenderPicture *render_picture(std::uint32_t id);
+    [[nodiscard]] const RenderPicture *render_picture(std::uint32_t id) const;
+    [[nodiscard]] bool add_render_picture(
+        RenderPicture picture, std::uint32_t owner);
+    [[nodiscard]] bool erase_render_picture(std::uint32_t id);
+    [[nodiscard]] RenderGlyphSet *render_glyph_set(std::uint32_t id);
+    [[nodiscard]] const RenderGlyphSet *render_glyph_set(
+        std::uint32_t id) const;
+    [[nodiscard]] bool add_render_glyph_set(
+        RenderGlyphSet glyph_set, std::uint32_t owner);
+    [[nodiscard]] bool erase_render_glyph_set(std::uint32_t id);
     [[nodiscard]] SyncCounterRecord *sync_counter(std::uint32_t id);
     [[nodiscard]] const SyncCounterRecord *sync_counter(
         std::uint32_t id) const;
@@ -498,6 +510,8 @@ private:
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
     std::unordered_map<std::uint32_t, SyncFenceRecord> sync_fences_;
+    std::unordered_map<std::uint32_t, RenderPicture> render_pictures_;
+    std::unordered_map<std::uint32_t, RenderGlyphSet> render_glyph_sets_;
     std::unordered_map<std::uint32_t, std::vector<SyncWaitCondition>>
         sync_counter_waits_;
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>

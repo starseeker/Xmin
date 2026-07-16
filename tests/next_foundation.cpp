@@ -2417,6 +2417,171 @@ test_region_clipping()
 }
 
 bool
+test_render_engine()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t destination_picture = owner + 1;
+    constexpr std::uint32_t blue_picture = owner + 2;
+    constexpr std::uint32_t half_red_picture = owner + 3;
+    constexpr std::uint32_t alpha_pixmap = owner + 4;
+    constexpr std::uint32_t alpha_picture = owner + 5;
+    constexpr std::uint32_t clipped_picture = owner + 6;
+    constexpr std::uint32_t glyph_set = owner + 7;
+    constexpr std::uint32_t glyph_reference = owner + 8;
+    xmin::next::ServerState server(32, 24);
+
+    if (!expect(xmin::next::render_formats().size() == 4 &&
+                    xmin::next::render_format_for_depth(24)->id ==
+                        xmin::next::render_xrgb32_format &&
+                    xmin::next::render_format(
+                        xmin::next::render_a8_format)->direct.alpha_mask ==
+                        0xff,
+                "RENDER fixed format table is wrong") ||
+        !expect(server.add_render_picture(
+                    {destination_picture,
+                     xmin::next::render_xrgb32_format,
+                     xmin::next::RenderDrawableSource{
+                         xmin::next::root_window_id}, {}},
+                    owner),
+                "RENDER destination picture insertion failed") ||
+        !expect(server.add_render_picture(
+                    {blue_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderSolidSource{
+                         {0, 0, 0xffff, 0xffff}}, {}},
+                    owner),
+                "RENDER blue source insertion failed") ||
+        !expect(server.add_render_picture(
+                    {half_red_picture, xmin::next::render_argb32_format,
+                     xmin::next::RenderSolidSource{
+                         {0x8000, 0, 0, 0x8000}}, {}},
+                    owner),
+                "RENDER alpha source insertion failed")) {
+        return false;
+    }
+
+    xmin::next::RenderEngine render(server);
+    if (!expect(render.composite(
+                    1, blue_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER Src composite failed") ||
+        !expect(render.composite(
+                    3, half_red_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 32, 24) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER Over composite failed")) {
+        return false;
+    }
+    const auto *root = server.drawable_surface(xmin::next::root_window_id);
+    const std::uint32_t blended = root->pixel(16, 12);
+    if (!expect(((blended >> 16) & 0xffU) >= 127 &&
+                    ((blended >> 16) & 0xffU) <= 129 &&
+                    (blended & 0xffU) >= 127 &&
+                    (blended & 0xffU) <= 129,
+                "RENDER premultiplied alpha blend is wrong") ||
+        !expect(render.composite(
+                    14, blue_picture, 0, destination_picture,
+                    0, 0, 0, 0, 0, 0, 1, 1) ==
+                    xmin::next::RenderStatus::bad_operator,
+                "RENDER accepted a reserved operator")) {
+        return false;
+    }
+
+    std::vector<xmin::next::Rectangle> clip_rectangles{{2, 3, 4, 5}};
+    xmin::next::Region clip;
+    if (!expect(xmin::next::Region::canonicalize(clip_rectangles, clip),
+                "RENDER clip construction failed")) {
+        return false;
+    }
+    xmin::next::RenderPictureAttributes clipped_attributes;
+    clipped_attributes.clip = std::move(clip);
+    if (!expect(server.add_render_picture(
+                    {clipped_picture, xmin::next::render_xrgb32_format,
+                     xmin::next::RenderDrawableSource{
+                         xmin::next::root_window_id},
+                     std::move(clipped_attributes)},
+                    owner),
+                "RENDER clipped destination insertion failed") ||
+        !expect(render.fill_rectangles(
+                    1, clipped_picture, {0, 0xffff, 0, 0xffff},
+                    {{0, 0, 32, 24}}) == xmin::next::RenderStatus::success,
+                "RENDER clipped FillRectangles failed") ||
+        !expect((root->pixel(3, 4) & 0x00ffffffU) == 0x0000ff00U &&
+                    (root->pixel(1, 4) & 0x00ffffffU) != 0x0000ff00U,
+                "RENDER picture clip escaped its region")) {
+        return false;
+    }
+
+    auto alpha_surface = xmin::next::Surface::create(7, 3, 8);
+    if (!expect(alpha_surface.has_value(),
+                "RENDER A8 surface creation failed") ||
+        !expect(server.add_pixmap(
+                    {alpha_pixmap, std::move(*alpha_surface)}, owner),
+                "RENDER A8 pixmap insertion failed") ||
+        !expect(server.add_render_picture(
+                    {alpha_picture, xmin::next::render_a8_format,
+                     xmin::next::RenderDrawableSource{alpha_pixmap}, {}},
+                    owner),
+                "RENDER A8 picture insertion failed") ||
+        !expect(render.fill_rectangles(
+                    1, alpha_picture, {0, 0, 0, 0x8080},
+                    {{1, 1, 5, 1}}) == xmin::next::RenderStatus::success,
+                "RENDER packed A8 destination failed") ||
+        !expect(server.drawable_surface(alpha_pixmap)->pixel(0, 1) == 0 &&
+                    server.drawable_surface(alpha_pixmap)->pixel(3, 1) >=
+                        0x7f &&
+                    server.drawable_surface(alpha_pixmap)->pixel(3, 1) <=
+                        0x81 &&
+                    server.drawable_surface(alpha_pixmap)->pixel(6, 1) == 0,
+                "RENDER packed A8 write-back is wrong")) {
+        return false;
+    }
+
+    const xmin::next::RenderTrapezoid trapezoid{
+        2 * 65536, 14 * 65536,
+        {{4 * 65536, 2 * 65536}, {4 * 65536, 14 * 65536}},
+        {{16 * 65536, 2 * 65536}, {16 * 65536, 14 * 65536}}};
+    if (!expect(render.fill_rectangles(
+                    1, destination_picture, {0, 0, 0, 0xffff},
+                    {{0, 0, 32, 24}}) == xmin::next::RenderStatus::success,
+                "RENDER background clear failed") ||
+        !expect(render.composite_trapezoids(
+                    3, blue_picture, destination_picture,
+                    xmin::next::render_a8_format, 0, 0, {trapezoid}) ==
+                    xmin::next::RenderStatus::success,
+                "RENDER trapezoid composite failed") ||
+        !expect((root->pixel(8, 8) & 0x00ffffffU) == 0x000000ffU &&
+                    (root->pixel(20, 8) & 0x00ffffffU) == 0,
+                "RENDER trapezoid coverage is wrong")) {
+        return false;
+    }
+
+    auto storage = std::make_shared<xmin::next::RenderGlyphStorage>();
+    storage->format = xmin::next::render_a8_format;
+    if (!expect(server.add_render_glyph_set(
+                    {glyph_set, storage}, owner),
+                "RENDER glyph set insertion failed") ||
+        !expect(server.add_render_glyph_set(
+                    {glyph_reference, storage}, owner),
+                "RENDER glyph set reference insertion failed")) {
+        return false;
+    }
+    storage->glyphs.emplace(
+        1, xmin::next::RenderGlyph{{1, 1, 0, 0, 1, 0}, {0xff}});
+    if (!expect(server.render_glyph_set(glyph_reference)->storage->
+                    glyphs.count(1) == 1,
+                "RENDER glyph set reference did not share storage")) {
+        return false;
+    }
+
+    server.disconnect_client(owner);
+    return expect(server.render_picture(destination_picture) == nullptr &&
+                      server.render_glyph_set(glyph_reference) == nullptr &&
+                      server.pixmap(alpha_pixmap) == nullptr,
+                  "RENDER resources survived owner disconnect");
+}
+
+bool
 test_scene_composition()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -2939,6 +3104,7 @@ main()
             test_keyboard_grab_view_loss() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
+            test_render_engine() &&
             test_scene_composition() && test_shape_state() &&
             test_window_tree_mutations() && test_sync_state() &&
             test_colormap_state() &&

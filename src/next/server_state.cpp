@@ -1212,6 +1212,97 @@ ServerState::shape_events_selected(const WindowRecord &candidate,
         candidate.shape_event_clients.end();
 }
 
+RenderPicture *
+ServerState::render_picture(std::uint32_t id)
+{
+    const auto found = render_pictures_.find(id);
+    return found == render_pictures_.end() ? nullptr : &found->second;
+}
+
+const RenderPicture *
+ServerState::render_picture(std::uint32_t id) const
+{
+    const auto found = render_pictures_.find(id);
+    return found == render_pictures_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_render_picture(RenderPicture picture, std::uint32_t owner)
+{
+    const std::uint32_t id = picture.id;
+    if (!resources_.insert(id, ResourceKind::render_picture, owner))
+        return false;
+    try {
+        if (!render_pictures_.emplace(id, std::move(picture)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_render_picture(std::uint32_t id)
+{
+    if (render_pictures_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    for (auto &entry : render_pictures_) {
+        if (entry.second.attributes.alpha_map == id)
+            entry.second.attributes.alpha_map = 0;
+    }
+    return true;
+}
+
+RenderGlyphSet *
+ServerState::render_glyph_set(std::uint32_t id)
+{
+    const auto found = render_glyph_sets_.find(id);
+    return found == render_glyph_sets_.end() ? nullptr : &found->second;
+}
+
+const RenderGlyphSet *
+ServerState::render_glyph_set(std::uint32_t id) const
+{
+    const auto found = render_glyph_sets_.find(id);
+    return found == render_glyph_sets_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_render_glyph_set(RenderGlyphSet glyph_set,
+                                  std::uint32_t owner)
+{
+    const std::uint32_t id = glyph_set.id;
+    if (!glyph_set.storage ||
+        !resources_.insert(id, ResourceKind::render_glyph_set, owner)) {
+        return false;
+    }
+    try {
+        if (!render_glyph_sets_.emplace(id, std::move(glyph_set)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_render_glyph_set(std::uint32_t id)
+{
+    if (render_glyph_sets_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
 SyncCounterRecord *
 ServerState::sync_counter(std::uint32_t id)
 {
@@ -3171,6 +3262,14 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto fences = resources_.owned_by(owner, ResourceKind::sync_fence);
     for (const auto id : fences)
         static_cast<void>(erase_sync_fence(id));
+    const auto pictures =
+        resources_.owned_by(owner, ResourceKind::render_picture);
+    for (const auto id : pictures)
+        static_cast<void>(erase_render_picture(id));
+    const auto glyph_sets =
+        resources_.owned_by(owner, ResourceKind::render_glyph_set);
+    for (const auto id : glyph_sets)
+        static_cast<void>(erase_render_glyph_set(id));
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)

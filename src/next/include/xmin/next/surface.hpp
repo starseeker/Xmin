@@ -52,6 +52,15 @@ public:
                          ClipView clip = {});
     [[nodiscard]] std::uint32_t pixel(std::uint16_t x,
                                       std::uint16_t y) const noexcept;
+    [[nodiscard]] std::uint32_t *data() noexcept { return pixels_.data(); }
+    [[nodiscard]] const std::uint32_t *data() const noexcept
+    {
+        return pixels_.data();
+    }
+    [[nodiscard]] std::size_t stride_bytes() const noexcept
+    {
+        return static_cast<std::size_t>(width_) * sizeof(std::uint32_t);
+    }
 
 private:
     Surface(std::uint16_t width, std::uint16_t height, std::uint8_t depth,

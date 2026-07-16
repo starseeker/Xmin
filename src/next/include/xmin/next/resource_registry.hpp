@@ -16,6 +16,8 @@ enum class ResourceKind {
     sync_counter,
     sync_alarm,
     sync_fence,
+    render_picture,
+    render_glyph_set,
 };
 
 struct ResourceRecord {
