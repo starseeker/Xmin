@@ -27,6 +27,10 @@ constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
 constexpr std::uint32_t all_event_masks = 0x01ffffffU;
 constexpr std::uint32_t propagate_event_masks = 0x00003f4fU;
+constexpr std::uint32_t exclusive_event_masks =
+    (1U << 2) | (1U << 18) | (1U << 20); // ButtonPress/redirect masks
+constexpr std::uint32_t input_only_attribute_masks =
+    (1U << 5) | (1U << 9) | (1U << 11) | (1U << 12) | (1U << 14);
 
 enum : std::uint8_t {
     bad_request = 1,
@@ -37,6 +41,7 @@ enum : std::uint8_t {
     bad_cursor = 6,
     bad_match = 8,
     bad_drawable = 9,
+    bad_access = 10,
     bad_alloc = 11,
     bad_colormap = 12,
     bad_graphics_context = 13,
@@ -601,6 +606,10 @@ Connection::handle_create_window(const RequestContext &context)
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence);
         }
+        if ((*value_mask & ~input_only_attribute_masks) != 0) {
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+        }
         window.depth = 0;
         window.visual = 0;
         window.colormap = 0;
@@ -732,6 +741,179 @@ Connection::handle_create_window(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_change_window_attributes(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto id = reader.u32();
+    const auto value_mask = reader.u32();
+    if (!id || !value_mask)
+        return malformed("truncated ChangeWindowAttributes request");
+    constexpr std::uint32_t supported_value_mask = 0x00007fffU;
+    if ((*value_mask & ~supported_value_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *value_mask);
+    const auto value_bytes = checked_multiply(
+        std::bitset<32>(*value_mask).count(), std::size_t{4});
+    const auto expected_size = value_bytes
+        ? checked_add(std::size_t{12}, *value_bytes)
+        : std::optional<std::size_t>{};
+    if (!expected_size || context.request.size() != *expected_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    if (window->window_class == WindowClass::input_only &&
+        (*value_mask & ~input_only_attribute_masks) != 0) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+
+    auto bit_gravity = window->bit_gravity;
+    auto window_gravity = window->window_gravity;
+    auto backing_store = window->backing_store;
+    auto backing_planes = window->backing_planes;
+    auto backing_pixel = window->backing_pixel;
+    auto override_redirect = window->override_redirect;
+    auto save_under = window->save_under;
+    auto do_not_propagate = window->do_not_propagate_mask;
+    auto colormap = window->colormap;
+    auto background_pixel = window->background_pixel;
+    auto border_pixel = window->border_pixel;
+    std::optional<std::uint32_t> event_mask;
+    for (unsigned bit = 0; bit < 15; ++bit) {
+        if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
+            continue;
+        const auto value = reader.u32();
+        if (!value)
+            return malformed("truncated ChangeWindowAttributes value list");
+        switch (bit) {
+        case 0:
+            if (*value > 1)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            break;
+        case 1:
+            background_pixel = *value;
+            break;
+        case 2:
+            if (*value != 0)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            break;
+        case 3:
+            border_pixel = *value;
+            break;
+        case 4:
+            if (*value > 10)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            bit_gravity = static_cast<std::uint8_t>(*value);
+            break;
+        case 5:
+            if (*value > 10)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            window_gravity = static_cast<std::uint8_t>(*value);
+            break;
+        case 6:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            backing_store = static_cast<std::uint8_t>(*value);
+            break;
+        case 7:
+            backing_planes = *value;
+            break;
+        case 8:
+            backing_pixel = *value;
+            break;
+        case 9:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            override_redirect = *value != 0;
+            break;
+        case 10:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            save_under = *value != 0;
+            break;
+        case 11:
+            if ((*value & ~all_event_masks) != 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            for (const auto &selection : window->event_masks) {
+                if (selection.first != config_.resource_base &&
+                    (selection.second & *value & exclusive_event_masks) != 0) {
+                    return send_error(context.order, bad_access,
+                                      context.opcode, context.sequence);
+                }
+            }
+            event_mask = *value;
+            break;
+        case 12:
+            if ((*value & ~propagate_event_masks) != 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            do_not_propagate = static_cast<std::uint16_t>(*value);
+            break;
+        case 13:
+            if (*value == 0) {
+                const auto *parent = server_.window(window->parent);
+                colormap = parent == nullptr ? default_colormap_id
+                                             : parent->colormap;
+            }
+            else if (*value == default_colormap_id)
+                colormap = *value;
+            else
+                return send_error(context.order, bad_colormap,
+                                  context.opcode, context.sequence, *value);
+            break;
+        case 14:
+            if (*value != 0)
+                return send_error(context.order, bad_cursor, context.opcode,
+                                  context.sequence, *value);
+            break;
+        }
+    }
+
+    if (event_mask) {
+        if (*event_mask == 0)
+            window->event_masks.erase(config_.resource_base);
+        else {
+            try {
+                window->event_masks.insert_or_assign(config_.resource_base,
+                                                      *event_mask);
+            }
+            catch (const std::bad_alloc &) {
+                return send_error(context.order, bad_alloc, context.opcode,
+                                  context.sequence);
+            }
+        }
+    }
+    window->bit_gravity = bit_gravity;
+    window->window_gravity = window_gravity;
+    window->backing_store = backing_store;
+    window->backing_planes = backing_planes;
+    window->backing_pixel = backing_pixel;
+    window->override_redirect = override_redirect;
+    window->save_under = save_under;
+    window->do_not_propagate_mask = do_not_propagate;
+    window->colormap = colormap;
+    window->background_pixel = background_pixel;
+    window->border_pixel = border_pixel;
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_window_attributes(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -788,6 +970,57 @@ Connection::handle_destroy_window(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_destroy_subwindows(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated DestroySubwindows request");
+    if (server_.window(*id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    server_.destroy_subwindows(*id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_reparent_window(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto id = reader.u32();
+    const auto parent_id = reader.u32();
+    const auto x = reader.u16();
+    const auto y = reader.u16();
+    if (!id || !parent_id || !x || !y)
+        return malformed("truncated ReparentWindow request");
+    const auto *window = server_.window(*id);
+    if (window == nullptr || *id == root_window_id)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    const auto *parent = server_.window(*parent_id);
+    if (parent == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *parent_id);
+    if (parent->window_class == WindowClass::input_only &&
+        window->window_class == WindowClass::input_output) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    if (!server_.reparent_window(*id, *parent_id, signed_word(*x),
+                                 signed_word(*y))) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_map_window(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -806,6 +1039,23 @@ Connection::handle_map_window(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_map_subwindows(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated MapSubwindows request");
+    if (server_.window(*id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    server_.set_subwindows_mapped(*id, true);
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_unmap_window(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -820,6 +1070,23 @@ Connection::handle_unmap_window(const RequestContext &context)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
     server_.set_window_mapped(*window, false);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_unmap_subwindows(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto id = reader.u32();
+    if (!id)
+        return malformed("truncated UnmapSubwindows request");
+    if (server_.window(*id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    server_.set_subwindows_mapped(*id, false);
     return Result<void>::success();
 }
 
@@ -1632,6 +1899,99 @@ Connection::handle_create_graphics_context(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_change_graphics_context(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto id = reader.u32();
+    const auto value_mask = reader.u32();
+    if (!id || !value_mask)
+        return malformed("truncated ChangeGC request");
+    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    if ((*value_mask & ~supported_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *value_mask);
+    const auto value_bytes = checked_multiply(
+        std::bitset<32>(*value_mask).count(), std::size_t{4});
+    const auto expected_size = value_bytes
+        ? checked_add(std::size_t{12}, *value_bytes)
+        : std::optional<std::size_t>{};
+    if (!expected_size || context.request.size() != *expected_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    auto *graphics = server_.graphics_context(*id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *id);
+
+    GraphicsContextRecord updated = *graphics;
+    for (unsigned bit = 0; bit < 4; ++bit) {
+        if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
+            continue;
+        const auto value = reader.u32();
+        if (!value)
+            return malformed("truncated ChangeGC value list");
+        switch (bit) {
+        case 0:
+            if (*value > 15)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated.function = static_cast<std::uint8_t>(*value);
+            break;
+        case 1:
+            updated.plane_mask = *value;
+            break;
+        case 2:
+            updated.foreground = *value;
+            break;
+        case 3:
+            updated.background = *value;
+            break;
+        }
+    }
+    *graphics = updated;
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_copy_graphics_context(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto source_id = reader.u32();
+    const auto destination_id = reader.u32();
+    const auto value_mask = reader.u32();
+    if (!source_id || !destination_id || !value_mask)
+        return malformed("truncated CopyGC request");
+    constexpr std::uint32_t supported_mask = 0x0000000fU;
+    if ((*value_mask & ~supported_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *value_mask);
+    const auto *source = server_.graphics_context(*source_id);
+    if (source == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *source_id);
+    auto *destination = server_.graphics_context(*destination_id);
+    if (destination == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *destination_id);
+    if ((*value_mask & (1U << 0)) != 0)
+        destination->function = source->function;
+    if ((*value_mask & (1U << 1)) != 0)
+        destination->plane_mask = source->plane_mask;
+    if ((*value_mask & (1U << 2)) != 0)
+        destination->foreground = source->foreground;
+    if ((*value_mask & (1U << 3)) != 0)
+        destination->background = source->background;
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_free_graphics_context(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -1644,6 +2004,47 @@ Connection::handle_free_graphics_context(const RequestContext &context)
     if (!server_.erase_graphics_context(*id))
         return send_error(context.order, bad_graphics_context, context.opcode,
                           context.sequence, *id);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_clear_area(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto id = reader.u32();
+    const auto x = reader.u16();
+    const auto y = reader.u16();
+    const auto width = reader.u16();
+    const auto height = reader.u16();
+    if (!id || !x || !y || !width || !height)
+        return malformed("truncated ClearArea request");
+    auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+    if (!window->surface)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    const std::int32_t area_x = signed_word(*x);
+    const std::int32_t area_y = signed_word(*y);
+    const auto remaining_width = std::max<std::int64_t>(
+        0, static_cast<std::int64_t>(window->width) - area_x);
+    const auto remaining_height = std::max<std::int64_t>(
+        0, static_cast<std::int64_t>(window->height) - area_y);
+    window->surface->fill(
+        Rectangle{
+            area_x, area_y,
+            *width == 0 ? static_cast<std::uint32_t>(remaining_width) : *width,
+            *height == 0 ? static_cast<std::uint32_t>(remaining_height)
+                         : *height},
+        window->background_pixel, 3, 0xffffffffU);
+    server_.invalidate_scene();
     return Result<void>::success();
 }
 
@@ -2094,14 +2495,24 @@ Connection::dispatch(const RequestContext &context)
         std::array<RequestHandler, 128> table{};
         table[opcode_index(CoreOpcode::CreateWindow)] =
             &Connection::handle_create_window;
+        table[opcode_index(CoreOpcode::ChangeWindowAttributes)] =
+            &Connection::handle_change_window_attributes;
         table[opcode_index(CoreOpcode::GetWindowAttributes)] =
             &Connection::handle_get_window_attributes;
         table[opcode_index(CoreOpcode::DestroyWindow)] =
             &Connection::handle_destroy_window;
+        table[opcode_index(CoreOpcode::DestroySubwindows)] =
+            &Connection::handle_destroy_subwindows;
+        table[opcode_index(CoreOpcode::ReparentWindow)] =
+            &Connection::handle_reparent_window;
         table[opcode_index(CoreOpcode::MapWindow)] =
             &Connection::handle_map_window;
+        table[opcode_index(CoreOpcode::MapSubwindows)] =
+            &Connection::handle_map_subwindows;
         table[opcode_index(CoreOpcode::UnmapWindow)] =
             &Connection::handle_unmap_window;
+        table[opcode_index(CoreOpcode::UnmapSubwindows)] =
+            &Connection::handle_unmap_subwindows;
         table[opcode_index(CoreOpcode::ConfigureWindow)] =
             &Connection::handle_configure_window;
         table[opcode_index(CoreOpcode::GetGeometry)] =
@@ -2134,8 +2545,14 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_free_pixmap;
         table[opcode_index(CoreOpcode::CreateGC)] =
             &Connection::handle_create_graphics_context;
+        table[opcode_index(CoreOpcode::ChangeGC)] =
+            &Connection::handle_change_graphics_context;
+        table[opcode_index(CoreOpcode::CopyGC)] =
+            &Connection::handle_copy_graphics_context;
         table[opcode_index(CoreOpcode::FreeGC)] =
             &Connection::handle_free_graphics_context;
+        table[opcode_index(CoreOpcode::ClearArea)] =
+            &Connection::handle_clear_area;
         table[opcode_index(CoreOpcode::CopyArea)] =
             &Connection::handle_copy_area;
         table[opcode_index(CoreOpcode::PolyFillRectangle)] =

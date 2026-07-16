@@ -245,7 +245,10 @@ main(void)
     {
         const uint32_t red = 0x00ff0000U;
         const uint32_t blue = 0x000000ffU;
+        const uint32_t green = 0x0000ff00U;
+        const uint32_t background = 0x00123456U;
         const xcb_rectangle_t rectangle = { 0, 0, 12, 9 };
+        const xcb_rectangle_t point = { 1, 0, 1, 1 };
 
         if (!checked(connection,
                      xcb_create_pixmap_checked(connection, screen->root_depth,
@@ -268,7 +271,23 @@ main(void)
             !checked(connection,
                      xcb_copy_area_checked(connection, pixmap, child, graphics,
                                            0, 0, 0, 0, 12, 9),
-                     "CopyArea"))
+                     "CopyArea") ||
+            !checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics, XCB_GC_FOREGROUND, &green),
+                     "ChangeGC") ||
+            !checked(connection,
+                     xcb_poly_fill_rectangle_checked(
+                         connection, child, graphics, 1, &point),
+                     "PolyFillRectangle after ChangeGC") ||
+            !checked(connection,
+                     xcb_change_window_attributes_checked(
+                         connection, child, XCB_CW_BACK_PIXEL, &background),
+                     "ChangeWindowAttributes") ||
+            !checked(connection,
+                     xcb_clear_area_checked(
+                         connection, 0, child, 0, 0, 1, 1),
+                     "ClearArea"))
             goto cleanup;
     }
     image = xcb_get_image_reply(
@@ -282,6 +301,23 @@ main(void)
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x000000ffU)
         goto cleanup;
+    stage = "checking changed GC and window background";
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, child, 0, 0,
+                      2, 1, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 8)
+        goto cleanup;
+    memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
+    if ((pixel & 0x00ffffffU) != 0x00123456U)
+        goto cleanup;
+    memcpy(&pixel, xcb_get_image_data(image) + 4, sizeof(pixel));
+    if ((pixel & 0x00ffffffU) != 0x0000ff00U)
+        goto cleanup;
+    stage = "checking child pixels through the root";
     free(image);
     image = xcb_get_image_reply(
         connection,

@@ -568,6 +568,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
 
     const std::uint32_t pixmap = resource_base + 1;
     const std::uint32_t graphics = resource_base + 2;
+    const std::uint32_t copied_graphics = resource_base + 3;
     request.assign(16, 0);
     request[0] = 53; // CreatePixmap
     request[1] = 24;
@@ -664,9 +665,85 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    request.assign(16, 0);
+    request[0] = 2; // ChangeWindowAttributes: root background pixel
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 1U << 1, little);
+    put32(request, 12, 0x00123456U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 61; // ClearArea
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 56; // ChangeGC foreground
+    put16(request, 2, 4, little);
+    put32(request, 4, graphics, little);
+    put32(request, 8, 1U << 2, little);
+    put32(request, 12, 0x00abcdefU, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 55; // destination GC for CopyGC
+    put16(request, 2, 4, little);
+    put32(request, 4, copied_graphics, little);
+    put32(request, 8, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 57; // CopyGC foreground
+    put16(request, 2, 4, little);
+    put32(request, 4, graphics, little);
+    put32(request, 8, copied_graphics, little);
+    put32(request, 12, 1U << 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 70; // draw with the copied GC
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, copied_graphics, little);
+    put16(request, 12, 1, little);
+    put16(request, 16, 1, little);
+    put16(request, 18, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73; // verify ClearArea and changed/copied GC state
+    request[1] = 2;
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 12, 2, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 0xffffffffU, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 40 ||
+        reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, little) != 48 ||
+        get32(reply, 32, image_little) != 0x00123456U ||
+        get32(reply, 36, image_little) != 0x00abcdefU) {
+        std::cerr << "mutable GC/window state readback failed\n";
+        return false;
+    }
+
     request.assign(8, 0);
-    request[0] = 60; // FreeGC
+    request[0] = 60; // Free copied GC
     put16(request, 2, 2, little);
+    put32(request, 4, copied_graphics, little);
+    if (!write_all(descriptor, request))
+        return false;
     put32(request, 4, graphics, little);
     if (!write_all(descriptor, request))
         return false;
@@ -720,7 +797,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request) ||
         !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
         reply[0] != 1 || reply[1] != 1 ||
-        get16(reply, 2, little) != 47 || reply[32] != bitmap_edge ||
+        get16(reply, 2, little) != 55 || reply[32] != bitmap_edge ||
         reply[33] != bitmap_edge || reply[34] != 0 || reply[35] != 0) {
         return false;
     }
@@ -736,11 +813,72 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request))
         return false;
 
+    request.assign(32, 0);
+    request[0] = 1;  // reusable child for tree-wide operations
+    request[1] = 24;
+    put16(request, 2, 8, little);
+    put32(request, 4, child, little);
+    put32(request, 8, root_window, little);
+    put16(request, 16, 4, little);
+    put16(request, 18, 4, little);
+    put16(request, 22, 1, little);
+    put32(request, 24, root_visual, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 7; // ReparentWindow (same parent also restacks)
+    put16(request, 2, 4, little);
+    put32(request, 4, child, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 3, little);
+    put16(request, 14, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 9; // MapSubwindows
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 3; // mapped child is viewable
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 44 ||
+        reply[0] != 1 || get16(reply, 2, little) != 61 || reply[26] != 2) {
+        return false;
+    }
+
+    request[0] = 11; // UnmapSubwindows
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 3; // child is now unmapped
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 44 ||
+        reply[0] != 1 || get16(reply, 2, little) != 63 || reply[26] != 0) {
+        return false;
+    }
+
+    request[0] = 5; // DestroySubwindows(root)
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request[0] = 15; // destroyed child is no longer a window
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 3 ||
+        get16(reply, 2, little) != 65 || get32(reply, 4, little) != child) {
+        return false;
+    }
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 50;
+        reply[0] == 1 && get16(reply, 2, little) == 66;
 }
 
 bool

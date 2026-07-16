@@ -72,10 +72,16 @@ private:
     Result<void> send_setup_success(ByteOrder order);
     Result<void> dispatch(const RequestContext &context);
     Result<void> handle_create_window(const RequestContext &context);
+    Result<void> handle_change_window_attributes(
+        const RequestContext &context);
     Result<void> handle_get_window_attributes(const RequestContext &context);
     Result<void> handle_destroy_window(const RequestContext &context);
+    Result<void> handle_destroy_subwindows(const RequestContext &context);
+    Result<void> handle_reparent_window(const RequestContext &context);
     Result<void> handle_map_window(const RequestContext &context);
+    Result<void> handle_map_subwindows(const RequestContext &context);
     Result<void> handle_unmap_window(const RequestContext &context);
+    Result<void> handle_unmap_subwindows(const RequestContext &context);
     Result<void> handle_configure_window(const RequestContext &context);
     Result<void> handle_get_geometry(const RequestContext &context);
     Result<void> handle_query_tree(const RequestContext &context);
@@ -93,7 +99,11 @@ private:
     Result<void> handle_free_pixmap(const RequestContext &context);
     Result<void> handle_create_graphics_context(
         const RequestContext &context);
+    Result<void> handle_change_graphics_context(
+        const RequestContext &context);
+    Result<void> handle_copy_graphics_context(const RequestContext &context);
     Result<void> handle_free_graphics_context(const RequestContext &context);
+    Result<void> handle_clear_area(const RequestContext &context);
     Result<void> handle_copy_area(const RequestContext &context);
     Result<void> handle_fill_rectangles(const RequestContext &context);
     Result<void> handle_put_image(const RequestContext &context);

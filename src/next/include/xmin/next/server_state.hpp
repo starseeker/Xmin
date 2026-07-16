@@ -156,6 +156,11 @@ public:
                                     PropertyValue value);
     void delete_property(WindowRecord &window, AtomId property);
     void destroy_window(std::uint32_t id);
+    void destroy_subwindows(std::uint32_t id);
+    [[nodiscard]] bool reparent_window(std::uint32_t id,
+                                       std::uint32_t new_parent,
+                                       std::int16_t x, std::int16_t y);
+    void set_subwindows_mapped(std::uint32_t id, bool mapped);
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
@@ -188,6 +193,8 @@ private:
                           std::int64_t parent_y, std::int64_t clip_left,
                           std::int64_t clip_top, std::int64_t clip_right,
                           std::int64_t clip_bottom);
+    [[nodiscard]] bool is_descendant(std::uint32_t candidate,
+                                     std::uint32_t ancestor) const;
 };
 
 } // namespace xmin::next

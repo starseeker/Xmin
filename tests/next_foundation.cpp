@@ -361,6 +361,51 @@ test_scene_composition()
 }
 
 bool
+test_window_tree_mutations()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    xmin::next::ServerState server(32, 24);
+    xmin::next::WindowRecord parent;
+    parent.id = owner;
+    parent.parent = xmin::next::root_window_id;
+    xmin::next::WindowRecord child;
+    child.id = owner + 1;
+    child.parent = owner;
+    child.mapped = true;
+    if (!expect(server.add_window(std::move(parent), owner),
+                "tree parent insertion failed") ||
+        !expect(server.add_window(std::move(child), owner),
+                "tree child insertion failed")) {
+        return false;
+    }
+    server.set_subwindows_mapped(owner, false);
+    if (!expect(!server.window(owner + 1)->mapped,
+                "UnmapSubwindows state transition failed")) {
+        return false;
+    }
+    server.set_subwindows_mapped(owner, true);
+    if (!expect(!server.reparent_window(owner, owner + 1, 0, 0),
+                "window cycle was accepted") ||
+        !expect(server.reparent_window(
+                    owner + 1, xmin::next::root_window_id, 7, 8),
+                "window reparenting failed") ||
+        !expect(server.window(owner + 1)->parent ==
+                    xmin::next::root_window_id,
+                "reparented window retained its old parent") ||
+        !expect(server.window(owner)->children.empty(),
+                "old parent retained a reparented child") ||
+        !expect(server.reparent_window(owner + 1, owner, 1, 2),
+                "window reparenting back to its owner failed")) {
+        return false;
+    }
+    server.destroy_subwindows(owner);
+    return expect(server.window(owner + 1) == nullptr,
+                  "DestroySubwindows retained a child") &&
+        expect(server.window(owner) != nullptr,
+               "DestroySubwindows removed its parent");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -382,7 +427,7 @@ main()
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_true_color() &&
             test_surface_raster_and_overlap() && test_scene_composition() &&
-            test_result()
+            test_window_tree_mutations() && test_result()
         ? 0
         : 1;
 }

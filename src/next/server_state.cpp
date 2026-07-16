@@ -555,9 +555,8 @@ ServerState::destroy_window(std::uint32_t id)
     if (found == windows_.end())
         return;
 
-    const auto children = found->second.children;
-    for (const auto child : children)
-        destroy_window(child);
+    while (!found->second.children.empty())
+        destroy_window(found->second.children.back());
 
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
@@ -573,6 +572,85 @@ ServerState::destroy_window(std::uint32_t id)
     windows_.erase(found);
     static_cast<void>(resources_.erase(id));
     invalidate_scene();
+}
+
+void
+ServerState::destroy_subwindows(std::uint32_t id)
+{
+    auto *parent = window(id);
+    if (parent == nullptr)
+        return;
+    while (!parent->children.empty())
+        destroy_window(parent->children.back());
+}
+
+bool
+ServerState::is_descendant(std::uint32_t candidate,
+                           std::uint32_t ancestor) const
+{
+    const auto *current = window(candidate);
+    while (current != nullptr && current->parent != 0) {
+        if (current->parent == ancestor)
+            return true;
+        current = window(current->parent);
+    }
+    return false;
+}
+
+bool
+ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
+                             std::int16_t x, std::int16_t y)
+{
+    auto *candidate = window(id);
+    auto *parent = window(new_parent);
+    if (candidate == nullptr || parent == nullptr || id == root_window_id ||
+        id == new_parent || is_descendant(new_parent, id)) {
+        return false;
+    }
+    const std::uint32_t old_parent_id = candidate->parent;
+    if (old_parent_id == new_parent) {
+        auto &children = parent->children;
+        children.erase(std::remove(children.begin(), children.end(), id),
+                       children.end());
+        children.push_back(id);
+    }
+    else {
+        try {
+            parent->children.push_back(id);
+        }
+        catch (const std::bad_alloc &) {
+            return false;
+        }
+        auto *old_parent = window(old_parent_id);
+        if (old_parent != nullptr) {
+            auto &children = old_parent->children;
+            children.erase(std::remove(children.begin(), children.end(), id),
+                           children.end());
+        }
+        candidate->parent = new_parent;
+    }
+    candidate->x = x;
+    candidate->y = y;
+    invalidate_scene();
+    return true;
+}
+
+void
+ServerState::set_subwindows_mapped(std::uint32_t id, bool mapped)
+{
+    auto *parent = window(id);
+    if (parent == nullptr)
+        return;
+    bool changed = false;
+    for (const auto child : parent->children) {
+        auto *candidate = window(child);
+        if (candidate != nullptr && candidate->mapped != mapped) {
+            candidate->mapped = mapped;
+            changed = true;
+        }
+    }
+    if (changed)
+        invalidate_scene();
 }
 
 void

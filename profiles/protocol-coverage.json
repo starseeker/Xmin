@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "5ad203d54871f1ba99a44c518fcb24ff3bff7061a4b533da75e88901321a28a1",
+    "policy_sha256": "43fa632c952e66d4c085346d28205ed6fd6ab6c8f0500777e98cfef5afe77509",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -146,7 +146,7 @@
       "name": "ChangeWindowAttributes",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 3,
@@ -167,7 +167,7 @@
       "name": "DestroySubwindows",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 6,
@@ -181,7 +181,7 @@
       "name": "ReparentWindow",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 8,
@@ -195,7 +195,7 @@
       "name": "MapSubwindows",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 10,
@@ -209,7 +209,7 @@
       "name": "UnmapSubwindows",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 12,
@@ -524,14 +524,14 @@
       "name": "ChangeGC",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 57,
       "name": "CopyGC",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 58,
@@ -559,7 +559,7 @@
       "name": "ClearArea",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 62,
