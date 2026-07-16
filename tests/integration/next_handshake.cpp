@@ -1383,6 +1383,62 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request))
         return false;
 
+    request.assign(16, 0);
+    request[0] = 33; // GrabKey
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1, little); // ShiftMask
+    request[10] = 38;
+    request[11] = 1;
+    request[12] = 1;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = 34; // UngrabKey
+    request[1] = 38;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 28; // GrabButton
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1U << 2, little); // ButtonPressMask
+    request[10] = 1;
+    request[11] = 1;
+    request[20] = 1;
+    put16(request, 22, 4, little); // ControlMask
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = 29; // UngrabButton
+    request[1] = 1;
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 4, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 33; // invalid modifier mask is endian-aware
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 0x0100, little);
+    request[10] = 38;
+    request[11] = 1;
+    request[12] = 1;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 116 ||
+        get32(reply, 4, little) != 0x0100) {
+        return false;
+    }
+
     request.assign(12, 0);
     request[0] = 42; // focus the actual root, not PointerRoot
     request[1] = 2;
@@ -1396,7 +1452,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 1 || reply[1] != 2 ||
-        get16(reply, 2, little) != 113 ||
+        get16(reply, 2, little) != 118 ||
         get32(reply, 8, little) != root_window) {
         return false;
     }
@@ -1413,7 +1469,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
         reply[0] == 1 && reply[1] == 0 &&
-        get16(reply, 2, little) == 115 &&
+        get16(reply, 2, little) == 120 &&
         get32(reply, 8, little) == pointer_root;
 }
 

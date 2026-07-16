@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "a36dd1218c7feac6e4992dcf1c2d83b01741304b6e268a0d033effb6c3a46d2e",
+    "policy_sha256": "e060b20f0bbd86c6cc244af41235d52590fd287e1e9f096fd5e454a02db18842",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -328,14 +328,14 @@
       "name": "GrabButton",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 29,
       "name": "UngrabButton",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 30,
@@ -363,14 +363,14 @@
       "name": "GrabKey",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 34,
       "name": "UngrabKey",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 35,

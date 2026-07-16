@@ -60,6 +60,7 @@ partial retrieval, listing, deletion, signed rotation, framebuffer best-size que
 centered pointer/window coordinates, source-gated/clamped pointer warps, empty motion
 history, key-state snapshots, and timestamped focus/reversion state,
 plus cross-client active pointer/keyboard grab exclusion and release,
+passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color
 queries and colormap install/copy/free semantics, and synthetic client-message
 delivery. It checks an unadvertised opcode at 255

@@ -7,6 +7,7 @@
 #include "xmin/next/surface.hpp"
 
 #include <array>
+#include <bitset>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -28,6 +29,12 @@ constexpr std::size_t maximum_property_bytes = 1024U * 1024U;
 constexpr std::size_t maximum_server_property_bytes = 16U * 1024U * 1024U;
 constexpr std::size_t maximum_pending_events_per_client = 256;
 constexpr std::size_t maximum_pending_events = 4096;
+constexpr std::size_t maximum_passive_grabs_per_client = 256;
+constexpr std::size_t maximum_passive_grabs = 4096;
+constexpr std::uint8_t minimum_keycode = 8;
+constexpr std::uint8_t maximum_keycode = 255;
+constexpr std::uint16_t any_modifier = 0x8000;
+constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 
 enum class WindowClass : std::uint16_t {
     input_output = 1,
@@ -132,6 +139,31 @@ struct ActiveGrab {
     bool owner_events = false;
 };
 
+enum class PassiveGrabKind : std::uint8_t {
+    button,
+    key,
+};
+
+using PassiveGrabDomain = std::bitset<256>;
+
+struct PassiveGrab {
+    PassiveGrabKind kind = PassiveGrabKind::key;
+    PassiveGrabDomain details;
+    PassiveGrabDomain modifiers;
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::uint32_t confine_to = 0;
+    std::uint16_t event_mask = 0;
+    std::uint8_t pointer_mode = 1;
+    std::uint8_t keyboard_mode = 1;
+    bool owner_events = false;
+};
+
+[[nodiscard]] PassiveGrabDomain passive_grab_details(
+    PassiveGrabKind kind, std::uint8_t detail) noexcept;
+[[nodiscard]] PassiveGrabDomain passive_grab_modifiers(
+    std::uint16_t modifiers) noexcept;
+
 struct InputState {
     std::int32_t pointer_x = 0;
     std::int32_t pointer_y = 0;
@@ -159,6 +191,12 @@ enum class EventDelivery {
 enum class FocusUpdate {
     updated,
     ignored,
+};
+
+enum class PassiveGrabUpdate {
+    updated,
+    access_denied,
+    resource_exhausted,
 };
 
 class ServerState {
@@ -249,6 +287,15 @@ public:
     }
     [[nodiscard]] InputState &input() noexcept { return input_; }
     [[nodiscard]] const InputState &input() const noexcept { return input_; }
+    [[nodiscard]] const std::vector<PassiveGrab> &passive_grabs() const noexcept
+    {
+        return passive_grabs_;
+    }
+    [[nodiscard]] PassiveGrabUpdate add_passive_grab(PassiveGrab grab);
+    [[nodiscard]] PassiveGrabUpdate remove_passive_grab(
+        PassiveGrabKind kind, std::uint32_t owner, std::uint32_t window,
+        const PassiveGrabDomain &details,
+        const PassiveGrabDomain &modifiers);
     [[nodiscard]] FocusUpdate set_input_focus(
         FocusKind kind, std::uint32_t window, std::uint8_t revert_to,
         std::uint32_t time) noexcept;
@@ -277,6 +324,7 @@ private:
     std::uint32_t installed_colormap_ = default_colormap_id;
     std::uint32_t server_grab_owner_ = 0;
     InputState input_;
+    std::vector<PassiveGrab> passive_grabs_;
     bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;

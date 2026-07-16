@@ -603,6 +603,89 @@ main(void)
         goto cleanup;
     }
 
+    stage = "subtracting and arbitrating passive input grabs";
+    if (!checked(connection,
+                 xcb_grab_key_checked(
+                     connection, 0, child, XCB_MOD_MASK_ANY, XCB_GRAB_ANY,
+                     XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+                 "GrabKey wildcard") ||
+        !checked_error(
+            second_connection,
+            xcb_grab_key_checked(
+                second_connection, 0, child, XCB_MOD_MASK_SHIFT, 38,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+            XCB_ACCESS, "GrabKey conflicting exact") ||
+        !checked(connection,
+                 xcb_ungrab_key_checked(
+                     connection, 38, child, XCB_MOD_MASK_SHIFT),
+                 "UngrabKey carve wildcard") ||
+        !checked(second_connection,
+                 xcb_grab_key_checked(
+                     second_connection, 0, child, XCB_MOD_MASK_SHIFT, 38,
+                     XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+                 "GrabKey carved exact") ||
+        !checked_error(
+            second_connection,
+            xcb_grab_key_checked(
+                second_connection, 0, child, XCB_MOD_MASK_SHIFT, 39,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+            XCB_ACCESS, "GrabKey wildcard remainder") ||
+        !checked(second_connection,
+                 xcb_ungrab_key_checked(
+                     second_connection, 38, child, XCB_MOD_MASK_SHIFT),
+                 "UngrabKey second client") ||
+        !checked(connection,
+                 xcb_ungrab_key_checked(
+                     connection, XCB_GRAB_ANY, child, XCB_MOD_MASK_ANY),
+                 "UngrabKey wildcard") ||
+        !checked(connection,
+                 xcb_grab_button_checked(
+                     connection, 0, child,
+                     XCB_EVENT_MASK_BUTTON_PRESS |
+                         XCB_EVENT_MASK_BUTTON_RELEASE,
+                     XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                     XCB_NONE, XCB_BUTTON_INDEX_ANY, XCB_MOD_MASK_ANY),
+                 "GrabButton wildcard") ||
+        !checked_error(
+            second_connection,
+            xcb_grab_button_checked(
+                second_connection, 0, child, XCB_EVENT_MASK_BUTTON_PRESS,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                XCB_NONE, XCB_BUTTON_INDEX_1, XCB_MOD_MASK_CONTROL),
+            XCB_ACCESS, "GrabButton conflicting exact") ||
+        !checked(connection,
+                 xcb_ungrab_button_checked(
+                     connection, XCB_BUTTON_INDEX_1, child,
+                     XCB_MOD_MASK_CONTROL),
+                 "UngrabButton carve wildcard") ||
+        !checked(second_connection,
+                 xcb_grab_button_checked(
+                     second_connection, 0, child,
+                     XCB_EVENT_MASK_BUTTON_PRESS,
+                     XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                     XCB_NONE, XCB_BUTTON_INDEX_1, XCB_MOD_MASK_CONTROL),
+                 "GrabButton carved exact") ||
+        !checked_error(
+            second_connection,
+            xcb_grab_button_checked(
+                second_connection, 0, child,
+                XCB_EVENT_MASK_BUTTON_PRESS,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC, XCB_NONE,
+                XCB_NONE, XCB_BUTTON_INDEX_2, XCB_MOD_MASK_CONTROL),
+            XCB_ACCESS, "GrabButton wildcard remainder") ||
+        !checked(second_connection,
+                 xcb_ungrab_button_checked(
+                     second_connection, XCB_BUTTON_INDEX_1, child,
+                     XCB_MOD_MASK_CONTROL),
+                 "UngrabButton second client") ||
+        !checked(connection,
+                 xcb_ungrab_button_checked(
+                     connection, XCB_BUTTON_INDEX_ANY, child,
+                     XCB_MOD_MASK_ANY),
+                 "UngrabButton wildcard")) {
+        goto cleanup;
+    }
+
     stage = "copying pixmap pixels into a window";
     pixmap = xcb_generate_id(connection);
     graphics = xcb_generate_id(connection);

@@ -101,10 +101,14 @@ private:
     Result<void> handle_send_event(const RequestContext &context);
     Result<void> handle_grab_pointer(const RequestContext &context);
     Result<void> handle_ungrab_pointer(const RequestContext &context);
+    Result<void> handle_grab_button(const RequestContext &context);
+    Result<void> handle_ungrab_button(const RequestContext &context);
     Result<void> handle_change_active_pointer_grab(
         const RequestContext &context);
     Result<void> handle_grab_keyboard(const RequestContext &context);
     Result<void> handle_ungrab_keyboard(const RequestContext &context);
+    Result<void> handle_grab_key(const RequestContext &context);
+    Result<void> handle_ungrab_key(const RequestContext &context);
     Result<void> handle_allow_events(const RequestContext &context);
     Result<void> handle_grab_server(const RequestContext &context);
     Result<void> handle_ungrab_server(const RequestContext &context);

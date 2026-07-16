@@ -120,8 +120,10 @@ source-gated/clamped warps.  Typed focus state distinguishes the protocol's
 `PointerRoot` sentinel from the server-owned root XID, honors request timestamps,
 and applies parent/none/pointer-root reversion when windows become unavailable.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
-timestamps, cross-client exclusion, and disconnect/window teardown.  A bounded
-four-format `Surface` value now backs windows and typed pixmap records; the first GC
+timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
+button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with
+atomic wildcard subtraction, cross-client conflict checks, and lifecycle cleanup.  A
+bounded four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and
 ARGB8888 in the setup-advertised image and bitmap order.  Every GC raster path is

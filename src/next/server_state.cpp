@@ -8,6 +8,77 @@
 #include <utility>
 
 namespace xmin::next {
+namespace {
+
+bool
+overlaps(const PassiveGrab &grab, const PassiveGrabDomain &details,
+         const PassiveGrabDomain &modifiers) noexcept
+{
+    return (grab.details & details).any() &&
+        (grab.modifiers & modifiers).any();
+}
+
+bool
+append_without(std::vector<PassiveGrab> &destination,
+               const PassiveGrab &grab,
+               const PassiveGrabDomain &removed_details,
+               const PassiveGrabDomain &removed_modifiers)
+{
+    const PassiveGrabDomain retained_details =
+        grab.details & ~removed_details;
+    if (retained_details.any()) {
+        if (destination.size() == maximum_passive_grabs)
+            return false;
+        PassiveGrab retained = grab;
+        retained.details = retained_details;
+        destination.push_back(std::move(retained));
+    }
+
+    const PassiveGrabDomain intersecting_details =
+        grab.details & removed_details;
+    const PassiveGrabDomain retained_modifiers =
+        grab.modifiers & ~removed_modifiers;
+    if (intersecting_details.any() && retained_modifiers.any()) {
+        if (destination.size() == maximum_passive_grabs)
+            return false;
+        PassiveGrab retained = grab;
+        retained.details = intersecting_details;
+        retained.modifiers = retained_modifiers;
+        destination.push_back(std::move(retained));
+    }
+    return true;
+}
+
+} // namespace
+
+PassiveGrabDomain
+passive_grab_details(PassiveGrabKind kind, std::uint8_t detail) noexcept
+{
+    PassiveGrabDomain result;
+    if (detail != 0) {
+        result.set(detail);
+        return result;
+    }
+
+    result.set();
+    result.reset(0);
+    if (kind == PassiveGrabKind::key) {
+        for (std::size_t keycode = 1; keycode < minimum_keycode; ++keycode)
+            result.reset(keycode);
+    }
+    return result;
+}
+
+PassiveGrabDomain
+passive_grab_modifiers(std::uint16_t modifiers) noexcept
+{
+    PassiveGrabDomain result;
+    if (modifiers == any_modifier)
+        result.set();
+    else if (modifiers <= all_modifiers_mask)
+        result.set(modifiers);
+    return result;
+}
 
 ServerState::ServerState(std::uint16_t width, std::uint16_t height)
     : width_(width), height_(height)
@@ -39,6 +110,94 @@ ServerState::valid() const noexcept
     const auto *root = window(root_window_id);
     return root != nullptr && root->surface.has_value() &&
         composited_root_.has_value();
+}
+
+PassiveGrabUpdate
+ServerState::add_passive_grab(PassiveGrab added)
+{
+    if (added.details.none() || added.modifiers.none())
+        return PassiveGrabUpdate::resource_exhausted;
+
+    for (const auto &existing : passive_grabs_) {
+        if (existing.kind == added.kind && existing.window == added.window &&
+            existing.owner != added.owner &&
+            overlaps(existing, added.details, added.modifiers)) {
+            return PassiveGrabUpdate::access_denied;
+        }
+    }
+
+    try {
+        std::vector<PassiveGrab> revised;
+        revised.reserve(std::min(maximum_passive_grabs,
+                                 passive_grabs_.size() * 2 + 1));
+        for (const auto &existing : passive_grabs_) {
+            if (existing.kind == added.kind &&
+                existing.window == added.window &&
+                existing.owner == added.owner &&
+                overlaps(existing, added.details, added.modifiers)) {
+                if (!append_without(revised, existing, added.details,
+                                    added.modifiers)) {
+                    return PassiveGrabUpdate::resource_exhausted;
+                }
+            }
+            else {
+                if (revised.size() == maximum_passive_grabs)
+                    return PassiveGrabUpdate::resource_exhausted;
+                revised.push_back(existing);
+            }
+        }
+        if (revised.size() == maximum_passive_grabs)
+            return PassiveGrabUpdate::resource_exhausted;
+        revised.push_back(std::move(added));
+        const std::size_t owner_count = static_cast<std::size_t>(std::count_if(
+            revised.begin(), revised.end(),
+            [owner = revised.back().owner](const PassiveGrab &grab) {
+                return grab.owner == owner;
+            }));
+        if (owner_count > maximum_passive_grabs_per_client)
+            return PassiveGrabUpdate::resource_exhausted;
+        passive_grabs_ = std::move(revised);
+        return PassiveGrabUpdate::updated;
+    }
+    catch (const std::bad_alloc &) {
+        return PassiveGrabUpdate::resource_exhausted;
+    }
+}
+
+PassiveGrabUpdate
+ServerState::remove_passive_grab(
+    PassiveGrabKind kind, std::uint32_t owner, std::uint32_t window_id,
+    const PassiveGrabDomain &details,
+    const PassiveGrabDomain &modifiers)
+{
+    try {
+        std::vector<PassiveGrab> revised;
+        revised.reserve(std::min(maximum_passive_grabs,
+                                 passive_grabs_.size() * 2));
+        for (const auto &existing : passive_grabs_) {
+            if (existing.kind == kind && existing.window == window_id &&
+                existing.owner == owner &&
+                overlaps(existing, details, modifiers)) {
+                if (!append_without(revised, existing, details, modifiers))
+                    return PassiveGrabUpdate::resource_exhausted;
+            }
+            else {
+                if (revised.size() == maximum_passive_grabs)
+                    return PassiveGrabUpdate::resource_exhausted;
+                revised.push_back(existing);
+            }
+        }
+        const std::size_t owner_count = static_cast<std::size_t>(std::count_if(
+            revised.begin(), revised.end(),
+            [owner](const PassiveGrab &grab) { return grab.owner == owner; }));
+        if (owner_count > maximum_passive_grabs_per_client)
+            return PassiveGrabUpdate::resource_exhausted;
+        passive_grabs_ = std::move(revised);
+        return PassiveGrabUpdate::updated;
+    }
+    catch (const std::bad_alloc &) {
+        return PassiveGrabUpdate::resource_exhausted;
+    }
 }
 
 WindowRecord *
@@ -621,6 +780,13 @@ ServerState::destroy_window(std::uint32_t id)
     }
     if (input_.keyboard_grab && input_.keyboard_grab->window == id)
         input_.keyboard_grab.reset();
+    passive_grabs_.erase(
+        std::remove_if(
+            passive_grabs_.begin(), passive_grabs_.end(),
+            [id](const PassiveGrab &grab) {
+                return grab.window == id || grab.confine_to == id;
+            }),
+        passive_grabs_.end());
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
     for (const auto &property : found->second.properties)
@@ -772,6 +938,11 @@ ServerState::disconnect_client(std::uint32_t owner)
         input_.pointer_grab.reset();
     if (input_.keyboard_grab && input_.keyboard_grab->owner == owner)
         input_.keyboard_grab.reset();
+    passive_grabs_.erase(
+        std::remove_if(
+            passive_grabs_.begin(), passive_grabs_.end(),
+            [owner](const PassiveGrab &grab) { return grab.owner == owner; }),
+        passive_grabs_.end());
     for (auto &window_entry : windows_)
         window_entry.second.event_masks.erase(owner);
     for (auto &selection : selections_) {

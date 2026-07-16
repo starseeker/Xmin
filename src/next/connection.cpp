@@ -37,6 +37,13 @@ constexpr std::uint32_t graphics_context_clip_origins =
     (1U << 17) | (1U << 18);
 constexpr std::uint16_t pointer_grab_mask = 0x7ffcU;
 
+bool
+valid_passive_modifiers(std::uint16_t modifiers) noexcept
+{
+    return modifiers == any_modifier ||
+        (modifiers & ~all_modifiers_mask) == 0;
+}
+
 enum : std::uint8_t {
     bad_request = 1,
     bad_value = 2,
@@ -409,8 +416,8 @@ Connection::send_setup_success(ByteOrder order)
     payload.u8(static_cast<std::uint8_t>(image_order));
     payload.u8(32);  // bitmap scanline unit
     payload.u8(32);  // bitmap scanline pad
-    payload.u8(8);   // minimum keycode
-    payload.u8(255); // maximum keycode
+    payload.u8(minimum_keycode);
+    payload.u8(maximum_keycode);
     payload.pad(4);
 
     payload.bytes(vendor);
@@ -1966,6 +1973,99 @@ Connection::handle_ungrab_pointer(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_grab_button(const RequestContext &context)
+{
+    if (context.request.size() != 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 20, context.order);
+    const auto window_id = reader.u32();
+    const auto event_mask = reader.u16();
+    const auto pointer_mode = reader.u8();
+    const auto keyboard_mode = reader.u8();
+    const auto confine_to = reader.u32();
+    const auto cursor = reader.u32();
+    const auto button = reader.u8();
+    const bool padding = reader.skip(1);
+    const auto modifiers = reader.u16();
+    if (!window_id || !event_mask || !pointer_mode || !keyboard_mode ||
+        !confine_to || !cursor || !button || !padding || !modifiers) {
+        return malformed("truncated GrabButton request");
+    }
+    if (*pointer_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *pointer_mode);
+    if (*keyboard_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *keyboard_mode);
+    if (!valid_passive_modifiers(*modifiers))
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *modifiers);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if ((*event_mask & ~pointer_grab_mask) != 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *event_mask);
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (*confine_to != 0 && server_.window(*confine_to) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *confine_to);
+    if (*cursor != 0)
+        return send_error(context.order, bad_cursor, context.opcode,
+                          context.sequence, *cursor);
+
+    PassiveGrab grab;
+    grab.kind = PassiveGrabKind::button;
+    grab.details = passive_grab_details(grab.kind, *button);
+    grab.modifiers = passive_grab_modifiers(*modifiers);
+    grab.owner = config_.resource_base;
+    grab.window = *window_id;
+    grab.confine_to = *confine_to;
+    grab.event_mask = *event_mask;
+    grab.pointer_mode = *pointer_mode;
+    grab.keyboard_mode = *keyboard_mode;
+    grab.owner_events = context.data != 0;
+    const auto update = server_.add_passive_grab(std::move(grab));
+    if (update == PassiveGrabUpdate::access_denied)
+        return send_error(context.order, bad_access, context.opcode,
+                          context.sequence);
+    if (update == PassiveGrabUpdate::resource_exhausted)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_ungrab_button(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto window_id = reader.u32();
+    const auto modifiers = reader.u16();
+    if (!window_id || !modifiers || !reader.skip(2))
+        return malformed("truncated UngrabButton request");
+    if (!valid_passive_modifiers(*modifiers))
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *modifiers);
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    const auto update = server_.remove_passive_grab(
+        PassiveGrabKind::button, config_.resource_base, *window_id,
+        passive_grab_details(PassiveGrabKind::button, context.data),
+        passive_grab_modifiers(*modifiers));
+    if (update == PassiveGrabUpdate::resource_exhausted)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_change_active_pointer_grab(
     const RequestContext &context)
 {
@@ -2081,6 +2181,91 @@ Connection::handle_ungrab_keyboard(const RequestContext &context)
                            input.keyboard_grab->activated_at)) {
         input.keyboard_grab.reset();
     }
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_grab_key(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto window_id = reader.u32();
+    const auto modifiers = reader.u16();
+    const auto key = reader.u8();
+    const auto pointer_mode = reader.u8();
+    const auto keyboard_mode = reader.u8();
+    if (!window_id || !modifiers || !key || !pointer_mode ||
+        !keyboard_mode || !reader.skip(3)) {
+        return malformed("truncated GrabKey request");
+    }
+    if (*keyboard_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *keyboard_mode);
+    if (*pointer_mode > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *pointer_mode);
+    if (!valid_passive_modifiers(*modifiers))
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *modifiers);
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if (*key != 0 && *key < minimum_keycode)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *key);
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+
+    PassiveGrab grab;
+    grab.kind = PassiveGrabKind::key;
+    grab.details = passive_grab_details(grab.kind, *key);
+    grab.modifiers = passive_grab_modifiers(*modifiers);
+    grab.owner = config_.resource_base;
+    grab.window = *window_id;
+    grab.event_mask = (1U << 0) | (1U << 1);
+    grab.pointer_mode = *pointer_mode;
+    grab.keyboard_mode = *keyboard_mode;
+    grab.owner_events = context.data != 0;
+    const auto update = server_.add_passive_grab(std::move(grab));
+    if (update == PassiveGrabUpdate::access_denied)
+        return send_error(context.order, bad_access, context.opcode,
+                          context.sequence);
+    if (update == PassiveGrabUpdate::resource_exhausted)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_ungrab_key(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto window_id = reader.u32();
+    const auto modifiers = reader.u16();
+    if (!window_id || !modifiers || !reader.skip(2))
+        return malformed("truncated UngrabKey request");
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (context.data != 0 && context.data < minimum_keycode)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if (!valid_passive_modifiers(*modifiers))
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *modifiers);
+    const auto update = server_.remove_passive_grab(
+        PassiveGrabKind::key, config_.resource_base, *window_id,
+        passive_grab_details(PassiveGrabKind::key, context.data),
+        passive_grab_modifiers(*modifiers));
+    if (update == PassiveGrabUpdate::resource_exhausted)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
     return Result<void>::success();
 }
 
@@ -3922,12 +4107,20 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_grab_pointer;
         table[opcode_index(CoreOpcode::UngrabPointer)] =
             &Connection::handle_ungrab_pointer;
+        table[opcode_index(CoreOpcode::GrabButton)] =
+            &Connection::handle_grab_button;
+        table[opcode_index(CoreOpcode::UngrabButton)] =
+            &Connection::handle_ungrab_button;
         table[opcode_index(CoreOpcode::ChangeActivePointerGrab)] =
             &Connection::handle_change_active_pointer_grab;
         table[opcode_index(CoreOpcode::GrabKeyboard)] =
             &Connection::handle_grab_keyboard;
         table[opcode_index(CoreOpcode::UngrabKeyboard)] =
             &Connection::handle_ungrab_keyboard;
+        table[opcode_index(CoreOpcode::GrabKey)] =
+            &Connection::handle_grab_key;
+        table[opcode_index(CoreOpcode::UngrabKey)] =
+            &Connection::handle_ungrab_key;
         table[opcode_index(CoreOpcode::AllowEvents)] =
             &Connection::handle_allow_events;
         table[opcode_index(CoreOpcode::GrabServer)] =

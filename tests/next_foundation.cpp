@@ -291,6 +291,98 @@ test_shared_server_state()
 }
 
 bool
+test_passive_grabs()
+{
+    constexpr std::uint32_t first_owner = 0x00200000;
+    constexpr std::uint32_t second_owner = 0x00400000;
+    constexpr std::uint8_t key = 38;
+    constexpr std::uint8_t other_key = 39;
+    constexpr std::uint16_t shift = 1;
+    xmin::next::ServerState server(32, 24);
+
+    xmin::next::PassiveGrab wildcard;
+    wildcard.kind = xmin::next::PassiveGrabKind::key;
+    wildcard.details = xmin::next::passive_grab_details(wildcard.kind, 0);
+    wildcard.modifiers =
+        xmin::next::passive_grab_modifiers(xmin::next::any_modifier);
+    wildcard.owner = first_owner;
+    wildcard.window = xmin::next::root_window_id;
+    if (!expect(wildcard.details.count() == 248 &&
+                    wildcard.modifiers.count() == 256,
+                "passive wildcard domains have the wrong bounds") ||
+        !expect(server.add_passive_grab(wildcard) ==
+                    xmin::next::PassiveGrabUpdate::updated,
+                "passive wildcard grab insertion failed")) {
+        return false;
+    }
+
+    xmin::next::PassiveGrab exact = wildcard;
+    exact.details = xmin::next::passive_grab_details(exact.kind, key);
+    exact.modifiers = xmin::next::passive_grab_modifiers(shift);
+    exact.owner = second_owner;
+    if (!expect(server.add_passive_grab(exact) ==
+                    xmin::next::PassiveGrabUpdate::access_denied,
+                "overlapping cross-client passive grab was accepted") ||
+        !expect(server.remove_passive_grab(
+                    xmin::next::PassiveGrabKind::key, first_owner,
+                    xmin::next::root_window_id, exact.details,
+                    exact.modifiers) ==
+                    xmin::next::PassiveGrabUpdate::updated,
+                "exact passive wildcard subtraction failed") ||
+        !expect(server.passive_grabs().size() == 2,
+                "wildcard subtraction did not produce two rectangles") ||
+        !expect(server.add_passive_grab(exact) ==
+                    xmin::next::PassiveGrabUpdate::updated,
+                "subtracted passive combination remained reserved")) {
+        return false;
+    }
+
+    exact.details = xmin::next::passive_grab_details(exact.kind, other_key);
+    if (!expect(server.add_passive_grab(exact) ==
+                    xmin::next::PassiveGrabUpdate::access_denied,
+                "wildcard remainder lost cross-client exclusion")) {
+        return false;
+    }
+
+    server.disconnect_client(first_owner);
+    if (!expect(server.passive_grabs().size() == 1 &&
+                    server.passive_grabs().front().owner == second_owner,
+                "disconnect retained an owned passive grab")) {
+        return false;
+    }
+    server.disconnect_client(second_owner);
+    if (!expect(server.passive_grabs().empty(),
+                "passive grab cleanup left stale state") ||
+        !expect(xmin::next::passive_grab_modifiers(0x0100).none(),
+                "invalid passive modifier domain was materialized")) {
+        return false;
+    }
+
+    xmin::next::WindowRecord confine;
+    confine.id = first_owner;
+    confine.parent = xmin::next::root_window_id;
+    confine.width = 4;
+    confine.height = 4;
+    xmin::next::PassiveGrab confined;
+    confined.kind = xmin::next::PassiveGrabKind::button;
+    confined.details = xmin::next::passive_grab_details(confined.kind, 1);
+    confined.modifiers = xmin::next::passive_grab_modifiers(0);
+    confined.owner = first_owner;
+    confined.window = xmin::next::root_window_id;
+    confined.confine_to = first_owner;
+    if (!expect(server.add_window(std::move(confine), first_owner),
+                "passive-grab confine window insertion failed") ||
+        !expect(server.add_passive_grab(std::move(confined)) ==
+                    xmin::next::PassiveGrabUpdate::updated,
+                "confined passive grab insertion failed")) {
+        return false;
+    }
+    server.destroy_window(first_owner);
+    return expect(server.passive_grabs().empty(),
+                  "destroyed confine window retained a passive grab");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -593,7 +685,8 @@ main()
             test_wire_order(xmin::next::ByteOrder::little) &&
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
-            test_shared_server_state() && test_true_color() &&
+            test_shared_server_state() && test_passive_grabs() &&
+            test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&
             test_window_tree_mutations() && test_colormap_state() &&
