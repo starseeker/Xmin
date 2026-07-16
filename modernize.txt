@@ -1,0 +1,731 @@
+# Xmin radical C++17 modernization plan
+
+Status: proposal for the full-fork branch, 2026-07-16
+
+## 1. Recommendation
+
+Do not translate the retained Xorg server one C file at a time.  That would
+replace syntax while preserving DIX generations, DDX hooks, ScreenPtr and
+ClientPtr plumbing, DevPrivates, global extension state, callback chains,
+parallel native/swapped dispatch paths, and a command line intended for many
+server types.  Most of Xmin's complexity comes from those abstractions, not
+from C itself.
+
+Build a new C++17 server around the X11 wire contract and use the current
+server as an executable compatibility oracle during migration.  Preserve the
+good external behavior and tests, not the internal Xorg architecture.  The
+end state should have:
+
+- one single-threaded, explicitly owned `Server` state;
+- one virtual screen and a fixed set of virtual input devices;
+- checked, endian-aware request decoding and reply/event encoding generated
+  from protocol descriptions;
+- typed XID resources and direct relationships instead of `void *` resources,
+  resource-type integers, DevPrivates, and screen hook wrapping;
+- a small window/surface model and direct pixman-backed rendering instead of
+  DIX -> MI -> fb -> vfb/DDX function-table layers;
+- compiled-in protocol handlers instead of modules or runtime extension
+  enable/disable machinery;
+- direct POSIX local sockets, polling, authentication, and process supervision
+  instead of xtrans and the generic Xorg OS layer;
+- decoded built-in fonts and a constexpr keyboard map instead of libXfont2,
+  PCF/XKM runtime loaders, libxkbfile headers, and `fmemopen`;
+- project-owned launcher and controller code using the same narrow platform
+  library, while retaining independent raw/XCB clients as test oracles; and
+- pixman and optional OSMesa as isolated C dependencies behind narrow C++
+  adapters.  They should not be mechanically converted to C++.
+
+This is a rewrite of the implementation, but not a greenfield guess at X11.
+The current test suite, captured protocol behavior, protocol specifications,
+and differential testing against the legacy executable make it a controlled
+replacement.
+
+## 2. What is present now
+
+The repository already has an unusually strong base for a rewrite:
+
+- a self-contained server with no host Xorg, X11, font, or GL runtime
+  dependency;
+- authenticated launch and automation workflows;
+- raw-wire, opposite-endian, malformed-request, rendering, extension,
+  lifecycle, and GL tests;
+- embedded fixed/cursor fonts and a pinned US XKB map;
+- a declared extension profile rather than accidental host discovery;
+- an offline CMake build and recorded source provenance; and
+- working FreeBSD compilation in addition to the previous Linux work.
+
+Those are assets to preserve.  The implementation inventory shows why a more
+radical branch is worthwhile:
+
+- The checkout contains about 1,180 files and 594,000 lines.  OSMesa accounts
+  for about 225,000 lines and the retained Xorg server tree for about 223,000.
+- The normal GL-enabled development build compiles 452 distinct translation
+  units.  Of those, 275 are Xorg-server units totaling about 186,000 compiled
+  source lines.
+- The compiled Xorg portions include approximately 43,600 lines of DIX,
+  25,200 of indirect GLX, 20,400 of XKB, 19,700 of MI, 16,900 of XI,
+  13,100 of the OS layer, 10,400 of RANDR, 8,900 of Xext, 7,700 of RENDER,
+  5,600 of fb, and smaller extension layers.
+- The retained support dependencies add complete or partial copies of
+  libxcb, libXfont2, xtrans, libXau, xorgproto, and pixman.  Several are used
+  to provide only a very small fixed behavior.
+- A GL-enabled debug `Xmin` is currently about 18 MiB on this FreeBSD host.
+  A release, GL-disabled server is about 2.2 MiB, so OSMesa/GLX is a distinct
+  size tier rather than an intrinsic cost of the 2D server.
+- The inherited command line still advertises options for backing store,
+  font paths, mapped framebuffer files, root shared memory, multiple screens
+  and depths, accessx tuning, server reset generations, scheduling, seats,
+  video blanking, and runtime extension switching.  Most are irrelevant to a
+  fixed headless test server.
+- The implementation relies extensively on global state, raw allocation,
+  `goto` cleanup, untyped callbacks, function tables, and separately written
+  swapped request/reply paths.  These are reasonable consequences of Xorg's
+  history but are not useful constraints for Xmin.
+
+The baseline on this host is now 38/38 passing tests.  During this review the
+software-direct window test exposed a real portability defect: the GLX
+adapter and OSMesa objects compiled the dependency-private `_glthread_Mutex`
+with different definitions, so they disagreed about Mesa framebuffer layout.
+The fix is commit 52ea4d2 on `main`, and this branch is rebased on it.  The
+larger architectural lesson is important: the new design must not inspect
+dependency-private structures across translation-unit or library boundaries.
+Narrow checked APIs are preferable even when both sides are vendored.
+
+## 3. Define the product before rewriting it
+
+The first modernization deliverable should be a machine-readable support
+manifest.  It must name every core request, extension/version, request within
+each extension, pixmap format, visual, transport, authentication method, and
+CLI operation that Xmin promises.  Each entry should be `required`,
+`compatibility`, `intentionally unsupported`, or `not yet implemented`.
+Tests should derive the advertised extension list and coverage report from
+this manifest.
+
+### Recommended default 2D profile
+
+- Local Unix-domain connections only.
+- MIT-MAGIC-COOKIE-1 authentication, with `-ac` only as an explicit unsafe
+  testing option.
+- One screen, one root window, one output, one CRTC, and one current mode.
+- A 24-bit TrueColor root visual stored as XRGB8888.  Advertise only the
+  pixmap depths actually needed by tested clients: initially 1, 8, 24, and
+  32.  Remove 8/15/16/30-bit root modes unless an acceptance case justifies
+  them.
+- One virtual core pointer, one virtual core keyboard, and the XI2 master
+  view of those devices.  No physical devices or hotplug hierarchy.
+- A fixed embedded US PC105 keymap and the normal modifier/group/lock/repeat
+  state required by XKB clients.
+- Full core protocol dispatch.  Core X11 has no feature negotiation, so every
+  core opcode must produce correct behavior, a specification-correct no-op,
+  or the correct error; it cannot silently disappear.
+- BIG-REQUESTS, XC-MISC, Generic Event, RENDER, RANDR, XFIXES, SHAPE, SYNC,
+  XKB, XI2, XTEST, COMPOSITE, DAMAGE, and Present.
+- MIT-SHM when the platform provides the required shared-memory facility.
+
+### Compatibility profile
+
+Put small but nonessential legacy facilities in a separately tested,
+compile-time profile: XInput 1.x, DOUBLE-BUFFER, MIT-SCREEN-SAVER, and the
+single-screen XINERAMA facade.  They may prove cheap enough to keep in the
+normal build, but that should be an explicit measured choice.  Do not retain
+Xorg's runtime `+extension`/`-extension` machinery; ship a known profile with
+an exact tested advertisement list.
+
+### Deliberate cuts
+
+- Remove the DDX/module/driver model, server generations/reset, multi-screen
+  support, physical input, hotplug, and all hardware paths.
+- Remove TCP initially.  It expands authentication, access-control, address,
+  and denial-of-service concerns for no benefit to the normal isolated test
+  workflow.  A later remote profile must justify and test it independently.
+- Remove framebuffer files, root SysV framebuffer allocation, exotic root
+  depths/visual classes, runtime font paths, and the inherited general Xorg
+  command line.
+- Continue to omit DRI, DRM, GPU Present, EGL, Vulkan, XVideo, DGA, VidMode,
+  DPMS, XDMCP, XACE/SELinux, SECURITY, RECORD, and hardware configuration.
+- Do not add a loadable plugin ABI.  Compile the fixed handlers directly.
+- Do not preserve source-level or internal ABI compatibility with Xorg.
+
+### GL profile decision
+
+Treat OpenGL as an add-on product, not part of the server core.  The current
+software-direct `libGL.so.1` renders in the client and presents through core
+X image upload.  Early in the rewrite, decouple its build from server-side
+GLX and test it against a server that does not advertise GLX.  If Qt and the
+direct GL acceptance suite pass, the clean profile should:
+
+- omit server-side indirect GLX;
+- omit OSMesa from the server process;
+- build OSMesa only once, inside the companion `libGL.so.1`; and
+- implement the GLX client ABI locally with `extern "C"` entry points.
+
+That removes roughly 25,000 compiled Xorg GLX lines and the server's copy of
+OSMesa.  If a real target needs indirect legacy GLX, keep it as an explicitly
+named legacy profile while deciding whether a generated subset is worth
+writing.  It must not force the clean server to retain the Xorg GLX vendor
+router.  In either profile, replace all access to Mesa private `GLcontext`
+and `GLframebuffer` members with a narrow public adapter API in the pinned
+OSMesa fork.
+
+## 4. Target architecture
+
+The new server should be a small number of cohesive libraries rather than a
+mirror of upstream directory boundaries:
+
+```
+  Unix socket -> Wire codec -> Request dispatcher
+                                    |
+                                    v
+                              Server state
+                    +---------------+---------------+
+                    |               |               |
+              resource store   window/input    extensions
+                    |               |               |
+                    +----------- surfaces ---------+
+                                    |
+                             renderer / pixman
+```
+
+Suggested source layout:
+
+```
+src/
+  base/          checked arithmetic, byte views, result, logging, clock
+  platform/      fd/socket/poll/signal/process/shared-memory POSIX code
+  protocol/      generated wire declarations and handwritten validation
+  server/        Server, Client, event loop, setup, dispatch
+  core/          atoms, resources, windows, properties, selections, GCs
+  graphics/      surfaces, regions, renderer, glyphs, scene composition
+  input/         pointer, keyboard, grabs, focus, fixed XKB map/state
+  extensions/    selected protocol state and handlers
+  app/           serve/run/ctl/capture command implementations
+  gl/            optional client-side GLX/OSMesa bridge
+tools/protocol/   maintenance-time protocol generator
+vendor/           isolated pixman, optional OSMesa, protocol XML and licenses
+tests/            unit, protocol, differential, integration, toolkit, fuzz
+```
+
+Names are less important than the dependency direction.  Protocol code may
+call typed server services; server state may call graphics/input services;
+none of those layers may include Xorg server headers or dependency-private
+Mesa headers.
+
+### Server ownership and lifetime
+
+`Server` should own all mutable server state: configuration, clients, atom
+table, resource registry, root/window tree, selection owners, input state,
+extension states, scheduler, and clock.  There should be no mutable namespace
+globals and no reset generation.  A server instance is constructed once and
+destroyed once.
+
+`Client` should own its socket, input/output buffers, byte order, sequence
+number, resource-ID base/mask, subscriptions, grabs, save-set, and owned-XID
+index.  Disconnecting a client should be one explicit ordered operation that
+releases grabs/selections, performs save-set handling, destroys its resources,
+and queues resulting events.
+
+Use value members and `std::unique_ptr` for ownership.  Use IDs or documented
+observer pointers for non-ownership.  Use `std::shared_ptr` only where the
+protocol truly shares lifetime, such as a drawable surface retained by a
+named COMPOSITE pixmap after a window changes state.  RAII should cover file
+descriptors, mapped/shared memory, child processes, temporary directories,
+pixman objects, and all partially constructed resources.
+
+### Typed resources
+
+Replace `RESTYPE`, `void *`, `dixLookupResource*`, deletion callbacks, and
+DevPrivates with:
+
+- strong `Xid`, `AtomId`, `ClientId`, `Timestamp`, and geometry types;
+- a `ResourceRegistry` keyed by XID and holding a closed `std::variant` of
+  the resource types in the selected profile;
+- `lookup<T>()` helpers that return the exact protocol error on a missing or
+  wrongly typed resource;
+- an owner index for deterministic client teardown; and
+- explicit destruction functions for the few resources with protocol side
+  effects.
+
+The fixed extension set means known optional state can be an `std::optional`
+member on `Client`, `Window`, or `Surface`.  There is no need for dynamically
+allocated private-key slots or screen-function wrapping.
+
+### Notifications rather than callback machinery
+
+Replace generic callback lists with typed operations at the point where state
+changes.  For example, a single `surface_changed(drawable, region)` operation
+can update DAMAGE, invalidate the composed root, and wake Present.  A single
+`selection_changed()` operation can emit core and XFIXES notifications.
+Keep these relationships visible in code; do not recreate a generic event bus
+unless a concrete many-to-many case demands one.
+
+### Time and scheduling
+
+Use `std::chrono::steady_clock` for elapsed time and a small injected `Clock`
+interface for tests.  The event loop owns a deadline queue for key repeat,
+SYNC waits, saver state, launcher readiness, and fake-vblank Present.  Tests
+must be able to advance a fake clock without sleeping.  This removes Xorg's
+block/wakeup handler chains and makes Present MSC behavior deterministic.
+
+## 5. Safe wire protocol implementation
+
+Wire handling is the security boundary and should receive the most automation.
+
+Vendor the relevant xcb-proto XML as a maintenance input and write a small,
+deterministic standard-library-only generator.  Commit its generated C++17
+output so normal builds remain offline and do not require Python.  Generated
+code should provide constants, enum classes, fixed fields, variable-list
+metadata, opcode tables, minimum sizes, reply/event descriptions, and names
+for diagnostics.  Protocol behavior remains handwritten.
+
+Do not cast a network buffer to a protocol struct.  A `WireReader` over a
+`ByteView` should read fixed-width integers with the client's byte order,
+validate alignment/padding and list counts, and reject overflow before any
+allocation.  A `WireWriter` should emit replies, errors, and events in client
+byte order.  C++17 lacks `std::span`, `std::endian`, and `std::expected`, so
+provide tiny project-owned `ByteView`, endian helpers, and `Result<T>` rather
+than importing a utility framework.
+
+Use one semantic handler per request:
+
+```
+Result<void> handle(RequestContext&, const CreateWindow&);
+```
+
+`RequestContext` supplies the client, sequence, validated request view, and
+reply/event helpers.  Native and opposite-endian clients must take the same
+semantic path; byte order belongs only in the reader/writer.  This deletes the
+large `Proc`/`SProc` and normal/swapped-reply duplication.
+
+Every length multiplication/addition must use checked arithmetic.  Establish
+configuration limits for request bytes, clients, resources per client, total
+surface bytes, property bytes, glyph bytes, pending output, timers, and atoms.
+Exceeding a protocol limit should return the specified error or disconnect a
+client that cannot be serviced; it must not abort the server.
+
+Use generated tables to report request coverage.  A required request without
+a registered semantic handler should fail the build or a manifest test.
+
+## 6. Graphics and window model
+
+### Fixed pixel model
+
+Use four internal surface formats unless testing proves another is required:
+A1, A8, XRGB8888, and ARGB8888.  A `Surface` owns checked dimensions, stride,
+format, byte storage, and a pixman image wrapper.  `Region` is a small RAII
+value wrapper around `pixman_region32_t` with explicit conversion to wire
+rectangles.
+
+`GraphicsContext` should be an ordinary value object containing only core GC
+state: function/plane mask, foreground/background, line/fill style, tile or
+stipple IDs, font ID, clip, origins, and subwindow mode.  The renderer takes a
+drawable, GC value, and typed geometry; there are no GC/screen operations
+tables.
+
+Use pixman directly for image copies, solid fills, masks, transforms,
+gradients, glyph composition, trapezoids, and RENDER operators.  Implement a
+small deterministic rasterizer only for core operations pixman does not
+provide with the required X pixel rules (notably zero/wide lines, dashes,
+arcs, polygon filling, and stipple/tile interactions).  Port the proven
+algorithm, not the MI framework around it, and lock each operation down with
+pixel-golden and differential tests before deleting its legacy counterpart.
+
+### Window surfaces and scene composition
+
+A surface per window is the cleanest model for this headless server.  Window
+pixels remain deterministic when obscured; mapping, stacking, shape, opacity,
+and child clipping are resolved by a small scene compositor into the root
+surface.  Keeping contents is permitted behavior and makes COMPOSITE named
+pixmaps natural.  The compositor should update only dirty regions and compose
+lazily before root capture/readback or presentation.
+
+The window tree owns geometry, mapping/viewability, border/background,
+event masks, properties, shape, cursor, optional redirected surface, and
+children in stacking order.  Central helpers compute visible/input regions,
+coordinate translation, and exposure.  Carefully test `IncludeInferiors`,
+parent-relative backgrounds, shaped windows, resize preservation, subwindow
+clipping, and root `GetImage`; these are places where a simple surface model
+can otherwise drift from core semantics.
+
+All drawable mutations call the same damage/invalidation path.  DAMAGE,
+Present, controller stability waits, root recomposition, and COMPOSITE should
+therefore share one region model rather than wrapping one another's hooks.
+
+### Fonts and cursors
+
+Change the maintenance generator to decode the fixed and cursor PCF assets
+into constexpr glyph metrics and bitmap rows.  Implement the small required
+`ListFonts`, `OpenFont`, `QueryFont`, text extent, and core text drawing
+behavior directly.  Preserve the accepted font names/aliases and cursor-font
+semantics.  Delete libXfont2, font path elements, PCF runtime parsing, font
+server protocol headers, SHA-1 glyph-cache compatibility glue if no longer
+needed, and all font-related CLI options.
+
+RENDER clients upload already-rasterized glyphs.  Store those glyphs in typed
+glyph sets and use a simple size-bounded cache; a cryptographic hash is not
+required.
+
+## 7. Input and XKB
+
+Model exactly two physical-equivalent virtual devices and their core/XI2
+master presentation.  Keep pointer position/buttons, focus, grabs, key state,
+modifier/group state, controls, and event selections in explicit C++ values.
+Feed real controller actions and XTEST requests through the same event path.
+
+Generate the fixed US map into constexpr key names, keysyms, actions,
+modifier maps, compatibility rules, indicators, and repeat flags.  Implement
+the XKB queries and mutable state/controls that clients exercise directly
+over those values.  There should be no XKM parser, xkbcomp-compatible compiler
+path, rules-file machinery, libxkbfile dependency, temporary stream, or
+runtime keymap cache.
+
+Retain core passive/active grab, focus, propagation, crossing, and synthetic
+event semantics because toolkits depend on them.  Remove touch, gesture,
+physical-device reconfiguration, acceleration profiles, bells with hardware
+effects, VT switching, and device hotplug.  Implement XI2 as a view of the
+same state rather than a second device engine.  Put XI1 in the compatibility
+profile unless tracing demonstrates a default-profile consumer.
+
+## 8. Extensions as small views of core state
+
+Register extensions through one constexpr table containing name, version,
+major opcode, event/error counts, and handler table.  Extension IDs assigned
+at startup are then stable and visible.  Each client records negotiated
+versions and event selections in typed state.
+
+Implement in vertical groups:
+
+1. Foundation: BIG-REQUESTS, XC-MISC, Generic Event, SHAPE, and basic SYNC.
+2. Drawing/window observation: RENDER, XFIXES regions/selections/cursors,
+   DAMAGE, and COMPOSITE.
+3. Output/presentation: the single-output RANDR model and timer-backed
+   Present.  A resize is one checked surface reallocation plus geometry/event
+   update, not a DDX hook cascade.
+4. Input: XKB, XI2, and XTEST over the fixed input model.
+5. Local optimization: MIT-SHM attachments and image transfer using an RAII
+   shared-memory object.
+6. Compatibility, if retained: XI1, XINERAMA, SCREEN-SAVER, and DBE.
+
+Do not port RANDR providers/leases, multi-GPU routing, hardware CRTCs, DRM
+fences, Present flips, or COMPOSITE overlay-window machinery unless the
+support manifest identifies observable behavior that cannot be represented
+more simply.  Unsupported versioned extension requests must return their
+specified errors; they must not pretend to succeed.
+
+## 9. Platform, launcher, and controller
+
+Use a single portable `poll`-based event loop first.  epoll/kqueue adapters
+would add code without helping the expected test-server load.  A `UniqueFd`
+and small EINTR-safe read/write/socket helpers should be the complete POSIX
+I/O foundation.  Signals should wake the loop through a pipe and all cleanup
+should happen in ordinary code, not a signal handler.
+
+Replace xtrans with direct Unix socket creation, display lock ownership,
+stale-lock recovery, peer acceptance, and cleanup.  Replace libXau with a
+small shared Xauthority reader/writer for the binary MIT cookie record.  The
+server and launcher should share that code.  Preserve private 0700 temporary
+directories, cryptographic OS randomness, concurrent display reservation,
+signal forwarding, child reaping, and complete cleanup tests.
+
+Consider one `xmin` multicall executable with `serve`, `run`, `ctl`, and
+`capture` subcommands, plus installed `Xmin`, `xmin-run`, and `xminctl`
+compatibility names.  This would give one parser and one platform library
+without changing the process isolation of `run`.  If binary-size measurement
+favors separate executables, keep thin mains over the same internal
+libraries; source consolidation matters more than forcing one artifact.
+
+Rewrite the production controller as a focused C++ X client using generated
+wire declarations and an independent client connection class.  That removes
+the vendored libxcb subset and the large generated bindings from the product.
+Do not let sharing declarations become circular self-validation: raw-wire
+and host XCB integration tests remain independent authorities and must cover
+every controller operation.
+
+Reduce the server CLI to the actual product:
+
+```
+Xmin [DISPLAY] [--display-fd FD] [--auth FILE|--no-auth]
+     [--screen WIDTHxHEIGHT] [--dpi DPI] [--fake-fps FPS]
+     [--max-clients N] [--log-level LEVEL]
+```
+
+Exact spelling can change, but everything retained needs a test and
+everything else should be deleted rather than accepted and ignored.
+
+## 10. C++17 rules
+
+- C++ is internal; expose no public C++ ABI.  GL/OpenGL and any dependency
+  boundary remains `extern "C"`.
+- Prefer values, `enum class`, strong IDs, `std::array`, `std::vector`,
+  `std::string`, `std::string_view`, `std::optional`, `std::variant`, and
+  `std::unique_ptr`.
+- No raw owning pointers.  Non-owning pointers must be local or explicitly
+  documented.  Avoid pervasive `shared_ptr` and inheritance.
+- Use `Result<T>` for expected protocol/platform failures.  Do not use
+  exceptions for client errors or normal control flow.  Catch allocation and
+  startup exceptions at process boundaries so an untrusted request cannot
+  unwind through the server loop.
+- Destructors are `noexcept`; ownership transfer is visible; cleanup labels
+  disappear in project code.
+- No unaligned loads, type-punning wire casts, variable-length arrays, or
+  arithmetic on unchecked client values.
+- Avoid preprocessor feature mazes.  Platform differences live in a few
+  implementation files and build-profile choices are generated constants.
+- No dependency-private structure access.  C adapters own and validate their
+  dependency objects and expose only the operations Xmin needs.
+- No singleton service locators or generic plugin/event frameworks.  Passing
+  `Server&`/`RequestContext&` keeps dependencies explicit.
+- Format with a checked-in clang-format policy.  Enable warnings as errors for
+  project code, clang-tidy's correctness/bugprone checks, include-what-you-use
+  only if it proves stable, and sanitizers in CI.
+- Keep generated and vendored code under separate warning/format policies and
+  report handwritten, generated, and vendor line counts separately.
+
+Switching to C++ adds a platform C++ runtime dependency.  Decide packaging
+explicitly: use the base-system libc++ where it is guaranteed (for example
+FreeBSD/macOS), and evaluate static libstdc++/libgcc linking for relocatable
+Linux releases where licensing and toolchain support permit it.  Audit the
+installed dynamic dependency list on every release platform.  No C++ type or
+exception may cross into the optional `libGL` C ABI.
+
+## 11. Verification strategy
+
+### Preserve the legacy executable as an oracle
+
+During migration, build `Xmin-legacy` from the current source and `Xmin-next`
+from the new tree.  Do not try to link new C++ resource objects into the Xorg
+process; that produces a permanent adapter layer and couples both designs.
+Run the same independent clients against separate processes.
+
+Add a differential harness that records normalized replies, errors, events,
+and framebuffer images.  Normalize only documented nondeterminism such as
+timestamps, allocated display numbers, and resource bases.  A difference
+requires a specification citation, a deliberate support-manifest change, or
+a bug fix.  Keep golden cases small enough to review.
+
+### Expand the contract tests before deletion
+
+- Enumerate all 127 core opcodes and every selected extension request in a
+  coverage test, including valid, invalid-resource, invalid-length, and
+  opposite-endian cases.
+- Preserve the existing real XCB raster/core/extension, launcher, controller,
+  Present, XKB, GL, and malformed-wire cases.
+- Add pixel matrices for every GC function, plane mask, clipping mode,
+  fill/line style, drawable format, overlap direction, and RENDER operator
+  used by the profile.
+- Add window-tree matrices for map/unmap/reparent/configure/restack, exposure,
+  event propagation, grabs, focus, save-set, shapes, COMPOSITE redirection,
+  and client teardown ordering.
+- Test every allocation cap and failure path.  Inject short reads/writes,
+  EINTR, disconnects, failed shared-memory attachment, clock jumps, and child
+  termination.
+- Fuzz setup and request streams in native and swapped byte order with
+  libFuzzer/AFL-compatible entry points.  Run ASan, UBSan, and leak checks;
+  add MSan where the toolchain supports a fully instrumented build.
+- Run release acceptance on Linux/glibc, Linux/musl, FreeBSD, and macOS with
+  GCC and Clang where applicable.  FreeBSD is now a first-class gate, not an
+  incidental build.  Add big-endian emulation or CI because the unified wire
+  codec makes it affordable.
+- Require Qt 5 or 6 raster, Qt OpenGL when the GL profile is built, and GTK 3
+  acceptance on at least one release job.  Keep the product build independent
+  of those host packages.
+- Audit that installed binaries do not load host X11, XCB, GL, font, crypto,
+  or driver libraries.  Verify relocation from an arbitrary install prefix.
+
+The legacy target can be deleted only when all required manifest entries pass
+on `Xmin-next`, differential deviations are resolved, toolkit gates pass, and
+sanitizer/fuzz smoke tests are clean.  Preserve a tag for later comparison;
+do not ship two servers indefinitely.
+
+## 12. Migration phases and deletion gates
+
+### Phase 0: freeze and measure the contract
+
+1. Keep the just-established 38/38 FreeBSD baseline green and add it to CI.
+2. Make Linux, FreeBSD, and at least one sanitizer configuration required.
+3. Create the support manifest and request-level coverage report.
+4. Capture representative Qt/GTK/controller traces and framebuffer goldens.
+5. Decide the default versus compatibility extension list.
+6. Decouple direct `libGL` from server GLX and run the no-server-GLX
+   experiment described above.
+7. Record baseline clean-build time, release size, peak RSS, source counts,
+   and installed dependencies for GL and non-GL profiles.
+
+Exit: the rewrite has a reviewable contract and reproducible legacy oracle;
+no implementation work is accepted on assumptions about what clients use.
+
+### Phase 1: C++ foundation and setup handshake
+
+1. Add C++17 base/platform libraries: checked arithmetic, bytes/endian,
+   result, IDs, logging, clock, `UniqueFd`, socket, poller, and timers.
+2. Add protocol XML inputs and deterministic generated declarations/tables.
+3. Implement configuration parsing, display lock/socket, Xauthority cookie
+   validation, client setup, resource base allocation, output buffering,
+   request sequencing, errors, and clean disconnect.
+4. Implement atoms and the typed resource registry.
+5. Pass native/swapped handshake, malformed-length, authentication,
+   concurrency, stale-lock, and lifecycle tests with `Xmin-next`.
+
+Exit: a hostile client can connect, authenticate, exchange bounded requests,
+and disconnect without any Xorg server code in the new executable.
+
+### Phase 2: core objects, windows, and 2D rendering
+
+1. Implement the root/window tree, pixmaps, colormaps/TrueColor responses,
+   GCs, properties, selections, cursors, coordinate/geometry requests, and
+   core events.
+2. Add Surface/Region/Renderer and the scene compositor.
+3. Implement image transfer, fills, copies, points, lines, arcs, polygons,
+   text, clipping, exposures, and all required GC operations.
+4. Replace runtime font loading with generated glyph tables.
+5. Pass the complete core XCB and raster tests, controller capture paths,
+   per-operation pixel differentials, and opposite-endian core matrix.
+
+Exit: normal raster X applications can create windows, draw, communicate,
+receive events, and be captured without DIX, MI, fb, vfb, or libXfont2.
+
+### Phase 3: input and stateful event semantics
+
+1. Implement focus, propagation, crossing, active/passive grabs, pointer and
+   keyboard state, repeat timers, and client teardown side effects.
+2. Generate the constexpr keymap and implement required XKB state/queries.
+3. Implement Generic Event, XI2, and XTEST over the same input engine.
+4. Port controller injection tests and add deterministic fake-clock cases.
+
+Exit: the automation controller and toolkit input/clipboard/focus behavior
+pass without Xorg devices, XI, or XKB sources.
+
+### Phase 4: modern 2D extensions
+
+1. Implement BIG-REQUESTS, XC-MISC, SHAPE, and SYNC.
+2. Implement RENDER pictures/formats/glyphs/transforms/compositing directly on
+   the renderer.
+3. Implement XFIXES, DAMAGE, and COMPOSITE as views of central window/surface
+   state.
+4. Implement the fixed single-output RANDR model and fake-vblank Present.
+5. Add MIT-SHM and then any accepted compatibility-profile extensions.
+6. Pass the current exact extension integration test after updating it to the
+   deliberate new manifest, plus Qt/GTK raster gates.
+
+Exit: the default 2D product profile is complete and has no Xorg extension
+implementation linked into `Xmin-next`.
+
+### Phase 5: launcher/controller consolidation and packaging
+
+1. Move launcher and server to the shared C++ platform/auth code.
+2. Replace the controller's bundled libxcb client with the focused generated
+   client codec while keeping independent integration clients.
+3. Select multicall or thin-executable packaging from measured size and UX.
+4. Delete shell behavior that is now a first-class command.
+5. Add install/relocation/dependency audits for every platform.
+
+Exit: xtrans, libXau, and bundled libxcb are unused and removable.
+
+### Phase 6: optional OpenGL profile
+
+1. Put the software-direct GLX bridge behind a narrow C ABI and C++ resource
+   implementation; remove all Mesa-private structure access.
+2. Keep OSMesa isolated in the client DSO and add MIT-SHM presentation if it
+   materially helps acceptance workloads.
+3. Pass GLSL, context sharing, resize, pixmap, pbuffer, draw/read split,
+   single/double buffer, Qt OpenGL, thread, and relocation tests.
+4. Based on Phase 0 evidence, either remove indirect server GLX or retain it
+   only in a clearly quarantined legacy profile with its own size/coverage
+   report.
+
+Exit: the clean 2D server is GL-independent and the optional GL package has a
+documented, tested boundary.
+
+### Phase 7: cut over and delete the scaffolding
+
+1. Make the new executable the only `Xmin` after all gates pass.
+2. Delete `third_party/xorg-server`, xtrans, libXfont2, libXau, bundled libxcb,
+   libxkbfile, unused xorgproto headers, their patches/import lists, and the
+   many generated Xorg compatibility config headers.
+3. Retain only protocol-generation inputs, pixman, optional OSMesa, embedded
+   data inputs, licenses, and maintenance tools still used by a normal refresh.
+4. Rewrite DESIGN/BUILDING/README around the new architecture and support
+   manifest.  Archive, rather than preserve, upstream-import instructions.
+5. Remove `Xmin-legacy` from the build and tag its last known-good revision.
+
+Exit: no Xorg server header can be included by project code, no removed
+dependency appears in the link graph, and a clean clone builds/tests offline.
+
+## 13. Measures of success
+
+Correctness and maintainability matter more than an arbitrary line target,
+but the branch needs objective evidence that it became more minimal:
+
+- zero compiled or retained Xorg-server implementation files in the final
+  tree;
+- zero xtrans, libXfont2, libXau, bundled libxcb, or libxkbfile runtime code;
+- one semantic implementation for native and swapped clients;
+- one Server owner and no mutable project global state;
+- one surface mutation/damage path and one input event path;
+- no dependency-private structure access;
+- a small fixed CLI and a generated, completely covered request manifest;
+- handwritten, generated, and vendor code reported separately, with an
+  initial design budget of roughly 50,000 handwritten C++ lines for the 2D
+  server/tools rather than the current 186,000 compiled Xorg lines;
+- a non-GL release no larger than the current approximately 2.2 MiB release
+  server unless a measured safety/portability benefit explains the increase;
+- materially lower clean build time and archive size when the optional GL
+  profile is disabled; and
+- green protocol, differential, sanitizer, portability, toolkit, relocation,
+  and dependency-audit gates.
+
+The line and binary budgets are design alarms, not incentives for compressed
+or obscure code.  Generated tables, clear validation, and explicit invariants
+are worthwhile even when they add lines.
+
+## 14. Principal risks and controls
+
+**Core X11 is wider than toolkit traces.**  Use the protocol manifest and
+opcode coverage, not trace-driven deletion alone.  Traces prioritize work;
+the specification determines valid core behavior.
+
+**Pixel behavior is full of edge cases.**  Port algorithms one operation at a
+time behind a small renderer API and require differential pixel matrices
+before removing MI/fb sources.
+
+**A rewrite can accidentally self-test its own codec.**  Keep raw byte clients,
+host XCB/toolkits, captured golden streams, and the legacy process independent
+of generated production code.
+
+**C++ can replace C macros with C++ overengineering.**  Prefer concrete value
+types and direct calls.  Reject generic object systems, plugin registries,
+deep inheritance, clever templates, and utility dependencies without a
+measured need.
+
+**Optional GL can dominate the repository again.**  Report and package it as
+a separate profile, compile OSMesa once per relevant process, and do not let
+indirect GLX dictate the core architecture.
+
+**Portability bugs hide in private ABI and platform assumptions.**  The
+FreeBSD GLX failure is the model case.  Encapsulate C dependencies, test data
+layout only inside their adapter, make FreeBSD/macOS/musl required early, and
+audit every compile definition shared across an ABI boundary.
+
+**The migration can become permanent duplication.**  Give every phase a
+deletion gate, forbid new features in the legacy implementation except
+security/portability fixes, and remove the oracle as soon as the declared
+contract is green.
+
+## 15. First concrete changes
+
+The first implementation series on this branch should be small and
+reversible:
+
+1. Add `profiles/protocol.toml` (or equivalent) describing the current and
+   proposed extension/request profiles.
+2. Add CI presets for C++17 warnings, ASan/UBSan, GL-off, GL-on, Linux, and
+   FreeBSD; record the baseline metrics above automatically.
+3. Split `XMIN_BUILD_GLX` into server-indirect and client-direct options and
+   perform the no-server-GLX direct/Qt experiment.
+4. Add the protocol XML import and generate only setup/core framing types.
+5. Create `xmin_next` with `UniqueFd`, poll loop, wire reader/writer, cookie
+   authentication, setup reply, and error handling.
+6. Run the existing handshake/opposite-endian/malformed/auth/lifecycle tests
+   against both executables.
+
+That series validates the architecture, generator, portability model, and
+migration harness before committing to the expensive graphics rewrite.
