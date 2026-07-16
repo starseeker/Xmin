@@ -106,8 +106,11 @@ cleanup.  A single shared `ServerState` now owns atoms, bounded resources, and t
 window tree across clients; committed declarations generated from `xproto.xml` drive
 a bounds-checked semantic handler table.  The first window/atom requests cover create,
 map/unmap, destroy, attributes, geometry, hierarchy, interning, and reverse lookup,
-including cross-client visibility and disconnect teardown.  Its deliberately small
-request implementation is still a migration target;
+including cross-client visibility and disconnect teardown.  Window configuration and
+border-aware coordinate translation now match the legacy oracle, while bounded
+properties support replace/prepend/append, partial reads, listing, deletion, and
+canonical 8/16/32-bit storage across clients of opposite byte order.  Its deliberately
+small request implementation is still a migration target;
 the Xorg-backed `Xmin` remains the feature-complete server and differential oracle.
 
 With `XMIN_BUILD_INDIRECT_GLX=ON`, Xmin embeds the pinned starseeker/osmesa renderer

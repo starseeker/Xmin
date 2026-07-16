@@ -52,9 +52,11 @@ geometry/translation, pixmap copy/readback, selection ownership, named colors, a
 synthetic events. The raw opposite-endian setup test also checks a malformed core
 request receives `BadLength` without terminating the connection. The `Xmin-next`
 variant additionally exercises the same semantic handlers in both byte orders for
-atom interning/name lookup and window create/map/attributes/geometry/tree/destroy,
-checks an unadvertised opcode at 255 cannot escape the 128-slot core table, and proves
-that one client's window is visible to another before disconnect teardown removes it.
+atoms, window lifecycle/configuration/coordinate translation, and property mutation,
+partial retrieval, listing, and deletion. It checks an unadvertised opcode at 255
+cannot escape the 128-slot core table, and proves that one client's window is visible
+to another while a 32-bit property remains correctly encoded for the opposite-endian
+client after disconnect teardown.
 The OSMesa unit check confirms that the renderer itself reports OpenGL 2.0, that the
 host-endian BGRA/ARGB choice produces a native X `0x00RRGGBB` pixel, and that distinct
 draw/read memory buffers work. The software-direct tests go further: they

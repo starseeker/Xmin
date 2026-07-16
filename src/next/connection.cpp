@@ -47,6 +47,72 @@ opcode_index(CoreOpcode opcode) noexcept
     return static_cast<std::uint8_t>(opcode);
 }
 
+std::int16_t
+signed_word(std::uint16_t value) noexcept
+{
+    const std::int32_t widened = value;
+    return static_cast<std::int16_t>(
+        widened <= std::numeric_limits<std::int16_t>::max()
+            ? widened
+            : widened - 65536);
+}
+
+std::optional<std::vector<std::uint8_t>>
+canonical_property_data(const std::uint8_t *data, std::size_t size,
+                        std::uint8_t format, ByteOrder order)
+{
+    if (format == 8)
+        return std::vector<std::uint8_t>(data, data + size);
+
+    WireReader reader(data, size, order);
+    std::vector<std::uint8_t> canonical;
+    canonical.reserve(size);
+    while (reader.remaining() != 0) {
+        if (format == 16) {
+            const auto value = reader.u16();
+            if (!value)
+                return std::nullopt;
+            canonical.push_back(static_cast<std::uint8_t>(*value));
+            canonical.push_back(static_cast<std::uint8_t>(*value >> 8));
+        }
+        else {
+            const auto value = reader.u32();
+            if (!value)
+                return std::nullopt;
+            for (unsigned shift = 0; shift < 32; shift += 8)
+                canonical.push_back(static_cast<std::uint8_t>(*value >> shift));
+        }
+    }
+    return canonical;
+}
+
+std::vector<std::uint8_t>
+wire_property_data(const std::uint8_t *data, std::size_t size,
+                   std::uint8_t format, ByteOrder order)
+{
+    if (format == 8)
+        return std::vector<std::uint8_t>(data, data + size);
+
+    WireWriter writer(order);
+    const std::size_t unit = format / 8;
+    for (std::size_t offset = 0; offset < size; offset += unit) {
+        if (format == 16) {
+            const auto value = static_cast<std::uint16_t>(data[offset]) |
+                (static_cast<std::uint16_t>(data[offset + 1]) << 8);
+            writer.u16(value);
+        }
+        else {
+            std::uint32_t value = 0;
+            for (unsigned index = 0; index < 4; ++index) {
+                value |= static_cast<std::uint32_t>(data[offset + index])
+                    << (index * 8);
+            }
+            writer.u32(value);
+        }
+    }
+    return writer.data();
+}
+
 bool
 cookies_equal(const std::vector<std::uint8_t> &left,
               const std::vector<std::uint8_t> &right) noexcept
@@ -461,8 +527,8 @@ Connection::handle_create_window(const RequestContext &context)
     WindowRecord window;
     window.id = *id;
     window.parent = *parent_id;
-    window.x = static_cast<std::int16_t>(*x);
-    window.y = static_cast<std::int16_t>(*y);
+    window.x = signed_word(*x);
+    window.y = signed_word(*y);
     window.width = *width;
     window.height = *height;
     window.border_width = *border_width;
@@ -689,6 +755,126 @@ Connection::handle_unmap_window(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_configure_window(const RequestContext &context)
+{
+    if (context.request.size() < 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto id = reader.u32();
+    const auto mask = reader.u16();
+    if (!id || !mask || !reader.skip(2))
+        return malformed("truncated ConfigureWindow request");
+    if ((*mask & ~std::uint16_t{0x007f}) != 0) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *mask);
+    }
+    const auto value_bytes = checked_multiply(
+        std::bitset<16>(*mask).count(), std::size_t{4});
+    const auto expected_size = value_bytes
+        ? checked_add(std::size_t{12}, *value_bytes)
+        : std::optional<std::size_t>{};
+    if (!expected_size || context.request.size() != *expected_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    auto *window = server_.window(*id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *id);
+
+    std::int16_t x = window->x;
+    std::int16_t y = window->y;
+    std::uint16_t width = window->width;
+    std::uint16_t height = window->height;
+    std::uint16_t border_width = window->border_width;
+    std::optional<std::uint32_t> sibling;
+    std::optional<std::uint8_t> stack_mode;
+    WireReader values(context.request.data() + 12,
+                      context.request.size() - 12, context.order);
+    for (unsigned bit = 0; bit < 7; ++bit) {
+        if ((*mask & (std::uint16_t{1} << bit)) == 0)
+            continue;
+        const auto value = values.u32();
+        if (!value)
+            return malformed("truncated ConfigureWindow value list");
+        switch (bit) {
+        case 0:
+            x = signed_word(static_cast<std::uint16_t>(*value));
+            break;
+        case 1:
+            y = signed_word(static_cast<std::uint16_t>(*value));
+            break;
+        case 2:
+            width = static_cast<std::uint16_t>(*value);
+            if (width == 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence);
+            break;
+        case 3:
+            height = static_cast<std::uint16_t>(*value);
+            if (height == 0)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence);
+            break;
+        case 4:
+            if (window->window_class == WindowClass::input_only)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence);
+            border_width = static_cast<std::uint16_t>(*value);
+            break;
+        case 5:
+            sibling = *value;
+            break;
+        case 6:
+            stack_mode = static_cast<std::uint8_t>(*value);
+            if (*stack_mode > 4)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *stack_mode);
+            break;
+        }
+    }
+    if (sibling && !stack_mode)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    if (sibling) {
+        const auto *sibling_window = server_.window(*sibling);
+        if (sibling_window == nullptr)
+            return send_error(context.order, bad_window, context.opcode,
+                              context.sequence, *sibling);
+        if (*sibling == *id || sibling_window->parent != window->parent)
+            return send_error(context.order, bad_match, context.opcode,
+                              context.sequence);
+    }
+    if (window->parent == 0)
+        return Result<void>::success();
+
+    window->x = x;
+    window->y = y;
+    window->width = width;
+    window->height = height;
+    window->border_width = border_width;
+    if (stack_mode) {
+        auto *parent = server_.window(window->parent);
+        auto &children = parent->children;
+        children.erase(std::remove(children.begin(), children.end(), *id),
+                       children.end());
+        auto position = children.end();
+        if (sibling) {
+            position = std::find(children.begin(), children.end(), *sibling);
+            if (*stack_mode == 0 || *stack_mode == 2 || *stack_mode == 4)
+                ++position;
+        }
+        else if (*stack_mode == 1 || *stack_mode == 3) {
+            position = children.begin();
+        }
+        children.insert(position, *id);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_geometry(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -818,6 +1004,296 @@ Connection::handle_get_atom_name(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_change_property(const RequestContext &context)
+{
+    if (context.request.size() < 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto window_id = reader.u32();
+    const auto property = reader.u32();
+    const auto type = reader.u32();
+    const auto format = reader.u8();
+    const bool fixed_fields = reader.skip(3);
+    const auto item_count = reader.u32();
+    if (!window_id || !property || !type || !format || !fixed_fields ||
+        !item_count) {
+        return malformed("truncated ChangeProperty request");
+    }
+    if (context.data > 2)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    if (*format != 8 && *format != 16 && *format != 32)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *format);
+
+    auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (!server_.atoms().name(*property))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *property);
+    if (!server_.atoms().name(*type))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *type);
+
+    const auto data_size = checked_multiply(
+        static_cast<std::size_t>(*item_count),
+        static_cast<std::size_t>(*format / 8));
+    const auto padded_size = data_size ? padded_to_four(*data_size)
+                                       : std::optional<std::size_t>{};
+    const auto expected_size = padded_size
+        ? checked_add(std::size_t{24}, *padded_size)
+        : std::optional<std::size_t>{};
+    if (!data_size || !padded_size || !expected_size ||
+        context.request.size() != *expected_size) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    const auto canonical = canonical_property_data(
+        context.request.data() + 24, *data_size, *format, context.order);
+    if (!canonical)
+        return malformed("misaligned ChangeProperty data");
+
+    PropertyValue updated{*type, *format, {}};
+    const auto existing = window->properties.find(*property);
+    if (existing != window->properties.end() && context.data != 0 &&
+        (existing->second.type != *type ||
+         existing->second.format != *format)) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    const std::size_t previous_size = existing == window->properties.end()
+        ? 0
+        : existing->second.data.size();
+    const auto combined_size = context.data == 0
+        ? std::optional<std::size_t>(canonical->size())
+        : checked_add(previous_size, canonical->size());
+    if (!combined_size || *combined_size > maximum_property_bytes)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    updated.data.reserve(*combined_size);
+    if (context.data == 1)
+        updated.data.insert(updated.data.end(), canonical->begin(),
+                            canonical->end());
+    if (context.data != 0 && existing != window->properties.end()) {
+        updated.data.insert(updated.data.end(), existing->second.data.begin(),
+                            existing->second.data.end());
+    }
+    if (context.data != 1)
+        updated.data.insert(updated.data.end(), canonical->begin(),
+                            canonical->end());
+
+    if (!server_.set_property(*window, *property, std::move(updated)))
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_delete_property(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto window_id = reader.u32();
+    const auto property = reader.u32();
+    if (!window_id || !property)
+        return malformed("truncated DeleteProperty request");
+    auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (!server_.atoms().name(*property))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *property);
+    server_.delete_property(*window, *property);
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_get_property(const RequestContext &context)
+{
+    if (context.request.size() != 24)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 20, context.order);
+    const auto window_id = reader.u32();
+    const auto property = reader.u32();
+    const auto requested_type = reader.u32();
+    const auto long_offset = reader.u32();
+    const auto long_length = reader.u32();
+    if (!window_id || !property || !requested_type || !long_offset ||
+        !long_length) {
+        return malformed("truncated GetProperty request");
+    }
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (!server_.atoms().name(*property))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *property);
+    if (*requested_type != 0 && !server_.atoms().name(*requested_type))
+        return send_error(context.order, bad_atom, context.opcode,
+                          context.sequence, *requested_type);
+
+    const auto found = window->properties.find(*property);
+    const PropertyValue *value = found == window->properties.end()
+        ? nullptr
+        : &found->second;
+    std::size_t offset = 0;
+    std::size_t returned_size = 0;
+    std::size_t bytes_after = 0;
+    bool matching_type = value != nullptr &&
+        (*requested_type == 0 || value->type == *requested_type);
+    if (value != nullptr) {
+        const auto byte_offset = checked_multiply(
+            static_cast<std::size_t>(*long_offset), std::size_t{4});
+        if (!byte_offset || *byte_offset > value->data.size())
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *long_offset);
+        offset = *byte_offset;
+        if (matching_type) {
+            const auto maximum_bytes = checked_multiply(
+                static_cast<std::size_t>(*long_length), std::size_t{4});
+            if (!maximum_bytes)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *long_length);
+            returned_size = std::min(*maximum_bytes,
+                                     value->data.size() - offset);
+            bytes_after = value->data.size() - offset - returned_size;
+        }
+        else {
+            bytes_after = value->data.size();
+        }
+    }
+
+    const std::uint8_t format = value == nullptr ? 0 : value->format;
+    const AtomId actual_type = value == nullptr ? 0 : value->type;
+    const std::size_t unit = format == 0 ? 1 : format / 8;
+    const auto encoded = matching_type && returned_size != 0
+        ? wire_property_data(value->data.data() + offset, returned_size,
+                             format, context.order)
+        : std::vector<std::uint8_t>{};
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(format);
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>((encoded.size() + 3) / 4));
+    reply.u32(actual_type);
+    reply.u32(static_cast<std::uint32_t>(bytes_after));
+    reply.u32(static_cast<std::uint32_t>(encoded.size() / unit));
+    reply.pad(12);
+    reply.bytes(encoded);
+    reply.pad_to_four();
+    auto queued = queue(reply.data());
+    if (queued && context.data != 0 && matching_type && bytes_after == 0)
+        server_.delete_property(*window, *property);
+    return queued;
+}
+
+Result<void>
+Connection::handle_list_properties(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto window_id = reader.u32();
+    if (!window_id)
+        return malformed("truncated ListProperties request");
+    const auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+    if (window->properties.size() > std::numeric_limits<std::uint16_t>::max())
+        return Result<void>::failure(ErrorCode::io,
+                                     "window property limit exceeded");
+
+    std::vector<AtomId> properties;
+    properties.reserve(window->properties.size());
+    for (const auto &property : window->properties)
+        properties.push_back(property.first);
+    std::sort(properties.begin(), properties.end());
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(static_cast<std::uint32_t>(properties.size()));
+    reply.u16(static_cast<std::uint16_t>(properties.size()));
+    reply.pad(22);
+    for (const auto property : properties)
+        reply.u32(property);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_translate_coordinates(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto source_id = reader.u32();
+    const auto destination_id = reader.u32();
+    const auto source_x = reader.u16();
+    const auto source_y = reader.u16();
+    if (!source_id || !destination_id || !source_x || !source_y)
+        return malformed("truncated TranslateCoordinates request");
+    if (server_.window(*source_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *source_id);
+    const auto *destination = server_.window(*destination_id);
+    if (destination == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *destination_id);
+
+    const auto source_origin = server_.absolute_position(*source_id);
+    const auto destination_origin = server_.absolute_position(*destination_id);
+    const auto signed_source_x = signed_word(*source_x);
+    const auto signed_source_y = signed_word(*source_y);
+    const std::int32_t x = source_origin.first + signed_source_x -
+        destination_origin.first;
+    const std::int32_t y = source_origin.second + signed_source_y -
+        destination_origin.second;
+    std::uint32_t child = 0;
+    for (auto iterator = destination->children.rbegin();
+         iterator != destination->children.rend(); ++iterator) {
+        const auto *candidate = server_.window(*iterator);
+        if (candidate != nullptr && candidate->mapped &&
+            x >= candidate->x && y >= candidate->y &&
+            x < candidate->x + candidate->width &&
+            y < candidate->y + candidate->height) {
+            child = candidate->id;
+            break;
+        }
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(1); // same screen
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(child);
+    reply.i16(static_cast<std::int16_t>(std::clamp<std::int32_t>(
+        x, std::numeric_limits<std::int16_t>::min(),
+        std::numeric_limits<std::int16_t>::max())));
+    reply.i16(static_cast<std::int16_t>(std::clamp<std::int32_t>(
+        y, std::numeric_limits<std::int16_t>::min(),
+        std::numeric_limits<std::int16_t>::max())));
+    reply.pad(16);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_input_focus(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -898,6 +1374,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_map_window;
         table[opcode_index(CoreOpcode::UnmapWindow)] =
             &Connection::handle_unmap_window;
+        table[opcode_index(CoreOpcode::ConfigureWindow)] =
+            &Connection::handle_configure_window;
         table[opcode_index(CoreOpcode::GetGeometry)] =
             &Connection::handle_get_geometry;
         table[opcode_index(CoreOpcode::QueryTree)] =
@@ -906,6 +1384,16 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_intern_atom;
         table[opcode_index(CoreOpcode::GetAtomName)] =
             &Connection::handle_get_atom_name;
+        table[opcode_index(CoreOpcode::ChangeProperty)] =
+            &Connection::handle_change_property;
+        table[opcode_index(CoreOpcode::DeleteProperty)] =
+            &Connection::handle_delete_property;
+        table[opcode_index(CoreOpcode::GetProperty)] =
+            &Connection::handle_get_property;
+        table[opcode_index(CoreOpcode::ListProperties)] =
+            &Connection::handle_list_properties;
+        table[opcode_index(CoreOpcode::TranslateCoordinates)] =
+            &Connection::handle_translate_coordinates;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryExtension)] =

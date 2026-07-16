@@ -73,10 +73,16 @@ private:
     Result<void> handle_destroy_window(const RequestContext &context);
     Result<void> handle_map_window(const RequestContext &context);
     Result<void> handle_unmap_window(const RequestContext &context);
+    Result<void> handle_configure_window(const RequestContext &context);
     Result<void> handle_get_geometry(const RequestContext &context);
     Result<void> handle_query_tree(const RequestContext &context);
     Result<void> handle_intern_atom(const RequestContext &context);
     Result<void> handle_get_atom_name(const RequestContext &context);
+    Result<void> handle_change_property(const RequestContext &context);
+    Result<void> handle_delete_property(const RequestContext &context);
+    Result<void> handle_get_property(const RequestContext &context);
+    Result<void> handle_list_properties(const RequestContext &context);
+    Result<void> handle_translate_coordinates(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);

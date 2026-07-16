@@ -7,6 +7,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace xmin::next {
@@ -17,10 +18,18 @@ constexpr std::uint32_t root_visual_id = 3;
 constexpr std::uint32_t client_resource_mask = 0x001fffff;
 constexpr std::size_t maximum_client_resources = 4096;
 constexpr std::size_t maximum_server_resources = 65536;
+constexpr std::size_t maximum_property_bytes = 1024U * 1024U;
+constexpr std::size_t maximum_server_property_bytes = 16U * 1024U * 1024U;
 
 enum class WindowClass : std::uint16_t {
     input_output = 1,
     input_only = 2,
+};
+
+struct PropertyValue {
+    AtomId type = 0;
+    std::uint8_t format = 0;
+    std::vector<std::uint8_t> data;
 };
 
 struct WindowRecord {
@@ -28,6 +37,7 @@ struct WindowRecord {
     std::uint32_t parent = 0;
     std::vector<std::uint32_t> children;
     std::unordered_map<std::uint32_t, std::uint32_t> event_masks;
+    std::unordered_map<AtomId, PropertyValue> properties;
     std::int16_t x = 0;
     std::int16_t y = 0;
     std::uint16_t width = 0;
@@ -67,10 +77,15 @@ public:
                                              std::uint32_t base) const;
     [[nodiscard]] bool resource_limit_reached(std::uint32_t owner) const;
     [[nodiscard]] bool add_window(WindowRecord window, std::uint32_t owner);
+    [[nodiscard]] bool set_property(WindowRecord &window, AtomId property,
+                                    PropertyValue value);
+    void delete_property(WindowRecord &window, AtomId property);
     void destroy_window(std::uint32_t id);
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
+    [[nodiscard]] std::pair<std::int32_t, std::int32_t>
+    absolute_position(std::uint32_t id) const;
 
 private:
     AtomTable atoms_;
@@ -78,6 +93,7 @@ private:
     std::unordered_map<std::uint32_t, WindowRecord> windows_;
     std::uint16_t width_;
     std::uint16_t height_;
+    std::size_t property_bytes_ = 0;
 };
 
 } // namespace xmin::next

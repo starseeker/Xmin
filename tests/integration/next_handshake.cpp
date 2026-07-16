@@ -347,13 +347,51 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    request.assign(28, 0);
+    request[0] = 12; // ConfigureWindow
+    put16(request, 2, 7, little);
+    put32(request, 4, child, little);
+    put16(request, 8, 0x000f, little); // x, y, width, height
+    put32(request, 12, 5, little);
+    put32(request, 16, 6, little);
+    put32(request, 20, 12, little);
+    put32(request, 24, 9, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 14; // GetGeometry after configure
+    put16(request, 2, 2, little);
+    put32(request, 4, child, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 17 ||
+        get16(reply, 12, little) != 5 || get16(reply, 14, little) != 6 ||
+        get16(reply, 16, little) != 12 || get16(reply, 18, little) != 9) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 40; // TranslateCoordinates(child -> root)
+    put16(request, 2, 4, little);
+    put32(request, 4, child, little);
+    put32(request, 8, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 18 || get32(reply, 8, little) != child ||
+        get16(reply, 12, little) != 7 || get16(reply, 14, little) != 8) {
+        return false;
+    }
+
+    request.assign(8, 0);
     request[0] = 4; // DestroyWindow
+    put16(request, 2, 2, little);
+    put32(request, 4, child, little);
     if (!write_all(descriptor, request))
         return false;
     request[0] = 15; // QueryTree(destroyed child)
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 3 ||
-        get16(reply, 2, little) != 17 || get32(reply, 4, little) != child) {
+        get16(reply, 2, little) != 20 || get32(reply, 4, little) != child) {
         return false;
     }
 
@@ -365,9 +403,102 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request.assign(4, 0);
     request[0] = 43; // GetInputFocus proves recovery
     put16(request, 2, 1, little);
-    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 19 &&
-        get32(reply, 8, little) == root_window;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 22 ||
+        get32(reply, 8, little) != root_window) {
+        return false;
+    }
+
+    request.assign(32, 0);
+    request[0] = 18; // ChangeProperty, replace two CARD32 values
+    request[1] = 0;
+    put16(request, 2, 8, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little); // INTEGER
+    request[16] = 32;
+    put32(request, 20, 2, little);
+    put32(request, 24, 0x11223344U, little);
+    put32(request, 28, 0xaabbccddU, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 20; // GetProperty
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little);
+    put32(request, 20, 2, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 40 ||
+        reply[0] != 1 || reply[1] != 32 ||
+        get16(reply, 2, little) != 24 || get32(reply, 8, little) != 19 ||
+        get32(reply, 12, little) != 0 || get32(reply, 16, little) != 2 ||
+        get32(reply, 32, little) != 0x11223344U ||
+        get32(reply, 36, little) != 0xaabbccddU) {
+        return false;
+    }
+
+    request.assign(28, 0);
+    request[0] = 18; // ChangeProperty, prepend one value
+    request[1] = 1;
+    put16(request, 2, 7, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little);
+    request[16] = 32;
+    put32(request, 20, 1, little);
+    put32(request, 24, 0x01020304U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 20; // partial GetProperty: skip prepended value
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little);
+    put32(request, 16, 1, little);
+    put32(request, 20, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        get16(reply, 2, little) != 26 || get32(reply, 12, little) != 4 ||
+        get32(reply, 16, little) != 1 ||
+        get32(reply, 32, little) != 0x11223344U) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = 21; // ListProperties
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) || reply.size() != 36 ||
+        get16(reply, 2, little) != 27 || get16(reply, 8, little) != 1 ||
+        get32(reply, 32, little) != atom) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 19; // DeleteProperty
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(24, 0);
+    request[0] = 20; // deleted property is absent
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, atom, little);
+    put32(request, 12, 19, little);
+    put32(request, 20, 1, little);
+    return write_all(descriptor, request) &&
+        read_variable_reply(descriptor, little, reply) && reply.size() == 32 &&
+        reply[0] == 1 && reply[1] == 0 &&
+        get16(reply, 2, little) == 29 && get32(reply, 8, little) == 0;
 }
 
 bool

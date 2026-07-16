@@ -71,6 +71,35 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
     return true;
 }
 
+bool
+ServerState::set_property(WindowRecord &candidate, AtomId property,
+                          PropertyValue value)
+{
+    if (value.data.size() > maximum_property_bytes)
+        return false;
+    const auto found = candidate.properties.find(property);
+    const std::size_t old_size = found == candidate.properties.end()
+        ? 0
+        : found->second.data.size();
+    if (property_bytes_ - old_size >
+        maximum_server_property_bytes - value.data.size()) {
+        return false;
+    }
+    property_bytes_ = property_bytes_ - old_size + value.data.size();
+    candidate.properties.insert_or_assign(property, std::move(value));
+    return true;
+}
+
+void
+ServerState::delete_property(WindowRecord &candidate, AtomId property)
+{
+    const auto found = candidate.properties.find(property);
+    if (found == candidate.properties.end())
+        return;
+    property_bytes_ -= found->second.data.size();
+    candidate.properties.erase(found);
+}
+
 void
 ServerState::destroy_window(std::uint32_t id)
 {
@@ -85,6 +114,8 @@ ServerState::destroy_window(std::uint32_t id)
         destroy_window(child);
 
     const std::uint32_t parent_id = found->second.parent;
+    for (const auto &property : found->second.properties)
+        property_bytes_ -= property.second.data.size();
     if (auto *parent = window(parent_id)) {
         parent->children.erase(
             std::remove(parent->children.begin(), parent->children.end(), id),
@@ -124,6 +155,20 @@ ServerState::all_event_masks(const WindowRecord &candidate) const
     for (const auto &selection : candidate.event_masks)
         masks |= selection.second;
     return masks;
+}
+
+std::pair<std::int32_t, std::int32_t>
+ServerState::absolute_position(std::uint32_t id) const
+{
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    const auto *candidate = window(id);
+    while (candidate != nullptr && candidate->parent != 0) {
+        x += candidate->x + candidate->border_width;
+        y += candidate->y + candidate->border_width;
+        candidate = window(candidate->parent);
+    }
+    return {x, y};
 }
 
 } // namespace xmin::next

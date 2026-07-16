@@ -411,6 +411,41 @@ create_child(int descriptor, bool little, std::uint32_t id)
     return write_all(descriptor, request);
 }
 
+bool
+change_root_property(int descriptor, bool little)
+{
+    std::vector<std::uint8_t> request(28);
+    request[0] = 18; // ChangeProperty
+    put16(request, 2, 7, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 9, little);   // CUT_BUFFER0
+    put32(request, 12, 19, little); // INTEGER
+    request[16] = 32;
+    put32(request, 20, 1, little);
+    put32(request, 24, 0x11223344U, little);
+    return write_all(descriptor, request);
+}
+
+bool
+check_root_property(int descriptor, bool little, std::uint16_t sequence)
+{
+    std::vector<std::uint8_t> request(24);
+    request[0] = 20; // GetProperty
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 9, little);   // CUT_BUFFER0
+    put32(request, 12, 19, little); // INTEGER
+    put32(request, 20, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+    std::vector<std::uint8_t> reply(36);
+    return read_exact(descriptor, reply) && reply[0] == 1 && reply[1] == 32 &&
+        get16(reply, 2, little) == sequence &&
+        get32(reply, 8, little) == 19 && get32(reply, 12, little) == 0 &&
+        get32(reply, 16, little) == 1 &&
+        get32(reply, 32, little) == 0x11223344U;
+}
+
 std::optional<std::vector<std::uint32_t>>
 query_root(int descriptor, bool little, std::uint16_t sequence)
 {
@@ -508,15 +543,19 @@ main(int argc, char **argv)
                     passed = passed && shared_tree &&
                         std::find(shared_tree->begin(), shared_tree->end(),
                                   *first_base) != shared_tree->end();
+                    passed = passed &&
+                        change_root_property(first_client.get(), native);
                     first_client = Fd();
+                    passed = passed &&
+                        check_root_property(second_client.get(), !native, 3);
                     auto after_disconnect = query_root(
-                        second_client.get(), !native, 3);
+                        second_client.get(), !native, 4);
                     if (after_disconnect &&
                         std::find(after_disconnect->begin(),
                                   after_disconnect->end(), *first_base) !=
                             after_disconnect->end()) {
                         after_disconnect = query_root(
-                            second_client.get(), !native, 4);
+                            second_client.get(), !native, 5);
                     }
                     passed = passed && after_disconnect &&
                         std::find(after_disconnect->begin(),
