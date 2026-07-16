@@ -369,6 +369,103 @@ main(void)
         goto cleanup;
     }
     free(event);
+    if (!checked(connection,
+                 xcb_warp_pointer_checked(
+                     connection, XCB_NONE, screen->root,
+                     0, 0, 0, 0,
+                     (int16_t) (screen->width_in_pixels - 2),
+                     (int16_t) (screen->height_in_pixels - 2)),
+                 "move pointer outside focus child")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    free(event);
+    event = poll_event_type(connection, XCB_MOTION_NOTIFY);
+    if (event == NULL) {
+        fprintf(stderr, "focus pointer setup motion failed\n");
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, screen->root,
+                     XCB_CURRENT_TIME),
+                 "prime root focus")) {
+        goto cleanup;
+    }
+    const uint32_t root_focus_mask =
+        event_mask | XCB_EVENT_MASK_FOCUS_CHANGE;
+    const uint32_t child_focus_mask =
+        child_event_mask | XCB_EVENT_MASK_FOCUS_CHANGE;
+    if (!checked(connection,
+                 xcb_change_window_attributes_checked(
+                     connection, screen->root, XCB_CW_EVENT_MASK,
+                     &root_focus_mask),
+                 "select root focus events") ||
+        !checked(connection,
+                 xcb_change_window_attributes_checked(
+                     connection, child, XCB_CW_EVENT_MASK,
+                     &child_focus_mask),
+                 "select child focus events")) {
+        goto cleanup;
+    }
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, child,
+                     XCB_CURRENT_TIME),
+                 "focus crossing child")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    xcb_focus_out_event_t *focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "root FocusOut routing failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child) {
+        fprintf(stderr, "child FocusIn routing failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, screen->root,
+                     XCB_CURRENT_TIME),
+                 "focus root")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child) {
+        fprintf(stderr, "child FocusOut routing failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root) {
+        fprintf(stderr, "root FocusIn routing failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
 
     xcb_test_compare_cursor_reply_t *cursor = xcb_test_compare_cursor_reply(
         connection,

@@ -229,6 +229,7 @@ enum class EventDelivery {
 enum class FocusUpdate {
     updated,
     ignored,
+    queue_full,
 };
 
 enum class PassiveGrabUpdate {
@@ -345,7 +346,7 @@ public:
         const PassiveGrabDomain &modifiers);
     [[nodiscard]] FocusUpdate set_input_focus(
         FocusKind kind, std::uint32_t window, std::uint8_t revert_to,
-        std::uint32_t time) noexcept;
+        std::uint32_t time);
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
@@ -396,6 +397,9 @@ private:
         std::uint16_t state, std::uint8_t mode,
         const ActiveGrab *grab,
         std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] EventDelivery append_focus_events(
+        const FocusState &from, const FocusState &to,
+        std::uint8_t mode, std::vector<PlannedEvent> &events) const;
     void refresh_modifier_button_mask() noexcept;
     void clear_selections_for_window(std::uint32_t window);
     void revert_focus_from(std::uint32_t window) noexcept;

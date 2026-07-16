@@ -563,7 +563,7 @@ ServerState::advance_time() noexcept
 FocusUpdate
 ServerState::set_input_focus(FocusKind kind, std::uint32_t window_id,
                              std::uint8_t revert_to,
-                             std::uint32_t time) noexcept
+                             std::uint32_t time)
 {
     const std::uint32_t effective_time = time == 0 ? current_time_ : time;
     const auto later_than = [](std::uint32_t left, std::uint32_t right) {
@@ -576,10 +576,18 @@ ServerState::set_input_focus(FocusKind kind, std::uint32_t window_id,
         earlier_than(effective_time, input_.focus.changed_at)) {
         return FocusUpdate::ignored;
     }
-    input_.focus.kind = kind;
-    input_.focus.window = kind == FocusKind::window ? window_id : 0;
-    input_.focus.changed_at = effective_time;
-    input_.focus.revert_to = revert_to;
+    FocusState next = input_.focus;
+    next.kind = kind;
+    next.window = kind == FocusKind::window ? window_id : 0;
+    next.changed_at = effective_time;
+    next.revert_to = revert_to;
+    std::vector<PlannedEvent> events;
+    if (append_focus_events(input_.focus, next, 0, events) ==
+            EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return FocusUpdate::queue_full;
+    }
+    input_.focus = next;
     return FocusUpdate::updated;
 }
 
@@ -1100,6 +1108,192 @@ ServerState::append_crossing_events(
             return EventDelivery::queue_full;
     }
     if (!add(7, 3, to, 0)) // EnterNotify, NotifyNonlinear
+        return EventDelivery::queue_full;
+    return delivered ? EventDelivery::delivered
+                     : EventDelivery::no_recipient;
+}
+
+EventDelivery
+ServerState::append_focus_events(
+    const FocusState &from, const FocusState &to, std::uint8_t mode,
+    std::vector<PlannedEvent> &events) const
+{
+    if (from.kind == to.kind &&
+        (from.kind != FocusKind::window || from.window == to.window)) {
+        return EventDelivery::no_recipient;
+    }
+
+    bool delivered = false;
+    const auto append = [&](std::uint8_t type, std::uint8_t detail,
+                            std::uint32_t destination) {
+        const auto *target = window(destination);
+        if (target == nullptr)
+            return EventDelivery::queue_full;
+        const std::size_t initial_size = events.size();
+        try {
+            FocusEvent event;
+            event.type = type;
+            event.detail = detail;
+            event.event = destination;
+            event.mode = mode;
+            for (const auto &selection : target->event_masks) {
+                if ((selection.second & (1U << 21)) != 0)
+                    events.emplace_back(selection.first, event);
+            }
+        }
+        catch (const std::bad_alloc &) {
+            events.resize(initial_size);
+            return EventDelivery::queue_full;
+        }
+        return events.size() == initial_size
+            ? EventDelivery::no_recipient
+            : EventDelivery::delivered;
+    };
+    const auto add = [&](std::uint8_t type, std::uint8_t detail,
+                         std::uint32_t destination) {
+        const EventDelivery result = append(type, detail, destination);
+        if (result == EventDelivery::delivered)
+            delivered = true;
+        return result != EventDelivery::queue_full;
+    };
+    const auto special_detail = [](FocusKind kind) {
+        return static_cast<std::uint8_t>(
+            kind == FocusKind::pointer_root ? 6 : 7);
+    };
+
+    if (from.kind != FocusKind::window &&
+        to.kind != FocusKind::window) {
+        if (!add(10, special_detail(from.kind), root_window_id) ||
+            !add(9, special_detail(to.kind), root_window_id)) {
+            return EventDelivery::queue_full;
+        }
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    if (to.kind != FocusKind::window) {
+        if (!add(10, 3, from.window)) // FocusOut, NotifyNonlinear
+            return EventDelivery::queue_full;
+        for (const auto *candidate = window(from.window);
+             candidate != nullptr && candidate->parent != 0;) {
+            candidate = window(candidate->parent);
+            if (candidate == nullptr || !add(10, 4, candidate->id))
+                return EventDelivery::queue_full;
+        }
+        if (!add(9, special_detail(to.kind), root_window_id))
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    if (from.kind != FocusKind::window) {
+        if (!add(10, special_detail(from.kind), root_window_id))
+            return EventDelivery::queue_full;
+        if (to.window != root_window_id) {
+            if (!add(9, 4, root_window_id))
+                return EventDelivery::queue_full;
+            std::vector<std::uint32_t> path;
+            try {
+                for (std::uint32_t current = to.window;
+                     current != root_window_id;) {
+                    path.push_back(current);
+                    const auto *candidate = window(current);
+                    if (candidate == nullptr)
+                        return EventDelivery::queue_full;
+                    current = candidate->parent;
+                }
+            }
+            catch (const std::bad_alloc &) {
+                return EventDelivery::queue_full;
+            }
+            std::reverse(path.begin(), path.end());
+            for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+                if (!add(9, 4, path[index]))
+                    return EventDelivery::queue_full;
+            }
+        }
+        if (!add(9, 3, to.window)) // FocusIn, NotifyNonlinear
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    if (is_descendant(to.window, from.window)) {
+        if (!add(10, 2, from.window)) // FocusOut, NotifyInferior
+            return EventDelivery::queue_full;
+        std::vector<std::uint32_t> path;
+        try {
+            for (std::uint32_t current = to.window;
+                 current != from.window;) {
+                path.push_back(current);
+                const auto *candidate = window(current);
+                if (candidate == nullptr)
+                    return EventDelivery::queue_full;
+                current = candidate->parent;
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        std::reverse(path.begin(), path.end());
+        for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+            if (!add(9, 1, path[index]))
+                return EventDelivery::queue_full;
+        }
+        if (!add(9, 0, to.window)) // FocusIn, NotifyAncestor
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    if (is_descendant(from.window, to.window)) {
+        if (!add(10, 0, from.window)) // FocusOut, NotifyAncestor
+            return EventDelivery::queue_full;
+        for (const auto *candidate = window(from.window);
+             candidate != nullptr && candidate->parent != to.window;) {
+            candidate = window(candidate->parent);
+            if (candidate == nullptr || !add(10, 1, candidate->id))
+                return EventDelivery::queue_full;
+        }
+        if (!add(9, 2, to.window)) // FocusIn, NotifyInferior
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
+
+    std::uint32_t common = from.window;
+    while (common != 0 && common != to.window &&
+           !is_descendant(to.window, common)) {
+        const auto *candidate = window(common);
+        common = candidate == nullptr ? 0 : candidate->parent;
+    }
+    if (common == 0 || !add(10, 3, from.window))
+        return EventDelivery::queue_full;
+    for (const auto *candidate = window(from.window);
+         candidate != nullptr && candidate->parent != common;) {
+        candidate = window(candidate->parent);
+        if (candidate == nullptr || !add(10, 4, candidate->id))
+            return EventDelivery::queue_full;
+    }
+    std::vector<std::uint32_t> path;
+    try {
+        for (std::uint32_t current = to.window; current != common;) {
+            path.push_back(current);
+            const auto *candidate = window(current);
+            if (candidate == nullptr)
+                return EventDelivery::queue_full;
+            current = candidate->parent;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    std::reverse(path.begin(), path.end());
+    for (std::size_t index = 0; index + 1 < path.size(); ++index) {
+        if (!add(9, 4, path[index]))
+            return EventDelivery::queue_full;
+    }
+    if (!add(9, 3, to.window))
         return EventDelivery::queue_full;
     return delivered ? EventDelivery::delivered
                      : EventDelivery::no_recipient;

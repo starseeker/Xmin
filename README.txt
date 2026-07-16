@@ -136,8 +136,10 @@ each recipient's sequence at enqueue time, and commits device state only after s
 delivery.  Motion and core pointer warps also share an atomic crossing-event planner for
 ancestor, descendant, and nonlinear window transitions.  Normal button delivery creates
 the protocol's automatic pointer grab, retains it across button chords, and generates
-typed grab/ungrab crossings on first press and final release.  Delayed scheduling, focus
-and lifecycle crossing events, and repeat timers remain later vertical slices.
+typed grab/ungrab crossings on first press and final release.  Explicit focus changes
+atomically plan typed ancestor, descendant, nonlinear, `PointerRoot`, and `None`
+notifications.  Delayed scheduling, `NotifyPointer` and lifecycle focus/crossing events,
+and repeat timers remain later vertical slices.
 Client-owned active pointer and keyboard grabs keep typed modes, masks, confinement,
 timestamps, cross-client exclusion, and disconnect/window teardown.  Passive key and
 button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with

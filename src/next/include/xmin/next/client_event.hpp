@@ -63,9 +63,17 @@ struct CrossingEvent {
     std::uint16_t sequence = 0;
 };
 
+struct FocusEvent {
+    std::uint8_t type = 0;
+    std::uint8_t detail = 0;
+    std::uint32_t event = 0;
+    std::uint8_t mode = 0;
+    std::uint16_t sequence = 0;
+};
+
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
-    CoreInputEvent, CrossingEvent>;
+    CoreInputEvent, CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next
 

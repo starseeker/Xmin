@@ -900,6 +900,148 @@ test_automatic_pointer_grab()
 }
 
 bool
+test_focus_events()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t sibling = owner | 3U;
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "focus-event client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 83);
+    const auto add_window = [&](std::uint32_t id, std::uint32_t parent_id,
+                                std::int16_t x, std::int16_t y,
+                                std::uint16_t width,
+                                std::uint16_t height) {
+        xmin::next::WindowRecord window;
+        window.id = id;
+        window.parent = parent_id;
+        window.x = x;
+        window.y = y;
+        window.width = width;
+        window.height = height;
+        if (!server.add_window(std::move(window), owner))
+            return false;
+        server.set_window_mapped(*server.window(id), true);
+        return true;
+    };
+    if (!expect(add_window(parent, xmin::next::root_window_id,
+                           5, 5, 40, 40) &&
+                    add_window(child, parent, 5, 5, 20, 20) &&
+                    add_window(sibling, xmin::next::root_window_id,
+                               60, 5, 30, 30) &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient,
+                "focus-event window setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, focus_mask);
+    server.window(parent)->event_masks.emplace(owner, focus_mask);
+    server.window(child)->event_masks.emplace(owner, focus_mask);
+    server.window(sibling)->event_masks.emplace(owner, focus_mask);
+
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == 0 && value->sequence == 83;
+        server.pop_event(owner);
+        return matches;
+    };
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 0, 0) ==
+                    xmin::next::FocusUpdate::updated &&
+                    focus(10, 6, xmin::next::root_window_id) &&
+                    focus(9, 4, xmin::next::root_window_id) &&
+                    focus(9, 4, parent) && focus(9, 3, child),
+                "PointerRoot-to-window focus path is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, sibling, 0, 0) ==
+                    xmin::next::FocusUpdate::updated &&
+                    focus(10, 3, child) && focus(10, 4, parent) &&
+                    focus(9, 3, sibling),
+                "nonlinear focus path is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 0, 0) ==
+                    xmin::next::FocusUpdate::updated &&
+                    focus(10, 3, sibling) && focus(9, 4, parent) &&
+                    focus(9, 3, child),
+                "reverse nonlinear focus path is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window,
+                    xmin::next::root_window_id, 0, 0) ==
+                    xmin::next::FocusUpdate::updated &&
+                    focus(10, 0, child) && focus(10, 1, parent) &&
+                    focus(9, 2, xmin::next::root_window_id),
+                "ancestor focus path is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::none, 0, 0, 0) ==
+                    xmin::next::FocusUpdate::updated &&
+                    focus(10, 3, xmin::next::root_window_id) &&
+                    focus(9, 7, xmin::next::root_window_id) &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::pointer_root, 0, 0, 0) ==
+                        xmin::next::FocusUpdate::updated &&
+                    focus(10, 7, xmin::next::root_window_id) &&
+                    focus(9, 6, xmin::next::root_window_id) &&
+                    !server.has_pending_event(owner),
+                "None/PointerRoot focus path is wrong")) {
+        return false;
+    }
+    xmin::next::ClientMessageEvent message;
+    message.window = sibling;
+    for (std::size_t count = 0;
+         count + 1 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        sibling, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "focus queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 0, 0) ==
+                    xmin::next::FocusUpdate::queue_full &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::pointer_root,
+                "partial focus path escaped an atomic queue failure")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *event = server.next_event(owner);
+        if (!expect(event != nullptr &&
+                        std::holds_alternative<xmin::next::ClientMessageEvent>(
+                            *event),
+                    "queue failure left a partial focus event")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 1 == xmin::next::maximum_pending_events_per_client,
+        "focus queue failure changed the preexisting event count");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -1206,6 +1348,7 @@ main()
             test_input_routing() &&
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
+            test_focus_events() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

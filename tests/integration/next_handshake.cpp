@@ -1950,9 +1950,42 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 2, 3, little);
     put32(request, 4, root_window, little);
     put32(request, 8, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 20) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 42; // SetInputFocus(root), before focus event selection
+    put16(request, 2, 3, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    const std::uint32_t focus_event_mask =
+        crossing_motion_mask | (1U << 21);
+    request.assign(16, 0);
+    request[0] = 2; // ChangeWindowAttributes(root)
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, 1U << 11, little);
+    put32(request, 12, focus_event_mask, little);
+    if (!write_all(descriptor, request))
+        return false;
+    put32(request, 4, child, little); // ChangeWindowAttributes(child)
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(12, 0);
+    request[0] = 42; // SetInputFocus(child)
+    put16(request, 2, 3, little);
+    put32(request, 4, child, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && reply[1] == 1 &&
-        get16(reply, 2, little) == 20;
+        reply[0] == 10 && reply[1] == 2 &&
+        get16(reply, 2, little) == 24 &&
+        get32(reply, 4, little) == root_window && reply[8] == 0 &&
+        read_reply(descriptor, reply) && reply[0] == 9 && reply[1] == 0 &&
+        get16(reply, 2, little) == 24 &&
+        get32(reply, 4, little) == child && reply[8] == 0;
 }
 
 bool

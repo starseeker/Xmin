@@ -408,22 +408,32 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
-    const auto &crossing = std::get<CrossingEvent>(event);
-    writer.u8(crossing.type);
-    writer.u8(crossing.detail);
-    writer.u16(crossing.sequence);
-    writer.u32(crossing.time);
-    writer.u32(crossing.root);
-    writer.u32(crossing.event);
-    writer.u32(crossing.child);
-    writer.i16(crossing.root_x);
-    writer.i16(crossing.root_y);
-    writer.i16(crossing.event_x);
-    writer.i16(crossing.event_y);
-    writer.u16(crossing.state);
-    writer.u8(crossing.mode);
-    writer.u8((crossing.same_screen ? 1U : 0U) |
-              (crossing.focus ? 2U : 0U));
+    if (const auto *crossing = std::get_if<CrossingEvent>(&event)) {
+        writer.u8(crossing->type);
+        writer.u8(crossing->detail);
+        writer.u16(crossing->sequence);
+        writer.u32(crossing->time);
+        writer.u32(crossing->root);
+        writer.u32(crossing->event);
+        writer.u32(crossing->child);
+        writer.i16(crossing->root_x);
+        writer.i16(crossing->root_y);
+        writer.i16(crossing->event_x);
+        writer.i16(crossing->event_y);
+        writer.u16(crossing->state);
+        writer.u8(crossing->mode);
+        writer.u8((crossing->same_screen ? 1U : 0U) |
+                  (crossing->focus ? 2U : 0U));
+        return writer.data();
+    }
+
+    const auto &focus = std::get<FocusEvent>(event);
+    writer.u8(focus.type);
+    writer.u8(focus.detail);
+    writer.u16(focus.sequence);
+    writer.u32(focus.event);
+    writer.u8(focus.mode);
+    writer.pad(23);
     return writer.data();
 }
 
@@ -2621,9 +2631,12 @@ Connection::handle_set_input_focus(const RequestContext &context)
                               context.sequence);
         }
     }
-    static_cast<void>(server_.set_input_focus(
-        kind, *focus_id, context.data, *time));
-    return Result<void>::success();
+    const auto updated = server_.set_input_focus(
+        kind, *focus_id, context.data, *time);
+    if (updated == FocusUpdate::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
