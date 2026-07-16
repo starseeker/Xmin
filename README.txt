@@ -114,7 +114,8 @@ properties support replace/prepend/append, partial reads, listing, deletion, and
 canonical 8/16/32-bit storage across clients of opposite byte order.  Atomic
 property-list rotation preserves typed payload buffers and supports signed deltas;
 framebuffer-compatible best-size queries clamp cursors and round short tile/stipple
-widths.  A bounded
+widths.  A typed input snapshot starts the pointer at the legacy-compatible screen
+center and answers pointer, empty motion-history, and key-state queries.  A bounded
 four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and

@@ -9,6 +9,7 @@
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
+#include <array>
 #include <cerrno>
 #include <cstdint>
 #include <fcntl.h>
@@ -145,6 +146,13 @@ test_shared_server_state()
     xmin::next::ServerState server(320, 240);
     if (!expect(server.window(xmin::next::root_window_id) != nullptr,
                 "server root window is missing") ||
+        !expect(server.input().pointer_x == 160 &&
+                    server.input().pointer_y == 120 &&
+                    server.input().modifier_button_mask == 0,
+                "input snapshot did not initialize at screen center") ||
+        !expect(server.input().pressed_keys ==
+                    std::array<std::uint8_t, 32>{},
+                "input snapshot initialized with pressed keys") ||
         !expect(server.valid_client_resource(first_owner, first_owner),
                 "valid first client XID was rejected") ||
         !expect(!server.valid_client_resource(second_owner, first_owner),

@@ -132,6 +132,9 @@ main(void)
     xcb_query_colors_reply_t *queried_color = NULL;
     xcb_get_image_reply_t *image = NULL;
     xcb_query_best_size_reply_t *best_size = NULL;
+    xcb_query_pointer_reply_t *pointer = NULL;
+    xcb_get_motion_events_reply_t *motion = NULL;
+    xcb_query_keymap_reply_t *keymap = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
@@ -317,7 +320,7 @@ main(void)
     if (!checked(connection,
                  xcb_create_window_checked(
                      connection, screen->root_depth, parent, screen->root,
-                     2, 3, 40, 30, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
+                     2, 3, 60, 50, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
                      screen->root_visual, XCB_CW_EVENT_MASK, &event_mask),
                  "Create parent window") ||
         !checked(connection,
@@ -383,6 +386,44 @@ main(void)
         best_size->width != screen->width_in_pixels ||
         best_size->height != screen->height_in_pixels) {
         goto cleanup;
+    }
+
+    stage = "querying the initial input snapshot";
+    pointer = xcb_query_pointer_reply(
+        connection, xcb_query_pointer(connection, screen->root), &error);
+    if (error != NULL || pointer == NULL || !pointer->same_screen ||
+        pointer->root != screen->root || pointer->child != parent ||
+        pointer->root_x != screen->width_in_pixels / 2 ||
+        pointer->root_y != screen->height_in_pixels / 2 ||
+        pointer->win_x != pointer->root_x ||
+        pointer->win_y != pointer->root_y || pointer->mask != 0) {
+        goto cleanup;
+    }
+    free(pointer);
+    pointer = xcb_query_pointer_reply(
+        connection, xcb_query_pointer(connection, child), &error);
+    motion = xcb_get_motion_events_reply(
+        connection,
+        xcb_get_motion_events(connection, screen->root, XCB_CURRENT_TIME,
+                              XCB_CURRENT_TIME),
+        &error);
+    keymap = xcb_query_keymap_reply(
+        connection, xcb_query_keymap(connection), &error);
+    if (error != NULL || pointer == NULL || !pointer->same_screen ||
+        pointer->root != screen->root || pointer->child != XCB_NONE ||
+        pointer->root_x != screen->width_in_pixels / 2 ||
+        pointer->root_y != screen->height_in_pixels / 2 ||
+        pointer->win_x != pointer->root_x - translated->dst_x ||
+        pointer->win_y != pointer->root_y - translated->dst_y ||
+        pointer->mask != 0 || motion == NULL ||
+        xcb_get_motion_events_events_length(motion) != 0 || keymap == NULL) {
+        goto cleanup;
+    }
+    {
+        static const uint8_t clear_keymap[32] = { 0 };
+
+        if (memcmp(keymap->keys, clear_keymap, sizeof(clear_keymap)) != 0)
+            goto cleanup;
     }
 
     stage = "copying pixmap pixels into a window";
@@ -804,6 +845,9 @@ cleanup:
         xcb_flush(connection);
     }
     free(error);
+    free(keymap);
+    free(motion);
+    free(pointer);
     free(best_size);
     free(image);
     free(queried_color);

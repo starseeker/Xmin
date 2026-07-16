@@ -6,6 +6,7 @@
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/surface.hpp"
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -95,6 +96,13 @@ struct SelectionRecord {
     std::uint32_t window = 0;
     std::uint32_t client = 0;
     std::uint32_t changed_at = 0;
+};
+
+struct InputState {
+    std::int32_t pointer_x = 0;
+    std::int32_t pointer_y = 0;
+    std::uint16_t modifier_button_mask = 0;
+    std::array<std::uint8_t, 32> pressed_keys{};
 };
 
 enum class SelectionUpdate {
@@ -195,6 +203,8 @@ public:
     {
         return server_grab_owner_;
     }
+    [[nodiscard]] InputState &input() noexcept { return input_; }
+    [[nodiscard]] const InputState &input() const noexcept { return input_; }
     void disconnect_client(std::uint32_t owner);
     [[nodiscard]] std::uint8_t map_state(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t all_event_masks(const WindowRecord &window) const;
@@ -219,6 +229,7 @@ private:
     std::uint32_t current_time_ = 1;
     std::uint32_t installed_colormap_ = default_colormap_id;
     std::uint32_t server_grab_owner_ = 0;
+    InputState input_;
     bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;

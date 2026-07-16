@@ -101,6 +101,8 @@ private:
     Result<void> handle_send_event(const RequestContext &context);
     Result<void> handle_grab_server(const RequestContext &context);
     Result<void> handle_ungrab_server(const RequestContext &context);
+    Result<void> handle_query_pointer(const RequestContext &context);
+    Result<void> handle_get_motion_events(const RequestContext &context);
     Result<void> handle_translate_coordinates(const RequestContext &context);
     Result<void> handle_create_pixmap(const RequestContext &context);
     Result<void> handle_free_pixmap(const RequestContext &context);
@@ -139,6 +141,7 @@ private:
     Result<void> handle_lookup_color(const RequestContext &context);
     Result<void> handle_query_best_size(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
+    Result<void> handle_query_keymap(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
     Result<void> handle_no_operation(const RequestContext &context);

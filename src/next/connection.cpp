@@ -80,6 +80,14 @@ signed_dword(std::uint32_t value) noexcept
             : widened - (std::int64_t{1} << 32));
 }
 
+std::int16_t
+wire_coordinate(std::int32_t value) noexcept
+{
+    return static_cast<std::int16_t>(std::clamp<std::int32_t>(
+        value, std::numeric_limits<std::int16_t>::min(),
+        std::numeric_limits<std::int16_t>::max()));
+}
+
 bool
 valid_clip_order(const std::vector<Rectangle> &rectangles,
                  std::uint8_t ordering) noexcept
@@ -1863,6 +1871,92 @@ Connection::handle_ungrab_server(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_query_pointer(const RequestContext &context)
+{
+    if (context.request.size() != 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto window_id = reader.u32();
+    if (!window_id)
+        return malformed("truncated QueryPointer request");
+    const auto *window = server_.window(*window_id);
+    if (window == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+
+    const auto &input = server_.input();
+    const auto origin = server_.absolute_position(*window_id);
+    std::uint32_t child = 0;
+    const std::int64_t window_right = origin.first + window->width;
+    const std::int64_t window_bottom = origin.second + window->height;
+    if (server_.map_state(window->id) == 2 &&
+        input.pointer_x >= origin.first && input.pointer_x < window_right &&
+        input.pointer_y >= origin.second && input.pointer_y < window_bottom) {
+        for (auto iterator = window->children.rbegin();
+             iterator != window->children.rend(); ++iterator) {
+            const auto *candidate = server_.window(*iterator);
+            if (candidate == nullptr || server_.map_state(candidate->id) != 2)
+                continue;
+            const auto child_origin = server_.absolute_position(candidate->id);
+            const std::int64_t border = candidate->border_width;
+            const std::int64_t left = child_origin.first - border;
+            const std::int64_t top = child_origin.second - border;
+            const std::int64_t right = child_origin.first + candidate->width +
+                border;
+            const std::int64_t bottom = child_origin.second +
+                candidate->height + border;
+            if (input.pointer_x >= left && input.pointer_x < right &&
+                input.pointer_y >= top && input.pointer_y < bottom) {
+                child = candidate->id;
+                break;
+            }
+        }
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(1); // same screen
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(root_window_id);
+    reply.u32(child);
+    reply.i16(wire_coordinate(input.pointer_x));
+    reply.i16(wire_coordinate(input.pointer_y));
+    reply.i16(wire_coordinate(input.pointer_x - origin.first));
+    reply.i16(wire_coordinate(input.pointer_y - origin.second));
+    reply.u16(input.modifier_button_mask);
+    reply.pad(6);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_get_motion_events(const RequestContext &context)
+{
+    if (context.request.size() != 16)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 12, context.order);
+    const auto window_id = reader.u32();
+    const auto start = reader.u32();
+    const auto stop = reader.u32();
+    if (!window_id || !start || !stop)
+        return malformed("truncated GetMotionEvents request");
+    if (server_.window(*window_id) == nullptr)
+        return send_error(context.order, bad_window, context.opcode,
+                          context.sequence, *window_id);
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.u32(0); // no retained motion history
+    reply.pad(20);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_translate_coordinates(const RequestContext &context)
 {
     if (context.request.size() != 16)
@@ -1910,12 +2004,8 @@ Connection::handle_translate_coordinates(const RequestContext &context)
     reply.u16(context.sequence);
     reply.u32(0);
     reply.u32(child);
-    reply.i16(static_cast<std::int16_t>(std::clamp<std::int32_t>(
-        x, std::numeric_limits<std::int16_t>::min(),
-        std::numeric_limits<std::int16_t>::max())));
-    reply.i16(static_cast<std::int16_t>(std::clamp<std::int32_t>(
-        y, std::numeric_limits<std::int16_t>::min(),
-        std::numeric_limits<std::int16_t>::max())));
+    reply.i16(wire_coordinate(x));
+    reply.i16(wire_coordinate(y));
     reply.pad(16);
     return queue(reply.data());
 }
@@ -3356,6 +3446,22 @@ Connection::handle_get_input_focus(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_query_keymap(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(0);
+    reply.u16(context.sequence);
+    reply.u32(2);
+    for (const auto byte : server_.input().pressed_keys)
+        reply.u8(byte);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_query_extension(const RequestContext &context)
 {
     if (context.request.size() < 8)
@@ -3460,6 +3566,10 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_grab_server;
         table[opcode_index(CoreOpcode::UngrabServer)] =
             &Connection::handle_ungrab_server;
+        table[opcode_index(CoreOpcode::QueryPointer)] =
+            &Connection::handle_query_pointer;
+        table[opcode_index(CoreOpcode::GetMotionEvents)] =
+            &Connection::handle_get_motion_events;
         table[opcode_index(CoreOpcode::TranslateCoordinates)] =
             &Connection::handle_translate_coordinates;
         table[opcode_index(CoreOpcode::CreatePixmap)] =
@@ -3530,6 +3640,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_query_best_size;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
+        table[opcode_index(CoreOpcode::QueryKeymap)] =
+            &Connection::handle_query_keymap;
         table[opcode_index(CoreOpcode::QueryExtension)] =
             &Connection::handle_query_extension;
         table[opcode_index(CoreOpcode::ListExtensions)] =

@@ -12,6 +12,9 @@ namespace xmin::next {
 ServerState::ServerState(std::uint16_t width, std::uint16_t height)
     : width_(width), height_(height)
 {
+    input_.pointer_x = width / 2;
+    input_.pointer_y = height / 2;
+
     WindowRecord root;
     root.id = root_window_id;
     root.width = width;

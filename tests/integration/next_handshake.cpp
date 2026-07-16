@@ -1249,11 +1249,53 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     if (!write_all(descriptor, request))
         return false;
 
+    request.assign(8, 0);
+    request[0] = 38; // QueryPointer starts at screen center
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 99 ||
+        get32(reply, 8, little) != root_window ||
+        get32(reply, 12, little) != 0 ||
+        get16(reply, 16, little) != 160 ||
+        get16(reply, 18, little) != 120 ||
+        get16(reply, 20, little) != 160 ||
+        get16(reply, 22, little) != 120 ||
+        get16(reply, 24, little) != 0) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 39; // no motion history before input is injected
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 32 || reply[0] != 1 ||
+        get16(reply, 2, little) != 100 || get32(reply, 8, little) != 0) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = 44; // QueryKeymap starts clear
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 ||
+        get16(reply, 2, little) != 101 || get32(reply, 4, little) != 2) {
+        return false;
+    }
+    for (std::size_t index = 8; index < reply.size(); ++index) {
+        if (reply[index] != 0)
+            return false;
+    }
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 99;
+        reply[0] == 1 && get16(reply, 2, little) == 102;
 }
 
 bool
