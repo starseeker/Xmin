@@ -83,6 +83,11 @@ and cursor notifications followed immediately by reply-producing requests, curso
 names/replacement/visibility, save-set validation, pointer barriers, disconnect mode,
 typed resource cleanup, exact extension errors, and raw native/opposite-endian region
 and barrier coverage,
+all RANDR 1.6 opcodes through a generated-libxcb oracle against both servers,
+including screen resources and dynamic resize, output/CRTC/mode lifecycle,
+properties and pending values, gamma, transforms, panning, primary output, monitor
+topology, exact extension errors, an explicitly empty provider/lease profile, and
+raw native/opposite-endian 1.0/1.6 framing,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

@@ -5,6 +5,8 @@ add_library(xmin_next_core STATIC
   connection.cpp
   cursor_protocol.cpp
   display_socket.cpp
+  property_data.cpp
+  randr_protocol.cpp
   render.cpp
   render_protocol.cpp
   region.cpp

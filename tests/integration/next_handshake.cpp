@@ -272,7 +272,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 8> extensions{{
+    constexpr std::array<std::string_view, 9> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -281,6 +281,7 @@ extension_list_payload()
         "SYNC",
         "RENDER",
         "XFIXES",
+        "RANDR",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -298,7 +299,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 8 && get16(reply, 2, little) == sequence &&
+        reply[1] == 9 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3400,6 +3401,187 @@ check_xtest(int descriptor, bool little, std::uint32_t resource_base)
 }
 
 bool
+check_randr(int descriptor, bool little)
+{
+    constexpr std::uint8_t randr_opcode = 136;
+    constexpr std::uint8_t randr_event = 69;
+    constexpr std::uint8_t randr_error = 138;
+    constexpr std::uint32_t crtc_id = 0x200;
+    constexpr std::uint32_t output_id = 0x201;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "RANDR", 1, randr_opcode,
+                         reply, randr_event, randr_error)) {
+        return false;
+    }
+    request.assign(12, 0);
+    request[0] = randr_opcode;
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little);
+    put32(request, 8, 6, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 2 ||
+        get32(reply, 8, little) != 1 || get32(reply, 12, little) != 6) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = randr_opcode;
+    request[1] = 25; // GetScreenResourcesCurrent
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() < 80 || reply[0] != 1 ||
+        get16(reply, 2, little) != 3 || get16(reply, 16, little) != 1 ||
+        get16(reply, 18, little) != 1 || get16(reply, 20, little) != 1 ||
+        get32(reply, 32, little) != crtc_id ||
+        get32(reply, 36, little) != output_id ||
+        get32(reply, 40, little) == 0) {
+        return false;
+    }
+    const std::uint16_t width = get16(reply, 44, little);
+    const std::uint16_t height = get16(reply, 46, little);
+    const std::uint32_t config_timestamp = get32(reply, 12, little);
+
+    request.assign(12, 0);
+    request[0] = randr_opcode;
+    request[1] = 9; // GetOutputInfo (36-byte fixed reply framing)
+    put16(request, 2, 3, little);
+    put32(request, 4, output_id, little);
+    put32(request, 8, config_timestamp, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 52 || reply[0] != 1 ||
+        get16(reply, 2, little) != 4 || get32(reply, 12, little) != crtc_id ||
+        reply[24] != 0 || get16(reply, 28, little) != 1 ||
+        get16(reply, 30, little) != 1 || get16(reply, 34, little) != 6) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = randr_opcode;
+    request[1] = 20; // GetCrtcInfo
+    put16(request, 2, 3, little);
+    put32(request, 4, crtc_id, little);
+    put32(request, 8, config_timestamp, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 ||
+        get16(reply, 2, little) != 5 || get16(reply, 16, little) != width ||
+        get16(reply, 18, little) != height || get32(reply, 20, little) == 0 ||
+        get16(reply, 28, little) != 1 || get32(reply, 32, little) != output_id ||
+        get32(reply, 36, little) != output_id) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = randr_opcode;
+    request[1] = 9; // malformed GetOutputInfo
+    put16(request, 2, 2, little);
+    put32(request, 4, output_id, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 16 ||
+        get16(reply, 2, little) != 6 || get16(reply, 8, little) != 9) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = randr_opcode;
+    request[1] = 9; // invalid output
+    put16(request, 2, 3, little);
+    put32(request, 4, 0xdeadbeefU, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != randr_error ||
+        get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != 0xdeadbeefU) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = randr_opcode;
+    request[1] = 32; // provider graph is deliberately empty
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 8 ||
+        get16(reply, 12, little) != 0) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = randr_opcode; // negotiate the legacy 1.0 wire contract
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 9 ||
+        get32(reply, 8, little) != 1 || get32(reply, 12, little) != 0) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = randr_opcode;
+    request[1] = 5; // 1.0 GetScreenInfo omits refresh-rate data
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 1 ||
+        get16(reply, 2, little) != 10 || get32(reply, 4, little) != 2 ||
+        get16(reply, 30, little) != 0) {
+        return false;
+    }
+
+    request.assign(24, 0);
+    request[0] = randr_opcode;
+    request[1] = 2; // the 1.1 layout is invalid after a 1.0 negotiation
+    put16(request, 2, 6, little);
+    put32(request, 4, root_window, little);
+    put32(request, 12, config_timestamp, little);
+    put16(request, 18, 1, little);
+    put16(request, 20, 60, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 16 ||
+        get16(reply, 2, little) != 11) {
+        return false;
+    }
+
+    request.resize(20);
+    put16(request, 2, 5, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 12) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = randr_opcode;
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little);
+    put32(request, 8, 6, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 13 &&
+        get32(reply, 8, little) == 1 && get32(reply, 12, little) == 6;
+}
+
+bool
+run_randr_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_randr(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_shape_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3591,6 +3773,11 @@ main(int argc, char **argv)
     if (!run_xfixes_case(argv[1], native) ||
         !run_xfixes_case(argv[1], !native)) {
         std::cerr << "XFIXES extension case failed\n";
+        return 1;
+    }
+    if (!run_randr_case(argv[1], native) ||
+        !run_randr_case(argv[1], !native)) {
+        std::cerr << "RANDR extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

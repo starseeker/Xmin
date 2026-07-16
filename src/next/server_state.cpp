@@ -93,6 +93,51 @@ wire_size(std::uint32_t value) noexcept
         value, std::numeric_limits<std::uint16_t>::max()));
 }
 
+std::uint32_t
+screen_millimetres(std::uint16_t pixels) noexcept
+{
+    const auto tenths = static_cast<std::uint32_t>(pixels) * 254U;
+    return (tenths + 480U) / 960U;
+}
+
+void
+update_automatic_randr_monitors(RandrState &state,
+                                std::uint16_t screen_width,
+                                std::uint16_t screen_height)
+{
+    const auto mode = state.modes.find(state.current_mode);
+    for (auto &entry : state.monitors) {
+        auto &monitor = entry.second;
+        if (!monitor.automatic)
+            continue;
+        if (mode == state.modes.end()) {
+            monitor.outputs.clear();
+            monitor.x = 0;
+            monitor.y = 0;
+            monitor.width = 0;
+            monitor.height = 0;
+            monitor.millimetre_width = 0;
+            monitor.millimetre_height = 0;
+            continue;
+        }
+        monitor.outputs = {randr_output_id};
+        monitor.x = state.crtc_x;
+        monitor.y = state.crtc_y;
+        monitor.width = mode->second.width;
+        monitor.height = mode->second.height;
+        monitor.millimetre_width = screen_width == 0
+            ? 0
+            : static_cast<std::uint32_t>(
+                  static_cast<std::uint64_t>(mode->second.width) *
+                  state.millimetre_width / screen_width);
+        monitor.millimetre_height = screen_height == 0
+            ? 0
+            : static_cast<std::uint32_t>(
+                  static_cast<std::uint64_t>(mode->second.height) *
+                  state.millimetre_height / screen_height);
+    }
+}
+
 bool
 sync_trigger_fired(const SyncTrigger &trigger, std::int64_t old_value,
                    std::int64_t new_value) noexcept
@@ -282,6 +327,39 @@ ServerState::ServerState(std::uint16_t width, std::uint16_t height,
         resources_.insert(root_window_id, ResourceKind::window, 0));
     static_cast<void>(
         resources_.insert(default_colormap_id, ResourceKind::colormap, 0));
+
+    randr_.millimetre_width = screen_millimetres(width);
+    randr_.millimetre_height = screen_millimetres(height);
+    RandrModeInfo initial_mode;
+    initial_mode.id = randr_initial_mode_id;
+    initial_mode.width = width;
+    initial_mode.height = height;
+    initial_mode.dot_clock = static_cast<std::uint32_t>(
+        std::min<std::uint64_t>(
+            static_cast<std::uint64_t>(width) * height * 60U,
+            std::numeric_limits<std::uint32_t>::max()));
+    initial_mode.hsync_start = width;
+    initial_mode.hsync_end = width;
+    initial_mode.htotal = width;
+    initial_mode.vsync_start = height;
+    initial_mode.vsync_end = height;
+    initial_mode.vtotal = height;
+    initial_mode.name = std::to_string(width) + "x" + std::to_string(height);
+    initial_mode.built_in = true;
+    randr_.modes.emplace(initial_mode.id, std::move(initial_mode));
+    randr_.output_modes.push_back(randr_initial_mode_id);
+    randr_.gamma_red.resize(256);
+    for (std::size_t index = 0; index < randr_.gamma_red.size(); ++index) {
+        randr_.gamma_red[index] = static_cast<std::uint16_t>(index * 257U);
+    }
+    randr_.gamma_green = randr_.gamma_red;
+    randr_.gamma_blue = randr_.gamma_red;
+    const AtomId monitor_name = atoms_.intern("XMIN-0");
+    randr_.monitors.emplace(
+        monitor_name,
+        RandrMonitor{monitor_name, true, true, 0, 0, width, height,
+                     randr_.millimetre_width, randr_.millimetre_height,
+                     {randr_output_id}});
 }
 
 bool
@@ -1237,6 +1315,242 @@ ServerState::queue_events_atomically(const std::vector<PlannedEvent> &events)
         return false;
     }
     return true;
+}
+
+bool
+ServerState::append_randr_events(
+    const RandrState &candidate, std::uint16_t width,
+    std::uint16_t height, std::uint16_t notify_mask,
+    AtomId property, std::uint8_t property_status,
+    std::vector<PlannedEvent> &events) const
+{
+    const auto mode = candidate.modes.find(candidate.current_mode);
+    const std::uint16_t crtc_width = mode == candidate.modes.end()
+        ? 0
+        : mode->second.width;
+    const std::uint16_t crtc_height = mode == candidate.modes.end()
+        ? 0
+        : mode->second.height;
+    try {
+        for (const auto &subscription : candidate.subscriptions) {
+            const std::uint16_t selected = subscription.mask & notify_mask;
+            if ((selected & 1U) != 0) {
+                events.emplace_back(
+                    subscription.client,
+                    RandrScreenChangeNotifyEvent{
+                        candidate.timestamp, candidate.config_timestamp,
+                        subscription.window, width, height,
+                        wire_size(candidate.millimetre_width),
+                        wire_size(candidate.millimetre_height),
+                        candidate.rotation});
+            }
+            if ((selected & 2U) != 0) {
+                RandrNotifyEvent event;
+                event.subtype = 0;
+                event.timestamp = candidate.timestamp;
+                event.window = subscription.window;
+                event.crtc = randr_crtc_id;
+                event.mode = candidate.current_mode;
+                event.x = candidate.current_mode == 0 ? 0 : candidate.crtc_x;
+                event.y = candidate.current_mode == 0 ? 0 : candidate.crtc_y;
+                event.width = crtc_width;
+                event.height = crtc_height;
+                event.rotation = candidate.rotation;
+                events.emplace_back(subscription.client, std::move(event));
+            }
+            if ((selected & 4U) != 0) {
+                RandrNotifyEvent event;
+                event.subtype = 1;
+                event.timestamp = candidate.timestamp;
+                event.config_timestamp = candidate.config_timestamp;
+                event.window = subscription.window;
+                event.crtc = candidate.current_mode == 0 ? 0 : randr_crtc_id;
+                event.output = randr_output_id;
+                event.mode = candidate.current_mode;
+                event.rotation = candidate.rotation;
+                events.emplace_back(subscription.client, std::move(event));
+            }
+            if ((selected & 8U) != 0) {
+                RandrNotifyEvent event;
+                event.subtype = 2;
+                event.timestamp = current_time_;
+                event.window = subscription.window;
+                event.output = randr_output_id;
+                event.atom = property;
+                event.property_status = property_status;
+                events.emplace_back(subscription.client, std::move(event));
+            }
+            if ((selected & 64U) != 0) {
+                RandrNotifyEvent event;
+                event.subtype = 5;
+                event.timestamp = candidate.timestamp;
+                event.window = subscription.window;
+                events.emplace_back(subscription.client, std::move(event));
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+RandrUpdate
+ServerState::select_randr_input(std::uint32_t client,
+                                std::uint32_t window_id,
+                                std::uint16_t mask)
+{
+    RandrState candidate;
+    try {
+        candidate = randr_;
+        auto &subscriptions = candidate.subscriptions;
+        const auto existing = std::find_if(
+            subscriptions.begin(), subscriptions.end(),
+            [client, window_id](const RandrSubscription &subscription) {
+                return subscription.client == client &&
+                    subscription.window == window_id;
+            });
+        if (mask == 0) {
+            if (existing != subscriptions.end())
+                subscriptions.erase(existing);
+        }
+        else if (existing == subscriptions.end()) {
+            subscriptions.push_back({client, window_id, mask});
+        }
+        else {
+            existing->mask = mask;
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return RandrUpdate::resource_exhausted;
+    }
+
+    std::vector<PlannedEvent> events;
+    if ((mask & 1U) != 0) {
+        try {
+            events.emplace_back(
+                client,
+                RandrScreenChangeNotifyEvent{
+                    candidate.timestamp, candidate.config_timestamp,
+                    window_id, width_, height_,
+                    wire_size(candidate.millimetre_width),
+                    wire_size(candidate.millimetre_height),
+                    candidate.rotation});
+        }
+        catch (const std::bad_alloc &) {
+            return RandrUpdate::queue_full;
+        }
+    }
+    if (!queue_events_atomically(events))
+        return RandrUpdate::queue_full;
+    randr_ = std::move(candidate);
+    return RandrUpdate::updated;
+}
+
+RandrUpdate
+ServerState::commit_randr_state(RandrState candidate,
+                                std::uint16_t notify_mask,
+                                AtomId property,
+                                std::uint8_t property_status)
+{
+    try {
+        update_automatic_randr_monitors(candidate, width_, height_);
+    }
+    catch (const std::bad_alloc &) {
+        return RandrUpdate::resource_exhausted;
+    }
+    if ((notify_mask & ~8U) != 0)
+        candidate.timestamp = current_time_;
+    if ((notify_mask & (1U | 2U | 4U | 64U)) != 0)
+        candidate.config_timestamp = current_time_;
+    std::vector<PlannedEvent> events;
+    if (!append_randr_events(candidate, width_, height_, notify_mask,
+                             property, property_status, events) ||
+        !queue_events_atomically(events)) {
+        return RandrUpdate::queue_full;
+    }
+    randr_ = std::move(candidate);
+    return RandrUpdate::updated;
+}
+
+RandrUpdate
+ServerState::resize_randr_screen(RandrState candidate,
+                                 std::uint16_t width,
+                                 std::uint16_t height)
+{
+    auto *root = window(root_window_id);
+    if (width == 0 || height == 0 || root == nullptr || !root->surface ||
+        !composited_root_) {
+        return RandrUpdate::invalid;
+    }
+    try {
+        update_automatic_randr_monitors(candidate, width, height);
+    }
+    catch (const std::bad_alloc &) {
+        return RandrUpdate::resource_exhausted;
+    }
+    auto root_surface = Surface::create(width, height, 24);
+    auto composited_surface = Surface::create(width, height, 24);
+    if (!root_surface || !composited_surface)
+        return RandrUpdate::resource_exhausted;
+    root_surface->copy_from(*root->surface, 0, 0, 0, 0, width, height, 3,
+                            0xffffffffU);
+
+    const std::size_t old_bytes = root->surface->storage_bytes() +
+        composited_root_->storage_bytes();
+    const std::size_t new_bytes = root_surface->storage_bytes() +
+        composited_surface->storage_bytes();
+    if (new_bytes > maximum_server_surface_bytes ||
+        surface_budget_->bytes - old_bytes >
+            maximum_server_surface_bytes - new_bytes) {
+        return RandrUpdate::resource_exhausted;
+    }
+
+    const auto manage = [this](Surface surface)
+        -> std::shared_ptr<Surface> {
+        const std::size_t bytes = surface.storage_bytes();
+        surface_budget_->bytes += bytes;
+        try {
+            auto allocation = std::make_shared<ManagedSurface>(
+                std::move(surface), surface_budget_);
+            return std::shared_ptr<Surface>(allocation,
+                                            &allocation->surface);
+        }
+        catch (const std::bad_alloc &) {
+            surface_budget_->bytes -= bytes;
+            return {};
+        }
+    };
+    auto managed_root = manage(std::move(*root_surface));
+    if (!managed_root)
+        return RandrUpdate::resource_exhausted;
+    auto managed_composited = manage(std::move(*composited_surface));
+    if (!managed_composited)
+        return RandrUpdate::resource_exhausted;
+
+    candidate.timestamp = current_time_;
+    candidate.config_timestamp = current_time_;
+    std::vector<PlannedEvent> events;
+    constexpr std::uint16_t resize_notifications = 1U | 2U | 4U | 64U;
+    if (!append_randr_events(candidate, width, height,
+                             resize_notifications, 0, 0, events) ||
+        !queue_events_atomically(events)) {
+        return RandrUpdate::queue_full;
+    }
+
+    root->surface = std::move(managed_root);
+    composited_root_ = std::move(managed_composited);
+    root->width = width;
+    root->height = height;
+    width_ = width;
+    height_ = height;
+    input_.pointer_x = std::clamp<std::int32_t>(
+        input_.pointer_x, 0, static_cast<std::int32_t>(width) - 1);
+    input_.pointer_y = std::clamp<std::int32_t>(
+        input_.pointer_y, 0, static_cast<std::int32_t>(height) - 1);
+    randr_ = std::move(candidate);
+    invalidate_scene();
+    return RandrUpdate::updated;
 }
 
 bool
@@ -3560,6 +3874,13 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
                 return entry.window == id;
             }),
         xfixes_cursor_inputs_.end());
+    randr_.subscriptions.erase(
+        std::remove_if(
+            randr_.subscriptions.begin(), randr_.subscriptions.end(),
+            [id](const RandrSubscription &entry) {
+                return entry.window == id;
+            }),
+        randr_.subscriptions.end());
     for (auto save_set = save_sets_.begin(); save_set != save_sets_.end();) {
         auto &entries = save_set->second;
         entries.erase(
@@ -4101,6 +4422,13 @@ ServerState::disconnect_client(std::uint32_t owner)
                 return entry.client == owner;
             }),
         xfixes_cursor_inputs_.end());
+    randr_.subscriptions.erase(
+        std::remove_if(
+            randr_.subscriptions.begin(), randr_.subscriptions.end(),
+            [owner](const RandrSubscription &entry) {
+                return entry.client == owner;
+            }),
+        randr_.subscriptions.end());
     cursor_hide_counts_.erase(owner);
     sync_counter_waits_.erase(owner);
     sync_fence_waits_.erase(owner);

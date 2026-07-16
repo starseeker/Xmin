@@ -132,7 +132,7 @@ and applies parent/none/pointer-root reversion when windows become unavailable.
 The constexpr extension registry is the single source of stable opcodes, versions,
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
-SHAPE 1.1, SYNC 3.1, RENDER 0.11, and XFIXES 6.0.
+SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, and RANDR 1.6.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -162,6 +162,13 @@ the same canonical algebra as SHAPE, GC clips, window shapes, and RENDER picture
 clips.  Selection ownership changes and displayed-cursor changes atomically enqueue
 typed extension events before any later reply, while client teardown rescues save-set
 windows and removes owned regions, barriers, subscriptions, and visibility state.
+RANDR implements every 1.6 opcode as a bounded single-output software model.
+One typed output, CRTC, mode set, property store, transform, panning state, gamma
+ramp, primary output, and monitor topology drive atomic resize and notification
+transactions.  The legacy 1.0 and current wire layouts are both versioned per
+client and encode properties canonically across byte orders.  The provider graph
+is deliberately empty, every provider operation reports `BadProvider`, and DRM
+lease creation reports `BadMatch` instead of claiming unsupported hardware state.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

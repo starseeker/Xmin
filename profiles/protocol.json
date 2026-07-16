@@ -112,7 +112,8 @@
       "name": "RANDR",
       "xml": "randr.xml",
       "version": "1.6",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "Composite",

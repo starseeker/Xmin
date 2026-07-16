@@ -2,6 +2,7 @@
 #include "xmin/next/checked.hpp"
 #include "xmin/next/color.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
+#include "xmin/next/property_data.hpp"
 #include "xmin/next/resource_registry.hpp"
 #include "xmin/next/result.hpp"
 #include "xmin/next/server_state.hpp"
@@ -9,6 +10,7 @@
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <chrono>
@@ -109,6 +111,37 @@ test_wire_order(xmin::next::ByteOrder order)
         expect(dword == 0x789abcde, "wire u32 round trip failed") &&
         expect(reader.skip(reader.remaining()), "wire padding skip failed") &&
         expect(!reader.u8(), "wire reader crossed its bound");
+}
+
+bool
+test_property_byte_order()
+{
+    constexpr std::array<std::uint8_t, 4> big_endian{
+        0x12, 0x34, 0x56, 0x78};
+    constexpr std::array<std::uint8_t, 4> little_endian{
+        0x78, 0x56, 0x34, 0x12};
+    const auto canonical = xmin::next::canonical_property_data(
+        big_endian.data(), big_endian.size(), 32,
+        xmin::next::ByteOrder::big);
+    if (!expect(canonical &&
+                    std::equal(canonical->begin(), canonical->end(),
+                               little_endian.begin()),
+                "property data was not canonicalized")) {
+        return false;
+    }
+    return expect(
+               xmin::next::wire_property_data(
+                   canonical->data(), canonical->size(), 32,
+                   xmin::next::ByteOrder::big) ==
+                   std::vector<std::uint8_t>(big_endian.begin(),
+                                             big_endian.end()),
+               "big-endian property encoding failed") &&
+        expect(xmin::next::wire_property_data(
+                   canonical->data(), canonical->size(), 32,
+                   xmin::next::ByteOrder::little) ==
+                   std::vector<std::uint8_t>(little_endian.begin(),
+                                             little_endian.end()),
+               "little-endian property encoding failed");
 }
 
 bool
@@ -3521,6 +3554,117 @@ test_xfixes_state()
 }
 
 bool
+test_randr_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t observer = 0x00400000;
+    xmin::next::ServerState server(64, 48);
+    if (!expect(server.register_client(owner) &&
+                    server.register_client(observer),
+                "RANDR client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(observer, 41);
+    if (!expect(server.select_randr_input(
+                    observer, xmin::next::root_window_id,
+                    1U | 2U | 4U | 8U | 64U) ==
+                    xmin::next::RandrUpdate::updated,
+                "RANDR event subscription failed")) {
+        return false;
+    }
+    const auto *event = server.next_event(observer);
+    const auto *screen = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RandrScreenChangeNotifyEvent>(event);
+    if (!expect(screen != nullptr && screen->width == 64 &&
+                    screen->height == 48 && screen->sequence == 41,
+                "RANDR initial screen notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(observer);
+
+    const auto property = server.atoms().intern("XMIN_RANDR_PROPERTY");
+    auto candidate = server.randr();
+    candidate.output_properties[property].value =
+        xmin::next::PropertyValue{19, 32, {1, 2, 3, 4}};
+    if (!expect(server.commit_randr_state(
+                    std::move(candidate), 8U, property, 0) ==
+                    xmin::next::RandrUpdate::updated,
+                "RANDR output property transaction failed")) {
+        return false;
+    }
+    event = server.next_event(observer);
+    const auto *notify = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RandrNotifyEvent>(event);
+    if (!expect(notify != nullptr && notify->subtype == 2 &&
+                    notify->output == xmin::next::randr_output_id &&
+                    notify->atom == property && notify->sequence == 41,
+                "RANDR output property notification lost typed state")) {
+        return false;
+    }
+    server.pop_event(observer);
+
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.broadcast_mapping_notify(1, 96, 1),
+                    "RANDR queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    candidate = server.randr();
+    candidate.primary_output = 0;
+    if (!expect(server.commit_randr_state(
+                    std::move(candidate), 64U) ==
+                    xmin::next::RandrUpdate::queue_full &&
+                    server.randr().primary_output ==
+                        xmin::next::randr_output_id,
+                "failed RANDR notification partially committed state")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    while (server.has_pending_event(observer))
+        server.pop_event(observer);
+
+    candidate = server.randr();
+    candidate.millimetre_width = 21;
+    candidate.millimetre_height = 16;
+    if (!expect(server.resize_randr_screen(
+                    std::move(candidate), 80, 60) ==
+                    xmin::next::RandrUpdate::updated &&
+                    server.width() == 80 && server.height() == 60 &&
+                    server.window(xmin::next::root_window_id)->surface->width() ==
+                        80 &&
+                    server.window(xmin::next::root_window_id)->surface->height() ==
+                        60 &&
+                    server.valid(),
+                "RANDR framebuffer resize was not atomic")) {
+        return false;
+    }
+    event = server.next_event(observer);
+    screen = event == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::RandrScreenChangeNotifyEvent>(event);
+    if (!expect(screen != nullptr && screen->width == 80 &&
+                    screen->height == 60 && screen->millimetre_width == 21,
+                "RANDR resize omitted ScreenChangeNotify")) {
+        return false;
+    }
+    while (server.has_pending_event(observer))
+        server.pop_event(observer);
+
+    server.disconnect_client(observer);
+    candidate = server.randr();
+    candidate.primary_output = 0;
+    return expect(server.commit_randr_state(
+                      std::move(candidate), 64U) ==
+                      xmin::next::RandrUpdate::updated &&
+                      !server.has_pending_event(observer),
+                  "RANDR disconnect retained a stale subscription");
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -3566,6 +3710,7 @@ main()
     return test_checked_arithmetic() && test_generated_core_protocol() &&
             test_wire_order(xmin::next::ByteOrder::little) &&
             test_wire_order(xmin::next::ByteOrder::big) &&
+            test_property_byte_order() &&
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_passive_grabs() &&
             test_input_routing() && test_key_repeat_timers() &&
@@ -3583,7 +3728,7 @@ main()
             test_render_engine() &&
             test_scene_composition() && test_shape_state() &&
             test_window_tree_mutations() && test_sync_state() &&
-            test_xfixes_state() &&
+            test_xfixes_state() && test_randr_state() &&
             test_colormap_state() &&
             test_result()
         ? 0

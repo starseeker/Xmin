@@ -79,6 +79,38 @@ struct XFixesCursorNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct RandrScreenChangeNotifyEvent {
+    std::uint32_t timestamp = 0;
+    std::uint32_t config_timestamp = 0;
+    std::uint32_t request_window = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t millimetre_width = 0;
+    std::uint16_t millimetre_height = 0;
+    std::uint16_t rotation = 1;
+    std::uint16_t sequence = 0;
+};
+
+struct RandrNotifyEvent {
+    std::uint8_t subtype = 0;
+    std::uint32_t timestamp = 0;
+    std::uint32_t config_timestamp = 0;
+    std::uint32_t window = 0;
+    std::uint32_t crtc = 0;
+    std::uint32_t output = 0;
+    std::uint32_t mode = 0;
+    std::uint32_t atom = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t rotation = 1;
+    std::uint8_t connection = 0;
+    std::uint8_t subpixel_order = 0;
+    std::uint8_t property_status = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -124,7 +156,8 @@ struct FocusEvent {
 using ClientEvent = std::variant<
     SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
     ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
-    XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent, CoreInputEvent,
+    XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
+    RandrScreenChangeNotifyEvent, RandrNotifyEvent, CoreInputEvent,
     CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next

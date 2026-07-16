@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "babe7b1d2b46522f74e898718b7e817d50b59c5a9192814a79df496a7b8af37c",
+    "policy_sha256": "e93c19083ae5786891cd74a77563bc7e7ff446beda8ff2a11a0dba198a4ba09f",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -2439,315 +2439,315 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "SetScreenConfig",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "SelectInput",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "GetScreenInfo",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 6,
           "name": "GetScreenSizeRange",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 7,
           "name": "SetScreenSize",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 8,
           "name": "GetScreenResources",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 9,
           "name": "GetOutputInfo",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 10,
           "name": "ListOutputProperties",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 11,
           "name": "QueryOutputProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 12,
           "name": "ConfigureOutputProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 13,
           "name": "ChangeOutputProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 14,
           "name": "DeleteOutputProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 15,
           "name": "GetOutputProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 16,
           "name": "CreateMode",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 17,
           "name": "DestroyMode",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 18,
           "name": "AddOutputMode",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 19,
           "name": "DeleteOutputMode",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 20,
           "name": "GetCrtcInfo",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 21,
           "name": "SetCrtcConfig",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 22,
           "name": "GetCrtcGammaSize",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 23,
           "name": "GetCrtcGamma",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 24,
           "name": "SetCrtcGamma",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 25,
           "name": "GetScreenResourcesCurrent",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 26,
           "name": "SetCrtcTransform",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 27,
           "name": "GetCrtcTransform",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 28,
           "name": "GetPanning",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 29,
           "name": "SetPanning",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 30,
           "name": "SetOutputPrimary",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 31,
           "name": "GetOutputPrimary",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 32,
           "name": "GetProviders",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 33,
           "name": "GetProviderInfo",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 34,
           "name": "SetProviderOffloadSink",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 35,
           "name": "SetProviderOutputSource",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 36,
           "name": "ListProviderProperties",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 37,
           "name": "QueryProviderProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 38,
           "name": "ConfigureProviderProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 39,
           "name": "ChangeProviderProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 40,
           "name": "DeleteProviderProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 41,
           "name": "GetProviderProperty",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 42,
           "name": "GetMonitors",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 43,
           "name": "SetMonitor",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 44,
           "name": "DeleteMonitor",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 45,
           "name": "CreateLease",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 46,
           "name": "FreeLease",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

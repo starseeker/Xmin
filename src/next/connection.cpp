@@ -4,6 +4,7 @@
 #include "xmin/next/color.hpp"
 #include "xmin/next/extension_registry.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
+#include "xmin/next/property_data.hpp"
 
 #include <algorithm>
 #include <array>
@@ -220,62 +221,6 @@ valid_clip_order(const std::vector<Rectangle> &rectangles,
         }
     }
     return true;
-}
-
-std::optional<std::vector<std::uint8_t>>
-canonical_property_data(const std::uint8_t *data, std::size_t size,
-                        std::uint8_t format, ByteOrder order)
-{
-    if (format == 8)
-        return std::vector<std::uint8_t>(data, data + size);
-
-    WireReader reader(data, size, order);
-    std::vector<std::uint8_t> canonical;
-    canonical.reserve(size);
-    while (reader.remaining() != 0) {
-        if (format == 16) {
-            const auto value = reader.u16();
-            if (!value)
-                return std::nullopt;
-            canonical.push_back(static_cast<std::uint8_t>(*value));
-            canonical.push_back(static_cast<std::uint8_t>(*value >> 8));
-        }
-        else {
-            const auto value = reader.u32();
-            if (!value)
-                return std::nullopt;
-            for (unsigned shift = 0; shift < 32; shift += 8)
-                canonical.push_back(static_cast<std::uint8_t>(*value >> shift));
-        }
-    }
-    return canonical;
-}
-
-std::vector<std::uint8_t>
-wire_property_data(const std::uint8_t *data, std::size_t size,
-                   std::uint8_t format, ByteOrder order)
-{
-    if (format == 8)
-        return std::vector<std::uint8_t>(data, data + size);
-
-    WireWriter writer(order);
-    const std::size_t unit = format / 8;
-    for (std::size_t offset = 0; offset < size; offset += unit) {
-        if (format == 16) {
-            const auto value = static_cast<std::uint16_t>(data[offset]) |
-                (static_cast<std::uint16_t>(data[offset + 1]) << 8);
-            writer.u16(value);
-        }
-        else {
-            std::uint32_t value = 0;
-            for (unsigned index = 0; index < 4; ++index) {
-                value |= static_cast<std::uint32_t>(data[offset + index])
-                    << (index * 8);
-            }
-            writer.u32(value);
-        }
-    }
-    return writer.data();
 }
 
 bool
@@ -526,6 +471,71 @@ Connection::encode_event(const ClientEvent &event) const
         writer.u32(cursor->time);
         writer.u32(cursor->name);
         writer.pad(12);
+        return writer.data();
+    }
+
+    if (const auto *screen =
+            std::get_if<RandrScreenChangeNotifyEvent>(&event)) {
+        writer.u8(randr_extension.first_event);
+        writer.u8(static_cast<std::uint8_t>(screen->rotation));
+        writer.u16(screen->sequence);
+        writer.u32(screen->timestamp);
+        writer.u32(screen->config_timestamp);
+        writer.u32(root_window_id);
+        writer.u32(screen->request_window);
+        writer.u16(0); // the sole screen size
+        writer.u16(0); // unknown subpixel order
+        writer.u16(screen->width);
+        writer.u16(screen->height);
+        writer.u16(screen->millimetre_width);
+        writer.u16(screen->millimetre_height);
+        return writer.data();
+    }
+
+    if (const auto *notify = std::get_if<RandrNotifyEvent>(&event)) {
+        writer.u8(randr_extension.first_event + 1);
+        writer.u8(notify->subtype);
+        writer.u16(notify->sequence);
+        switch (notify->subtype) {
+        case 0: // CrtcChange
+            writer.u32(notify->timestamp);
+            writer.u32(notify->window);
+            writer.u32(notify->crtc);
+            writer.u32(notify->mode);
+            writer.u16(notify->rotation);
+            writer.pad(2);
+            writer.i16(notify->x);
+            writer.i16(notify->y);
+            writer.u16(notify->width);
+            writer.u16(notify->height);
+            break;
+        case 1: // OutputChange
+            writer.u32(notify->timestamp);
+            writer.u32(notify->config_timestamp);
+            writer.u32(notify->window);
+            writer.u32(notify->output);
+            writer.u32(notify->crtc);
+            writer.u32(notify->mode);
+            writer.u16(notify->rotation);
+            writer.u8(notify->connection);
+            writer.u8(notify->subpixel_order);
+            break;
+        case 2: // OutputProperty
+            writer.u32(notify->window);
+            writer.u32(notify->output);
+            writer.u32(notify->atom);
+            writer.u32(notify->timestamp);
+            writer.u8(notify->property_status);
+            writer.pad(11);
+            break;
+        case 5: // ResourceChange
+            writer.u32(notify->timestamp);
+            writer.u32(notify->window);
+            writer.pad(20);
+            break;
+        default:
+            return {};
+        }
         return writer.data();
     }
 
@@ -6312,6 +6322,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_render(context);
         case ExtensionKind::xfixes:
             return handle_xfixes(context);
+        case ExtensionKind::randr:
+            return handle_randr(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

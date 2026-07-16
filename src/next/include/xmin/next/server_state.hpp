@@ -15,6 +15,7 @@
 #include <cstdint>
 #include <deque>
 #include <optional>
+#include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -40,6 +41,13 @@ constexpr std::size_t maximum_xfixes_barriers = 4096;
 constexpr std::size_t maximum_xfixes_subscriptions = 4096;
 constexpr std::size_t maximum_sync_wait_conditions =
     maximum_pending_events_per_client;
+constexpr std::size_t maximum_randr_modes = 256;
+constexpr std::size_t maximum_randr_monitors = 64;
+constexpr std::size_t maximum_randr_output_properties = 256;
+constexpr std::size_t maximum_randr_filter_parameters = 64;
+constexpr std::uint32_t randr_crtc_id = 0x00000200;
+constexpr std::uint32_t randr_output_id = 0x00000201;
+constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
 constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 inline constexpr auto default_repeat_delay = std::chrono::milliseconds{660};
@@ -54,6 +62,96 @@ struct PropertyValue {
     AtomId type = 0;
     std::uint8_t format = 0;
     std::vector<std::uint8_t> data;
+};
+
+struct RandrModeInfo {
+    std::uint32_t id = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint32_t dot_clock = 0;
+    std::uint16_t hsync_start = 0;
+    std::uint16_t hsync_end = 0;
+    std::uint16_t htotal = 0;
+    std::uint16_t hskew = 0;
+    std::uint16_t vsync_start = 0;
+    std::uint16_t vsync_end = 0;
+    std::uint16_t vtotal = 0;
+    std::uint32_t flags = 0;
+    std::string name;
+    bool built_in = false;
+};
+
+struct RandrOutputProperty {
+    PropertyValue value;
+    PropertyValue pending_value;
+    std::vector<std::int32_t> valid_values;
+    bool pending = false;
+    bool range = false;
+    bool immutable = false;
+};
+
+struct RandrTransform {
+    std::array<std::int32_t, 9> matrix{
+        65536, 0, 0, 0, 65536, 0, 0, 0, 65536};
+    std::string filter;
+    std::vector<std::int32_t> parameters;
+};
+
+struct RandrPanning {
+    std::uint16_t left = 0;
+    std::uint16_t top = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t track_left = 0;
+    std::uint16_t track_top = 0;
+    std::uint16_t track_width = 0;
+    std::uint16_t track_height = 0;
+    std::int16_t border_left = 0;
+    std::int16_t border_top = 0;
+    std::int16_t border_right = 0;
+    std::int16_t border_bottom = 0;
+};
+
+struct RandrMonitor {
+    AtomId name = 0;
+    bool primary = false;
+    bool automatic = false;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint32_t millimetre_width = 0;
+    std::uint32_t millimetre_height = 0;
+    std::vector<std::uint32_t> outputs;
+};
+
+struct RandrSubscription {
+    std::uint32_t client = 0;
+    std::uint32_t window = 0;
+    std::uint16_t mask = 0;
+};
+
+struct RandrState {
+    std::uint32_t timestamp = 1;
+    std::uint32_t config_timestamp = 1;
+    std::uint32_t millimetre_width = 0;
+    std::uint32_t millimetre_height = 0;
+    std::unordered_map<std::uint32_t, RandrModeInfo> modes;
+    std::vector<std::uint32_t> output_modes;
+    std::uint32_t current_mode = randr_initial_mode_id;
+    std::uint32_t next_mode_id = randr_initial_mode_id + 1;
+    std::uint32_t primary_output = randr_output_id;
+    std::int16_t crtc_x = 0;
+    std::int16_t crtc_y = 0;
+    std::uint16_t rotation = 1;
+    std::vector<std::uint16_t> gamma_red;
+    std::vector<std::uint16_t> gamma_green;
+    std::vector<std::uint16_t> gamma_blue;
+    RandrTransform transform;
+    RandrPanning panning;
+    std::unordered_map<AtomId, RandrOutputProperty> output_properties;
+    std::unordered_map<AtomId, RandrMonitor> monitors;
+    std::vector<RandrSubscription> subscriptions;
 };
 
 struct CursorImage {
@@ -400,6 +498,13 @@ enum class SyncUpdate {
     queue_full,
 };
 
+enum class RandrUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
+    queue_full,
+};
+
 class ServerState {
 public:
     ServerState(std::uint16_t width, std::uint16_t height,
@@ -411,6 +516,15 @@ public:
 
     [[nodiscard]] AtomTable &atoms() noexcept { return atoms_; }
     [[nodiscard]] const AtomTable &atoms() const noexcept { return atoms_; }
+    [[nodiscard]] const RandrState &randr() const noexcept { return randr_; }
+    [[nodiscard]] RandrUpdate select_randr_input(
+        std::uint32_t client, std::uint32_t window, std::uint16_t mask);
+    [[nodiscard]] RandrUpdate commit_randr_state(
+        RandrState candidate, std::uint16_t notify_mask,
+        AtomId property = 0, std::uint8_t property_status = 0);
+    [[nodiscard]] RandrUpdate resize_randr_screen(RandrState candidate,
+                                                  std::uint16_t width,
+                                                  std::uint16_t height);
 
     [[nodiscard]] WindowRecord *window(std::uint32_t id);
     [[nodiscard]] const WindowRecord *window(std::uint32_t id) const;
@@ -659,6 +773,7 @@ private:
     std::unordered_map<std::uint32_t, std::vector<std::uint32_t>>
         sync_fence_waits_;
     std::unordered_map<std::uint32_t, std::int32_t> sync_priorities_;
+    RandrState randr_;
     std::unordered_map<AtomId, SelectionRecord> selections_;
     std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
     std::vector<std::pair<std::uint32_t, std::uint16_t>> clients_;
@@ -683,6 +798,11 @@ private:
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     [[nodiscard]] bool queue_events_atomically(
         const std::vector<PlannedEvent> &events);
+    [[nodiscard]] bool append_randr_events(
+        const RandrState &candidate, std::uint16_t width,
+        std::uint16_t height, std::uint16_t notify_mask,
+        AtomId property, std::uint8_t property_status,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] SyncUpdate update_sync_counter(
         SyncCounterRecord &counter, std::int64_t value,
         bool destroying);
