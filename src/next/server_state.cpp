@@ -475,6 +475,8 @@ ServerState::update_window_mappings(
         (map_state(input_.pointer_grab->window) != 2 ||
          (input_.pointer_grab->confine_to != 0 &&
           map_state(input_.pointer_grab->confine_to) != 2));
+    const bool keyboard_grab_lost = !mapped && input_.keyboard_grab &&
+        map_state(input_.keyboard_grab->window) != 2;
 
     std::vector<PlannedEvent> events;
     EventDelivery pointer_ungrab = EventDelivery::no_recipient;
@@ -484,16 +486,28 @@ ServerState::update_window_mappings(
             input_.pointer_x, input_.pointer_y,
             input_.modifier_button_mask, 2, nullptr, old_focus, events);
     }
+    EventDelivery keyboard_ungrab = EventDelivery::no_recipient;
+    if (keyboard_grab_lost &&
+        pointer_ungrab != EventDelivery::queue_full) {
+        FocusState grabbed_focus = old_focus;
+        grabbed_focus.kind = FocusKind::window;
+        grabbed_focus.window = input_.keyboard_grab->window;
+        keyboard_ungrab = append_focus_events(
+            grabbed_focus, old_focus, 2, old_pointer_window, events);
+    }
     EventDelivery focus = EventDelivery::no_recipient;
     if (pointer_ungrab != EventDelivery::queue_full &&
+        keyboard_ungrab != EventDelivery::queue_full &&
         (old_focus.kind != new_focus.kind ||
          old_focus.window != new_focus.window)) {
         focus = append_focus_events(
-            old_focus, new_focus, input_.keyboard_grab ? 3 : 0,
+            old_focus, new_focus,
+            input_.keyboard_grab && !keyboard_grab_lost ? 3 : 0,
             old_pointer_window, events);
     }
     EventDelivery crossing = EventDelivery::no_recipient;
     if (pointer_ungrab != EventDelivery::queue_full &&
+        keyboard_ungrab != EventDelivery::queue_full &&
         focus != EventDelivery::queue_full &&
         old_pointer_window != new_pointer_window) {
         crossing = append_crossing_events(
@@ -510,6 +524,7 @@ ServerState::update_window_mappings(
             candidate->mapped = !mapped;
     }
     if (pointer_ungrab == EventDelivery::queue_full ||
+        keyboard_ungrab == EventDelivery::queue_full ||
         crossing == EventDelivery::queue_full ||
         focus == EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
@@ -524,8 +539,11 @@ ServerState::update_window_mappings(
     input_.focus = new_focus;
     if (pointer_grab_lost)
         input_.pointer_grab.reset();
+    if (keyboard_grab_lost)
+        input_.keyboard_grab.reset();
     invalidate_scene();
     return pointer_ungrab == EventDelivery::delivered ||
+            keyboard_ungrab == EventDelivery::delivered ||
             crossing == EventDelivery::delivered ||
             focus == EventDelivery::delivered
         ? EventDelivery::delivered
@@ -1198,10 +1216,10 @@ ServerState::append_focus_events(
     const FocusState &from, const FocusState &to, std::uint8_t mode,
     std::uint32_t pointer_window, std::vector<PlannedEvent> &events) const
 {
-    if (from.kind == to.kind &&
-        (from.kind != FocusKind::window || from.window == to.window)) {
+    const bool same_focus = from.kind == to.kind &&
+        (from.kind != FocusKind::window || from.window == to.window);
+    if (same_focus && mode != 1 && mode != 2)
         return EventDelivery::no_recipient;
-    }
 
     bool delivered = false;
     const auto append = [&](std::uint8_t type, std::uint8_t detail,
@@ -1240,6 +1258,14 @@ ServerState::append_focus_events(
         return static_cast<std::uint8_t>(
             kind == FocusKind::pointer_root ? 6 : 7);
     };
+    if (same_focus) {
+        if (from.kind != FocusKind::window)
+            return EventDelivery::no_recipient;
+        if (!add(10, 3, from.window) || !add(9, 3, from.window))
+            return EventDelivery::queue_full;
+        return delivered ? EventDelivery::delivered
+                         : EventDelivery::no_recipient;
+    }
     const auto pointer_related = [&](std::uint32_t left,
                                      std::uint32_t right) {
         return is_descendant(left, right) || is_descendant(right, left);
@@ -1887,6 +1913,7 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     std::vector<PlannedEvent> events;
     EventDelivery focus = EventDelivery::no_recipient;
     EventDelivery pointer_ungrab = EventDelivery::no_recipient;
+    EventDelivery keyboard_ungrab = EventDelivery::no_recipient;
     EventDelivery unmap_crossing = EventDelivery::no_recipient;
     EventDelivery map_crossing = EventDelivery::no_recipient;
 
@@ -1901,20 +1928,33 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
         (map_state(input_.pointer_grab->window) != 2 ||
          (input_.pointer_grab->confine_to != 0 &&
           map_state(input_.pointer_grab->confine_to) != 2));
+    const bool keyboard_grab_lost = was_mapped && input_.keyboard_grab &&
+        map_state(input_.keyboard_grab->window) != 2;
     if (pointer_grab_lost) {
         pointer_ungrab = append_crossing_events(
             input_.pointer_grab->window, old_pointer_window,
             input_.pointer_x, input_.pointer_y,
             input_.modifier_button_mask, 2, nullptr, old_focus, events);
     }
+    if (keyboard_grab_lost &&
+        pointer_ungrab != EventDelivery::queue_full) {
+        FocusState grabbed_focus = old_focus;
+        grabbed_focus.kind = FocusKind::window;
+        grabbed_focus.window = input_.keyboard_grab->window;
+        keyboard_ungrab = append_focus_events(
+            grabbed_focus, old_focus, 2, old_pointer_window, events);
+    }
     if (was_mapped && pointer_ungrab != EventDelivery::queue_full &&
+        keyboard_ungrab != EventDelivery::queue_full &&
         (old_focus.kind != new_focus.kind ||
          old_focus.window != new_focus.window)) {
         focus = append_focus_events(
-            old_focus, new_focus, input_.keyboard_grab ? 3 : 0,
+            old_focus, new_focus,
+            input_.keyboard_grab && !keyboard_grab_lost ? 3 : 0,
             old_pointer_window, events);
     }
     if (was_mapped && pointer_ungrab != EventDelivery::queue_full &&
+        keyboard_ungrab != EventDelivery::queue_full &&
         focus != EventDelivery::queue_full &&
         old_pointer_window != unmapped_pointer_window) {
         unmap_crossing = append_crossing_events(
@@ -1936,6 +1976,7 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     const std::uint32_t new_pointer_window = deepest_window_at(
         root_window_id, input_.pointer_x, input_.pointer_y);
     if (was_mapped && pointer_ungrab != EventDelivery::queue_full &&
+        keyboard_ungrab != EventDelivery::queue_full &&
         focus != EventDelivery::queue_full &&
         unmap_crossing != EventDelivery::queue_full &&
         unmapped_pointer_window != new_pointer_window) {
@@ -1956,6 +1997,7 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     if (!same_parent)
         parent->children.swap(new_children);
     if (pointer_ungrab == EventDelivery::queue_full ||
+        keyboard_ungrab == EventDelivery::queue_full ||
         focus == EventDelivery::queue_full ||
         unmap_crossing == EventDelivery::queue_full ||
         map_crossing == EventDelivery::queue_full ||
@@ -1972,6 +2014,8 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     input_.focus = new_focus;
     if (pointer_grab_lost)
         input_.pointer_grab.reset();
+    if (keyboard_grab_lost)
+        input_.keyboard_grab.reset();
     invalidate_scene();
     return ReparentUpdate::updated;
 }

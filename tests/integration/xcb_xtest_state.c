@@ -759,6 +759,218 @@ main(void)
     }
     free(event);
 
+    xcb_grab_keyboard_reply_t *view_loss_keyboard =
+        xcb_grab_keyboard_reply(
+            connection,
+            xcb_grab_keyboard(
+                connection, 0, child, XCB_CURRENT_TIME,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+            &error);
+    if (error != NULL || view_loss_keyboard == NULL ||
+        view_loss_keyboard->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "view-loss keyboard grab failed\n");
+        free(view_loss_keyboard);
+        goto cleanup;
+    }
+    free(view_loss_keyboard);
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    if (!checked(connection, xcb_unmap_window_checked(connection, child),
+                 "unmap keyboard grab window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "keyboard view-loss FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "keyboard view-loss FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "keyboard view-loss LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != reparent_parent ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "keyboard view-loss EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection, xcb_map_window_checked(connection, child),
+                 "remap keyboard grab window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "keyboard view-loss remap LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "keyboard view-loss remap EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
+    if (!checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, child,
+                     XCB_CURRENT_TIME),
+                 "focus keyboard grab window")) {
+        goto cleanup;
+    }
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    view_loss_keyboard = xcb_grab_keyboard_reply(
+        connection,
+        xcb_grab_keyboard(
+            connection, 0, child, XCB_CURRENT_TIME,
+            XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+        &error);
+    if (error != NULL || view_loss_keyboard == NULL ||
+        view_loss_keyboard->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "same-focus keyboard grab failed\n");
+        free(view_loss_keyboard);
+        goto cleanup;
+    }
+    free(view_loss_keyboard);
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    if (!checked(connection, xcb_unmap_window_checked(connection, child),
+                 "unmap focused keyboard grab window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_NONLINEAR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "same-focus ungrab FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_NONLINEAR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "same-focus ungrab FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus reversion FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != reparent_parent ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus reversion FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        leave_event->event != child ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus keyboard LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        enter_event->event != reparent_parent ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus keyboard EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    if (!checked(connection, xcb_map_window_checked(connection, child),
+                 "remap focused keyboard grab window")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus remap LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "same-focus remap EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+
     xcb_test_compare_cursor_reply_t *cursor = xcb_test_compare_cursor_reply(
         connection,
         xcb_test_compare_cursor(

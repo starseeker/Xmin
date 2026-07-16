@@ -1503,6 +1503,215 @@ test_pointer_grab_view_loss()
 }
 
 bool
+test_keyboard_grab_view_loss()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "keyboard view-loss client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 109);
+    xmin::next::WindowRecord parent_window;
+    parent_window.id = parent;
+    parent_window.parent = xmin::next::root_window_id;
+    parent_window.x = 5;
+    parent_window.y = 5;
+    parent_window.width = 40;
+    parent_window.height = 40;
+    xmin::next::WindowRecord child_window;
+    child_window.id = child;
+    child_window.parent = parent;
+    child_window.x = 5;
+    child_window.y = 5;
+    child_window.width = 20;
+    child_window.height = 20;
+    if (!expect(server.add_window(std::move(parent_window), owner) &&
+                    server.add_window(std::move(child_window), owner) &&
+                    server.set_window_mapped(*server.window(parent), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.set_window_mapped(*server.window(child), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window,
+                        xmin::next::root_window_id, 0, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "keyboard view-loss setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, focus_mask);
+    server.window(parent)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+    server.window(child)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+    const auto arm_grab = [&] {
+        server.input().keyboard_grab = xmin::next::ActiveGrab{
+            owner, child, 0, server.current_time(), 0, 1, 1, false};
+    };
+    arm_grab();
+
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint8_t mode, std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == mode && value->sequence == 109;
+        if (!matches) {
+            if (queued == nullptr) {
+                std::cerr << "keyboard view-loss focus queue is empty\n";
+            }
+            else if (value == nullptr) {
+                std::cerr << "keyboard view-loss expected focus, got "
+                          << (std::holds_alternative<
+                                  xmin::next::CrossingEvent>(*queued)
+                                  ? "crossing"
+                                  : "other")
+                          << '\n';
+            }
+            else {
+                std::cerr << "keyboard view-loss focus mismatch: type="
+                          << unsigned(value->type) << " detail="
+                          << unsigned(value->detail) << " mode="
+                          << unsigned(value->mode) << " event="
+                          << value->event << '\n';
+            }
+        }
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint32_t event,
+                              std::int16_t event_x,
+                              std::int16_t event_y) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->child == 0 && value->event_x == event_x &&
+            value->event_y == event_y && value->mode == 0 &&
+            value->same_screen && value->focus && value->sequence == 109;
+        if (!matches) {
+            if (value == nullptr) {
+                std::cerr << "keyboard view-loss expected crossing event\n";
+            }
+            else {
+                std::cerr << "keyboard view-loss crossing mismatch: type="
+                          << unsigned(value->type) << " detail="
+                          << unsigned(value->detail) << " mode="
+                          << unsigned(value->mode) << " event="
+                          << value->event << '\n';
+            }
+        }
+        server.pop_event(owner);
+        return matches;
+    };
+    if (!expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.input().keyboard_grab &&
+                    !server.window(child)->mapped &&
+                    server.input().focus.window ==
+                        xmin::next::root_window_id &&
+                    focus(10, 0, 2, child) &&
+                    focus(10, 1, 2, parent) &&
+                    focus(9, 2, 2, xmin::next::root_window_id) &&
+                    crossing(8, 0, child, 5, 5) &&
+                    crossing(7, 2, parent, 10, 10) &&
+                    !server.has_pending_event(owner),
+                "keyboard-grab view-loss sequence is wrong")) {
+        return false;
+    }
+    if (!expect(server.set_window_mapped(*server.window(child), true) ==
+                    xmin::next::EventDelivery::delivered,
+                "keyboard view-loss remap failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 2, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "same-focus keyboard view-loss setup failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    arm_grab();
+    if (!expect(server.input().focus.window == child &&
+                    server.input().focus.revert_to == 2 &&
+                    server.input().keyboard_grab &&
+                    server.input().keyboard_grab->window == child &&
+                    (server.window(child)->event_masks.at(owner) &
+                     focus_mask) != 0,
+                "same-focus keyboard state was not armed") ||
+        !expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::delivered &&
+                    !server.input().keyboard_grab &&
+                    server.input().focus.window == parent &&
+                    focus(10, 3, 2, child) &&
+                    focus(9, 3, 2, child) &&
+                    focus(10, 0, 0, child) &&
+                    focus(9, 2, 0, parent) &&
+                    crossing(8, 0, child, 5, 5) &&
+                    crossing(7, 2, parent, 10, 10) &&
+                    !server.has_pending_event(owner),
+                "same-focus keyboard view-loss sequence is wrong") ||
+        !expect(server.set_window_mapped(*server.window(child), true) ==
+                    xmin::next::EventDelivery::delivered,
+                "same-focus keyboard remap failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    arm_grab();
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count + 3 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        child, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "keyboard view-loss queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.set_window_mapped(*server.window(child), false) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    server.window(child)->mapped &&
+                    server.input().keyboard_grab &&
+                    server.input().keyboard_grab->window == child,
+                "queue failure released a live keyboard grab")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "keyboard view-loss failure left a partial event")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 3 == xmin::next::maximum_pending_events_per_client,
+        "keyboard view-loss failure changed the existing event count");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -1818,6 +2027,7 @@ main()
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
             test_pointer_grab_view_loss() &&
+            test_keyboard_grab_view_loss() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

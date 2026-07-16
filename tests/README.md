@@ -72,6 +72,7 @@ paths, `PointerRoot`/`NotifyPointer` side-runs, and atomic focus queue-failure r
 plus legacy-oracle map/unmap/destroy/reparent focus-reversion and stationary-pointer
 crossings and all-or-nothing tree/geometry/focus rollback under queue pressure,
 plus confinement-driven pointer `NotifyUngrab` ordering and grab-state rollback,
+keyboard `NotifyUngrab` focus restoration for distinct and coincident real focus,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color
