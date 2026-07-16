@@ -159,9 +159,11 @@ Client-owned active pointer and keyboard grabs keep typed modes, masks, confinem
 timestamps, cross-client exclusion, and disconnect/window teardown.  Explicit grabs
 and ungrabs now atomically emit their typed `NotifyGrab`/`NotifyUngrab` crossing and
 focus paths before replies, preserving X11 wire sequence order; passive key grabs use
-the same focus transaction around the triggering press and release.  Passive key and
-button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`, with
-atomic wildcard subtraction, cross-client conflict checks, and lifecycle cleanup.  A
+the same focus transaction around the triggering press and release.  Disconnect first
+removes the dead recipient, then emits both ungrab paths to surviving observers before
+destroying owned windows; saturated observers cannot retain dead-client state.  Passive
+key and button grabs use bounded bit domains for `AnyKey`/`AnyButton` and `AnyModifier`,
+with atomic wildcard subtraction, cross-client conflict checks, and lifecycle cleanup.  A
 bounded four-format `Surface` value now backs windows and typed pixmap records; the first GC
 path applies all 16 core raster functions and plane masks to clipped rectangle fills,
 overlap-safe copies, plus bounded ZPixmap upload/readback for A1, A8, XRGB8888, and

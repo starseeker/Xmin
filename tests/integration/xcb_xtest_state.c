@@ -58,6 +58,7 @@ main(void)
 {
     int screen_number = 0;
     xcb_connection_t *connection = xcb_connect(NULL, &screen_number);
+    xcb_connection_t *observer = NULL;
     if (connection == NULL || xcb_connection_has_error(connection) != 0) {
         fprintf(stderr, "unable to connect to DISPLAY\n");
         return 1;
@@ -1275,11 +1276,139 @@ main(void)
         goto cleanup;
     }
     free(destroy_focus);
+
+    int observer_screen_number = 0;
+    observer = xcb_connect(NULL, &observer_screen_number);
+    if (observer == NULL || xcb_connection_has_error(observer) != 0) {
+        fprintf(stderr, "unable to connect disconnect observer\n");
+        goto cleanup;
+    }
+    const xcb_setup_t *observer_setup = xcb_get_setup(observer);
+    xcb_screen_iterator_t observer_screens =
+        xcb_setup_roots_iterator(observer_setup);
+    while (observer_screen_number-- > 0)
+        xcb_screen_next(&observer_screens);
+    if (observer_screens.data == NULL ||
+        observer_screens.data->root != screen->root) {
+        fprintf(stderr, "disconnect observer selected the wrong screen\n");
+        goto cleanup;
+    }
+    const uint32_t observer_mask =
+        XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW |
+        XCB_EVENT_MASK_FOCUS_CHANGE;
+    if (!checked(observer,
+                 xcb_change_window_attributes_checked(
+                     observer, screen->root, XCB_CW_EVENT_MASK,
+                     &observer_mask),
+                 "select observer root events") ||
+        !checked(observer,
+                 xcb_change_window_attributes_checked(
+                     observer, reparent_parent, XCB_CW_EVENT_MASK,
+                     &observer_mask),
+                 "select observer child events")) {
+        goto cleanup;
+    }
+    xcb_grab_pointer_reply_t *disconnect_pointer =
+        xcb_grab_pointer_reply(
+            connection,
+            xcb_grab_pointer(
+                connection, 0, screen->root,
+                XCB_EVENT_MASK_ENTER_WINDOW | XCB_EVENT_MASK_LEAVE_WINDOW,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC,
+                XCB_NONE, XCB_NONE, XCB_CURRENT_TIME),
+            &error);
+    if (error != NULL || disconnect_pointer == NULL ||
+        disconnect_pointer->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "disconnect pointer grab failed\n");
+        free(disconnect_pointer);
+        goto cleanup;
+    }
+    free(disconnect_pointer);
+    xcb_grab_keyboard_reply_t *disconnect_keyboard =
+        xcb_grab_keyboard_reply(
+            connection,
+            xcb_grab_keyboard(
+                connection, 0, screen->root, XCB_CURRENT_TIME,
+                XCB_GRAB_MODE_ASYNC, XCB_GRAB_MODE_ASYNC),
+            &error);
+    if (error != NULL || disconnect_keyboard == NULL ||
+        disconnect_keyboard->status != XCB_GRAB_STATUS_SUCCESS) {
+        fprintf(stderr, "disconnect keyboard grab failed\n");
+        free(disconnect_keyboard);
+        goto cleanup;
+    }
+    free(disconnect_keyboard);
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    while ((event = xcb_poll_for_event(observer)) != NULL)
+        free(event);
+
+    const xcb_window_t root = screen->root;
+    xcb_disconnect(connection);
+    connection = NULL;
+    event = wait_event_type(observer, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != root ||
+        leave_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "disconnect pointer LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = wait_event_type(observer, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != reparent_parent ||
+        enter_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "disconnect pointer EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = wait_event_type(observer, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_POINTER ||
+        focus_event->event != reparent_parent ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "disconnect keyboard pointer FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = wait_event_type(observer, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != root ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "disconnect keyboard root FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = wait_event_type(observer, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != reparent_parent ||
+        focus_event->mode != XCB_NOTIFY_MODE_UNGRAB) {
+        fprintf(stderr, "disconnect keyboard FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
     passed = 1;
 
 cleanup:
     free(error);
     free(version);
-    xcb_disconnect(connection);
+    if (connection != NULL)
+        xcb_disconnect(connection);
+    if (observer != NULL)
+        xcb_disconnect(observer);
     return passed ? 0 : 1;
 }

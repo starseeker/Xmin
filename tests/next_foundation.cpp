@@ -1775,6 +1775,132 @@ test_grab_transitions()
 }
 
 bool
+test_disconnect_grab_transitions()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t observer = 0x00400000;
+    constexpr std::uint32_t child = owner | 1U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    const auto setup = [&](xmin::next::ServerState &server) {
+        if (!server.register_client(owner) ||
+            !server.register_client(observer)) {
+            return false;
+        }
+        server.note_client_sequence(observer, 113);
+        xmin::next::WindowRecord window;
+        window.id = child;
+        window.parent = xmin::next::root_window_id;
+        window.x = 5;
+        window.y = 5;
+        window.width = 30;
+        window.height = 30;
+        if (!server.add_window(std::move(window), owner) ||
+            server.set_window_mapped(*server.window(child), true) ==
+                xmin::next::EventDelivery::queue_full ||
+            server.inject_input(6, 0, 15, 15) !=
+                xmin::next::EventDelivery::no_recipient ||
+            server.set_input_focus(
+                xmin::next::FocusKind::window,
+                xmin::next::root_window_id, 0, 0) !=
+                xmin::next::FocusUpdate::updated) {
+            return false;
+        }
+        server.window(xmin::next::root_window_id)->event_masks.emplace(
+            observer, crossing_mask | focus_mask);
+        server.window(child)->event_masks.emplace(
+            observer, crossing_mask | focus_mask);
+        server.input().pointer_grab = xmin::next::ActiveGrab{
+            owner, xmin::next::root_window_id, 0,
+            server.current_time(), crossing_mask, 1, 1, false};
+        server.input().keyboard_grab = xmin::next::ActiveGrab{
+            owner, child, 0, server.current_time(), 3, 1, 1, false};
+        return true;
+    };
+
+    xmin::next::ServerState server(100, 80);
+    if (!expect(setup(server), "disconnect-grab setup failed"))
+        return false;
+    server.disconnect_client(owner);
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint8_t mode, std::uint32_t event) {
+        const auto *queued = server.next_event(observer);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->mode == mode &&
+            value->event == event && value->sequence == 113;
+        server.pop_event(observer);
+        return matches;
+    };
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint8_t mode, std::uint32_t event) {
+        const auto *queued = server.next_event(observer);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->mode == mode &&
+            value->event == event && value->sequence == 113;
+        server.pop_event(observer);
+        return matches;
+    };
+    if (!expect(!server.input().pointer_grab &&
+                    !server.input().keyboard_grab &&
+                    server.window(child) == nullptr &&
+                    crossing(8, 2, 2, xmin::next::root_window_id) &&
+                    crossing(7, 0, 2, child) &&
+                    focus(10, 0, 2, child) &&
+                    focus(9, 2, 2, xmin::next::root_window_id) &&
+                    crossing(8, 0, 0, child) &&
+                    crossing(7, 2, 0, xmin::next::root_window_id) &&
+                    !server.has_pending_event(observer),
+                "disconnect did not order ungrabs before teardown")) {
+        return false;
+    }
+
+    xmin::next::ServerState pressured(100, 80);
+    if (!expect(setup(pressured),
+                "disconnect queue-pressure setup failed")) {
+        return false;
+    }
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(pressured.deliver_client_message(
+                        child, crossing_mask, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "disconnect observer queue fill failed")) {
+            return false;
+        }
+    }
+    pressured.disconnect_client(owner);
+    if (!expect(!pressured.input().pointer_grab &&
+                    !pressured.input().keyboard_grab &&
+                    pressured.window(child) == nullptr,
+                "queue pressure retained dead-client state")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (pressured.has_pending_event(observer)) {
+        const auto *queued = pressured.next_event(observer);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "queue pressure left a partial disconnect transition")) {
+            return false;
+        }
+        pressured.pop_event(observer);
+        ++queued_count;
+    }
+    return expect(
+        queued_count == xmin::next::maximum_pending_events_per_client,
+        "disconnect changed the observer's full queue");
+}
+
+bool
 test_pointer_grab_view_loss()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -2422,6 +2548,7 @@ main()
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
             test_grab_transitions() &&
+            test_disconnect_grab_transitions() &&
             test_pointer_grab_view_loss() &&
             test_keyboard_grab_view_loss() &&
             test_true_color() &&

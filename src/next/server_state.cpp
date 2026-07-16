@@ -2370,28 +2370,32 @@ ServerState::disconnect_client(std::uint32_t owner)
         clients_.end());
     if (server_grab_owner_ == owner)
         server_grab_owner_ = 0;
-    if (input_.pointer_grab && input_.pointer_grab->owner == owner)
+    for (auto &window_entry : windows_)
+        window_entry.second.event_masks.erase(owner);
+    const auto queued = event_queues_.find(owner);
+    if (queued != event_queues_.end()) {
+        pending_events_ -= queued->second.size();
+        event_queues_.erase(queued);
+    }
+    if (input_.pointer_grab && input_.pointer_grab->owner == owner &&
+        deactivate_pointer_grab() == EventDelivery::queue_full) {
         input_.pointer_grab.reset();
-    if (input_.keyboard_grab && input_.keyboard_grab->owner == owner)
+    }
+    if (input_.keyboard_grab && input_.keyboard_grab->owner == owner &&
+        deactivate_keyboard_grab() == EventDelivery::queue_full) {
         input_.keyboard_grab.reset();
+    }
     passive_grabs_.erase(
         std::remove_if(
             passive_grabs_.begin(), passive_grabs_.end(),
             [owner](const PassiveGrab &grab) { return grab.owner == owner; }),
         passive_grabs_.end());
-    for (auto &window_entry : windows_)
-        window_entry.second.event_masks.erase(owner);
     for (auto &selection : selections_) {
         if (selection.second.client == owner) {
             selection.second.window = 0;
             selection.second.client = 0;
             selection.second.changed_at = current_time_;
         }
-    }
-    const auto queued = event_queues_.find(owner);
-    if (queued != event_queues_.end()) {
-        pending_events_ -= queued->second.size();
-        event_queues_.erase(queued);
     }
     const auto contexts =
         resources_.owned_by(owner, ResourceKind::graphics_context);

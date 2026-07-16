@@ -77,6 +77,7 @@ explicit pointer/keyboard `NotifyGrab`/`NotifyUngrab` wire order, passive-key fo
 transitions, activation rollback, and abandoned-output hangup cleanup,
 fake-clock key-repeat delay/catch-up/control/cancellation/queue rollback and a
 legacy-oracle real-deadline repeat pair with persistent `QueryKeymap` state,
+two-client disconnect ungrab ordering and full-observer-queue teardown fallback,
 plus cross-client active pointer/keyboard grab exclusion and release,
 passive key/button wildcard subtraction and cross-client conflict arbitration,
 selection ownership, fixed TrueColor named-color
