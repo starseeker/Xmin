@@ -133,7 +133,10 @@ public:
     [[nodiscard]] bool erase_graphics_context(std::uint32_t id);
     [[nodiscard]] Surface *drawable_surface(std::uint32_t id);
     [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
+    [[nodiscard]] Surface *readable_surface(std::uint32_t id);
     [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
+    void invalidate_scene() noexcept { scene_dirty_ = true; }
+    void set_window_mapped(WindowRecord &window, bool mapped) noexcept;
     void advance_time() noexcept;
     [[nodiscard]] std::uint32_t current_time() const noexcept
     {
@@ -170,14 +173,21 @@ private:
     std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
     std::uint16_t width_;
     std::uint16_t height_;
+    std::optional<Surface> composited_root_;
     std::size_t property_bytes_ = 0;
     std::size_t surface_bytes_ = 0;
     std::size_t pending_events_ = 0;
     std::uint32_t current_time_ = 1;
+    bool scene_dirty_ = true;
 
     [[nodiscard]] bool can_queue_event(std::uint32_t client) const;
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     void clear_selections_for_window(std::uint32_t window);
+    void composite_scene();
+    void composite_window(std::uint32_t id, std::int64_t parent_x,
+                          std::int64_t parent_y, std::int64_t clip_left,
+                          std::int64_t clip_top, std::int64_t clip_right,
+                          std::int64_t clip_bottom);
 };
 
 } // namespace xmin::next

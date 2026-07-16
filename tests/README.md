@@ -60,7 +60,9 @@ to another while a 32-bit property remains correctly encoded for the opposite-en
 client after disconnect teardown.
 The next-server graphics vertical slice independently covers surface allocation caps,
 plane masks, overlap-safe self-copy, and pixmap-to-window fill/copy/readback in native
-and opposite client byte orders while respecting the setup image byte order.
+and opposite client byte orders while respecting the setup image byte order. Scene tests
+cover root backing preservation, borders, nested clipping, map/unmap restoration, and an
+independent XCB child-to-root pixel readback shared with the legacy oracle.
 The OSMesa unit check confirms that the renderer itself reports OpenGL 2.0, that the
 host-endian BGRA/ARGB choice produces a native X `0x00RRGGBB` pixel, and that distinct
 draw/read memory buffers work. The software-direct tests go further: they

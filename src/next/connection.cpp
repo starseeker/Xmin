@@ -719,6 +719,11 @@ Connection::handle_create_window(const RequestContext &context)
         }
     }
 
+    if (window.surface) {
+        window.surface->fill(
+            Rectangle{0, 0, window.width, window.height},
+            window.background_pixel, 3, 0xffffffffU);
+    }
     if (!server_.add_window(std::move(window), config_.resource_base))
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
@@ -795,7 +800,7 @@ Connection::handle_map_window(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    window->mapped = true;
+    server_.set_window_mapped(*window, true);
     return Result<void>::success();
 }
 
@@ -813,8 +818,7 @@ Connection::handle_unmap_window(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
-    if (*id != root_window_id)
-        window->mapped = false;
+    server_.set_window_mapped(*window, false);
     return Result<void>::success();
 }
 
@@ -940,6 +944,7 @@ Connection::handle_configure_window(const RequestContext &context)
         }
         children.insert(position, *id);
     }
+    server_.invalidate_scene();
     return Result<void>::success();
 }
 
@@ -1683,6 +1688,7 @@ Connection::handle_copy_area(const RequestContext &context)
                            signed_word(*destination_x),
                            signed_word(*destination_y), *width, *height,
                            graphics->function, graphics->plane_mask);
+    server_.invalidate_scene();
     return Result<void>::success();
 }
 
@@ -1723,6 +1729,7 @@ Connection::handle_fill_rectangles(const RequestContext &context)
                       graphics->foreground, graphics->function,
                       graphics->plane_mask);
     }
+    server_.invalidate_scene();
     return Result<void>::success();
 }
 
@@ -1741,7 +1748,7 @@ Connection::handle_get_image(const RequestContext &context)
     const auto plane_mask = reader.u32();
     if (!drawable_id || !x || !y || !width || !height || !plane_mask)
         return malformed("truncated GetImage request");
-    const auto *surface = server_.drawable_surface(*drawable_id);
+    const auto *surface = server_.readable_surface(*drawable_id);
     if (surface == nullptr)
         return send_error(context.order, bad_drawable, context.opcode,
                           context.sequence, *drawable_id);

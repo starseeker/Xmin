@@ -275,6 +275,19 @@ main(void)
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x00ff0000U)
         goto cleanup;
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, screen->root,
+                      translated->dst_x + 6, translated->dst_y + 4,
+                      1, 1, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 4)
+        goto cleanup;
+    memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
+    if ((pixel & 0x00ffffffU) != 0x00ff0000U)
+        goto cleanup;
 
     stage = "round-tripping selection ownership";
     if (!checked(connection,

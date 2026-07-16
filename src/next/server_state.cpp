@@ -3,6 +3,7 @@
 #include "xmin/next/checked.hpp"
 
 #include <algorithm>
+#include <array>
 #include <new>
 #include <utility>
 
@@ -17,8 +18,11 @@ ServerState::ServerState(std::uint16_t width, std::uint16_t height)
     root.height = height;
     root.mapped = true;
     root.surface = Surface::create(width, height, 24);
-    if (root.surface)
-        surface_bytes_ = root.surface->storage_bytes();
+    composited_root_ = Surface::create(width, height, 24);
+    if (root.surface && composited_root_) {
+        surface_bytes_ = root.surface->storage_bytes() +
+            composited_root_->storage_bytes();
+    }
     windows_.emplace(root.id, std::move(root));
     static_cast<void>(
         resources_.insert(root_window_id, ResourceKind::window, 0));
@@ -30,7 +34,8 @@ bool
 ServerState::valid() const noexcept
 {
     const auto *root = window(root_window_id);
-    return root != nullptr && root->surface.has_value();
+    return root != nullptr && root->surface.has_value() &&
+        composited_root_.has_value();
 }
 
 WindowRecord *
@@ -88,6 +93,7 @@ ServerState::add_window(WindowRecord added, std::uint32_t owner)
     }
     window(parent_id)->children.push_back(id);
     surface_bytes_ += added_bytes;
+    invalidate_scene();
     return true;
 }
 
@@ -111,6 +117,7 @@ ServerState::resize_window_surface(WindowRecord &candidate,
     if (!candidate.surface->resize(width, height))
         return false;
     surface_bytes_ = surface_bytes_ - old_bytes + *bytes;
+    invalidate_scene();
     return true;
 }
 
@@ -225,6 +232,124 @@ ServerState::drawable_depth(std::uint32_t id) const
 {
     const auto *surface = drawable_surface(id);
     return surface == nullptr ? 0 : surface->depth();
+}
+
+Surface *
+ServerState::readable_surface(std::uint32_t id)
+{
+    if (id != root_window_id)
+        return drawable_surface(id);
+    composite_scene();
+    return composited_root_ ? &*composited_root_ : nullptr;
+}
+
+void
+ServerState::set_window_mapped(WindowRecord &candidate, bool mapped) noexcept
+{
+    if (candidate.id == root_window_id)
+        mapped = true;
+    if (candidate.mapped == mapped)
+        return;
+    candidate.mapped = mapped;
+    invalidate_scene();
+}
+
+void
+ServerState::composite_scene()
+{
+    if (!scene_dirty_ || !composited_root_)
+        return;
+    const auto *root = window(root_window_id);
+    if (root == nullptr || !root->surface)
+        return;
+    composited_root_->copy_from(*root->surface, 0, 0, 0, 0, width_, height_,
+                                3, 0xffffffffU);
+    for (const auto child : root->children) {
+        composite_window(child, 0, 0, 0, 0, width_, height_);
+    }
+    scene_dirty_ = false;
+}
+
+void
+ServerState::composite_window(std::uint32_t id, std::int64_t parent_x,
+                              std::int64_t parent_y,
+                              std::int64_t clip_left,
+                              std::int64_t clip_top,
+                              std::int64_t clip_right,
+                              std::int64_t clip_bottom)
+{
+    const auto *candidate = window(id);
+    if (candidate == nullptr || !candidate->mapped || !composited_root_)
+        return;
+
+    const std::int64_t outer_left = parent_x + candidate->x;
+    const std::int64_t outer_top = parent_y + candidate->y;
+    const std::int64_t content_left = outer_left + candidate->border_width;
+    const std::int64_t content_top = outer_top + candidate->border_width;
+    const std::int64_t content_right = content_left + candidate->width;
+    const std::int64_t content_bottom = content_top + candidate->height;
+    const std::int64_t outer_right =
+        content_right + candidate->border_width;
+    const std::int64_t outer_bottom =
+        content_bottom + candidate->border_width;
+
+    const auto intersect = [](std::int64_t first_left,
+                              std::int64_t first_top,
+                              std::int64_t first_right,
+                              std::int64_t first_bottom,
+                              std::int64_t second_left,
+                              std::int64_t second_top,
+                              std::int64_t second_right,
+                              std::int64_t second_bottom) {
+        return std::array<std::int64_t, 4>{
+            std::max(first_left, second_left),
+            std::max(first_top, second_top),
+            std::min(first_right, second_right),
+            std::min(first_bottom, second_bottom)};
+    };
+    const auto visible_outer = intersect(
+        outer_left, outer_top, outer_right, outer_bottom,
+        clip_left, clip_top, clip_right, clip_bottom);
+    const auto visible_content = intersect(
+        content_left, content_top, content_right, content_bottom,
+        clip_left, clip_top, clip_right, clip_bottom);
+
+    if (candidate->surface && visible_outer[0] < visible_outer[2] &&
+        visible_outer[1] < visible_outer[3]) {
+        composited_root_->fill(
+            Rectangle{
+                static_cast<std::int32_t>(visible_outer[0]),
+                static_cast<std::int32_t>(visible_outer[1]),
+                static_cast<std::uint32_t>(
+                    visible_outer[2] - visible_outer[0]),
+                static_cast<std::uint32_t>(
+                    visible_outer[3] - visible_outer[1])},
+            candidate->border_pixel, 3, 0xffffffffU);
+    }
+    if (candidate->surface && visible_content[0] < visible_content[2] &&
+        visible_content[1] < visible_content[3]) {
+        composited_root_->copy_from(
+            *candidate->surface,
+            static_cast<std::int32_t>(visible_content[0] - content_left),
+            static_cast<std::int32_t>(visible_content[1] - content_top),
+            static_cast<std::int32_t>(visible_content[0]),
+            static_cast<std::int32_t>(visible_content[1]),
+            static_cast<std::uint32_t>(
+                visible_content[2] - visible_content[0]),
+            static_cast<std::uint32_t>(
+                visible_content[3] - visible_content[1]),
+            3, 0xffffffffU);
+    }
+
+    if (visible_content[0] >= visible_content[2] ||
+        visible_content[1] >= visible_content[3]) {
+        return;
+    }
+    for (const auto child : candidate->children) {
+        composite_window(child, content_left, content_top,
+                         visible_content[0], visible_content[1],
+                         visible_content[2], visible_content[3]);
+    }
 }
 
 void
@@ -447,6 +572,7 @@ ServerState::destroy_window(std::uint32_t id)
     }
     windows_.erase(found);
     static_cast<void>(resources_.erase(id));
+    invalidate_scene();
 }
 
 void

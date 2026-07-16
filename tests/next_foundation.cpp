@@ -289,6 +289,78 @@ test_surface_raster_and_overlap()
 }
 
 bool
+test_scene_composition()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    xmin::next::ServerState server(16, 12);
+    auto *root = server.window(xmin::next::root_window_id);
+    root->surface->fill({0, 0, 16, 12}, 0x000000ffU, 3, 0xffffffffU);
+    server.invalidate_scene();
+
+    auto parent_surface = xmin::next::Surface::create(8, 6, 24);
+    auto child_surface = xmin::next::Surface::create(4, 4, 24);
+    if (!expect(parent_surface && child_surface,
+                "scene test surface allocation failed")) {
+        return false;
+    }
+    parent_surface->fill({0, 0, 8, 6}, 0x0000ff00U, 3, 0xffffffffU);
+    child_surface->fill({0, 0, 4, 4}, 0x00ffff00U, 3, 0xffffffffU);
+
+    xmin::next::WindowRecord parent;
+    parent.id = owner;
+    parent.parent = xmin::next::root_window_id;
+    parent.x = 2;
+    parent.y = 1;
+    parent.width = 8;
+    parent.height = 6;
+    parent.border_width = 1;
+    parent.border_pixel = 0x00ff0000U;
+    parent.mapped = true;
+    parent.surface = std::move(*parent_surface);
+    xmin::next::WindowRecord child;
+    child.id = owner + 1;
+    child.parent = owner;
+    child.x = 6;
+    child.y = 4;
+    child.width = 4;
+    child.height = 4;
+    child.mapped = true;
+    child.surface = std::move(*child_surface);
+    if (!expect(server.add_window(std::move(parent), owner),
+                "scene parent insertion failed") ||
+        !expect(server.add_window(std::move(child), owner),
+                "scene child insertion failed")) {
+        return false;
+    }
+
+    const auto *composed = server.readable_surface(xmin::next::root_window_id);
+    if (!expect(composed != nullptr, "composed root is missing") ||
+        !expect(composed->pixel(0, 0) == 0x000000ffU,
+                "root backing pixel was not preserved") ||
+        !expect(composed->pixel(2, 1) == 0x00ff0000U,
+                "window border was not composed") ||
+        !expect(composed->pixel(3, 2) == 0x0000ff00U,
+                "window content was not composed") ||
+        !expect(composed->pixel(9, 6) == 0x00ffff00U,
+                "nested window content was not composed") ||
+        !expect(composed->pixel(11, 6) == 0x00ff0000U,
+                "child content escaped its parent clip")) {
+        return false;
+    }
+
+    server.set_window_mapped(*server.window(owner), false);
+    composed = server.readable_surface(xmin::next::root_window_id);
+    if (!expect(composed->pixel(3, 2) == 0x000000ffU,
+                "unmapped window remained in the scene")) {
+        return false;
+    }
+    server.set_window_mapped(*server.window(owner), true);
+    composed = server.readable_surface(xmin::next::root_window_id);
+    return expect(composed->pixel(3, 2) == 0x0000ff00U,
+                  "remapped window did not return to the scene");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -309,7 +381,8 @@ main()
             test_wire_order(xmin::next::ByteOrder::big) &&
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_true_color() &&
-            test_surface_raster_and_overlap() && test_result()
+            test_surface_raster_and_overlap() && test_scene_composition() &&
+            test_result()
         ? 0
         : 1;
 }

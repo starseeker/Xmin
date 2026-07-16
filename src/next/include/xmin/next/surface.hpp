@@ -12,10 +12,10 @@ constexpr std::size_t maximum_surface_bytes = 64U * 1024U * 1024U;
 constexpr std::size_t maximum_server_surface_bytes = 256U * 1024U * 1024U;
 
 struct Rectangle {
-    std::int16_t x = 0;
-    std::int16_t y = 0;
-    std::uint16_t width = 0;
-    std::uint16_t height = 0;
+    std::int32_t x = 0;
+    std::int32_t y = 0;
+    std::uint32_t width = 0;
+    std::uint32_t height = 0;
 };
 
 class Surface {
@@ -34,10 +34,10 @@ public:
     bool resize(std::uint16_t width, std::uint16_t height);
     void fill(const Rectangle &rectangle, std::uint32_t source,
               std::uint8_t function, std::uint32_t plane_mask);
-    void copy_from(const Surface &source, std::int16_t source_x,
-                   std::int16_t source_y, std::int16_t destination_x,
-                   std::int16_t destination_y, std::uint16_t width,
-                   std::uint16_t height, std::uint8_t function,
+    void copy_from(const Surface &source, std::int32_t source_x,
+                   std::int32_t source_y, std::int32_t destination_x,
+                   std::int32_t destination_y, std::uint32_t width,
+                   std::uint32_t height, std::uint8_t function,
                    std::uint32_t plane_mask);
     [[nodiscard]] std::uint32_t pixel(std::uint16_t x,
                                       std::uint16_t y) const noexcept;

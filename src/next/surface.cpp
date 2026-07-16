@@ -156,10 +156,10 @@ Surface::fill(const Rectangle &rectangle, std::uint32_t source,
 }
 
 void
-Surface::copy_from(const Surface &source, std::int16_t source_x,
-                   std::int16_t source_y, std::int16_t destination_x,
-                   std::int16_t destination_y, std::uint16_t width,
-                   std::uint16_t height, std::uint8_t function,
+Surface::copy_from(const Surface &source, std::int32_t source_x,
+                   std::int32_t source_y, std::int32_t destination_x,
+                   std::int32_t destination_y, std::uint32_t width,
+                   std::uint32_t height, std::uint8_t function,
                    std::uint32_t plane_mask)
 {
     const std::int64_t first_x = std::max<std::int64_t>(
