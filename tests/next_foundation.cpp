@@ -1225,6 +1225,161 @@ test_mapping_lifecycle_events()
 }
 
 bool
+test_reparent_lifecycle_events()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t parent = owner | 1U;
+    constexpr std::uint32_t child = owner | 2U;
+    constexpr std::uint32_t crossing_mask = (1U << 4) | (1U << 5);
+    constexpr std::uint32_t focus_mask = 1U << 21;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "reparent client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 101);
+    xmin::next::WindowRecord parent_window;
+    parent_window.id = parent;
+    parent_window.parent = xmin::next::root_window_id;
+    parent_window.x = 5;
+    parent_window.y = 5;
+    parent_window.width = 40;
+    parent_window.height = 40;
+    xmin::next::WindowRecord child_window;
+    child_window.id = child;
+    child_window.parent = xmin::next::root_window_id;
+    child_window.x = 10;
+    child_window.y = 10;
+    child_window.width = 20;
+    child_window.height = 20;
+    if (!expect(server.add_window(std::move(parent_window), owner) &&
+                    server.add_window(std::move(child_window), owner) &&
+                    server.set_window_mapped(*server.window(parent), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.set_window_mapped(*server.window(child), true) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.inject_input(6, 0, 15, 15) ==
+                        xmin::next::EventDelivery::no_recipient &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window, child, 2, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "reparent lifecycle setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, focus_mask);
+    server.window(parent)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+    server.window(child)->event_masks.emplace(
+        owner, crossing_mask | focus_mask);
+
+    const auto focus = [&](std::uint8_t type, std::uint8_t detail,
+                           std::uint32_t event) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::FocusEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->mode == 0 && value->sequence == 101;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto crossing = [&](std::uint8_t type, std::uint8_t detail,
+                              std::uint32_t event,
+                              std::int16_t event_x,
+                              std::int16_t event_y) {
+        const auto *queued = server.next_event(owner);
+        const auto *value = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::next::CrossingEvent>(queued);
+        const bool matches = value != nullptr && value->type == type &&
+            value->detail == detail && value->event == event &&
+            value->child == 0 && value->event_x == event_x &&
+            value->event_y == event_y && value->mode == 0 &&
+            value->same_screen && value->focus && value->sequence == 101;
+        server.pop_event(owner);
+        return matches;
+    };
+    if (!expect(server.reparent_window(child, parent, 5, 5) ==
+                    xmin::next::ReparentUpdate::updated &&
+                    server.window(child)->parent == parent &&
+                    server.window(child)->x == 5 &&
+                    server.window(child)->y == 5 &&
+                    server.window(child)->mapped &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::window &&
+                    server.input().focus.window ==
+                        xmin::next::root_window_id &&
+                    server.input().focus.revert_to == 0 &&
+                    focus(10, 0, child) &&
+                    focus(9, 2, xmin::next::root_window_id) &&
+                    crossing(8, 3, child, 5, 5) &&
+                    crossing(7, 3, parent, 10, 10) &&
+                    crossing(8, 2, parent, 10, 10) &&
+                    crossing(7, 0, child, 5, 5) &&
+                    !server.has_pending_event(owner),
+                "reparent lifecycle sequence is wrong")) {
+        return false;
+    }
+
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window, child, 2, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "reparent rollback focus setup failed")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    xmin::next::ClientMessageEvent message;
+    message.window = child;
+    for (std::size_t count = 0;
+         count + 1 < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        child, 0, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "reparent queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.reparent_window(
+                    child, xmin::next::root_window_id, 10, 10) ==
+                    xmin::next::ReparentUpdate::queue_full &&
+                    server.window(child)->parent == parent &&
+                    server.window(child)->x == 5 &&
+                    server.window(child)->y == 5 &&
+                    server.window(child)->mapped &&
+                    server.window(parent)->children.size() == 1 &&
+                    server.window(parent)->children.front() == child &&
+                    server.window(xmin::next::root_window_id)
+                            ->children.size() == 1 &&
+                    server.window(xmin::next::root_window_id)
+                            ->children.front() == parent &&
+                    server.input().focus.kind ==
+                        xmin::next::FocusKind::window &&
+                    server.input().focus.window == child &&
+                    server.input().focus.revert_to == 2,
+                "reparent queue failure leaked tree or focus state")) {
+        return false;
+    }
+    std::size_t queued_count = 0;
+    while (server.has_pending_event(owner)) {
+        const auto *queued = server.next_event(owner);
+        if (!expect(queued != nullptr &&
+                        std::holds_alternative<
+                            xmin::next::ClientMessageEvent>(*queued),
+                    "reparent queue failure left a partial event path")) {
+            return false;
+        }
+        server.pop_event(owner);
+        ++queued_count;
+    }
+    return expect(
+        queued_count + 1 == xmin::next::maximum_pending_events_per_client,
+        "reparent queue failure changed the preexisting event count");
+}
+
+bool
 test_true_color()
 {
     const auto red = xmin::next::parse_color("Red");
@@ -1461,17 +1616,20 @@ test_window_tree_mutations()
         return false;
     }
     static_cast<void>(server.set_subwindows_mapped(owner, true));
-    if (!expect(!server.reparent_window(owner, owner + 1, 0, 0),
+    if (!expect(server.reparent_window(owner, owner + 1, 0, 0) ==
+                    xmin::next::ReparentUpdate::invalid,
                 "window cycle was accepted") ||
         !expect(server.reparent_window(
-                    owner + 1, xmin::next::root_window_id, 7, 8),
+                    owner + 1, xmin::next::root_window_id, 7, 8) ==
+                    xmin::next::ReparentUpdate::updated,
                 "window reparenting failed") ||
         !expect(server.window(owner + 1)->parent ==
                     xmin::next::root_window_id,
                 "reparented window retained its old parent") ||
         !expect(server.window(owner)->children.empty(),
                 "old parent retained a reparented child") ||
-        !expect(server.reparent_window(owner + 1, owner, 1, 2),
+        !expect(server.reparent_window(owner + 1, owner, 1, 2) ==
+                    xmin::next::ReparentUpdate::updated,
                 "window reparenting back to its owner failed")) {
         return false;
     }
@@ -1535,6 +1693,7 @@ main()
             test_automatic_pointer_grab() &&
             test_focus_events() &&
             test_mapping_lifecycle_events() &&
+            test_reparent_lifecycle_events() &&
             test_true_color() &&
             test_surface_raster_and_overlap() && test_region_clipping() &&
             test_scene_composition() &&

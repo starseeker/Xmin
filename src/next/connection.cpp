@@ -1172,12 +1172,16 @@ Connection::handle_reparent_window(const RequestContext &context)
         return send_error(context.order, bad_match, context.opcode,
                           context.sequence);
     }
-    if (!server_.reparent_window(*id, *parent_id, signed_word(*x),
-                                 signed_word(*y))) {
+    const auto updated = server_.reparent_window(
+        *id, *parent_id, signed_word(*x), signed_word(*y));
+    if (updated == ReparentUpdate::invalid) {
         return send_error(context.order, bad_match, context.opcode,
                           context.sequence);
     }
-    return Result<void>::success();
+    if (updated == ReparentUpdate::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>

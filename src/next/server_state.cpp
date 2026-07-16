@@ -476,8 +476,9 @@ ServerState::update_window_mappings(
     EventDelivery focus = EventDelivery::no_recipient;
     if (old_focus.kind != new_focus.kind ||
         old_focus.window != new_focus.window) {
-        focus = append_focus_events(old_focus, new_focus,
-                                    input_.keyboard_grab ? 3 : 0, events);
+        focus = append_focus_events(
+            old_focus, new_focus, input_.keyboard_grab ? 3 : 0,
+            old_pointer_window, events);
     }
     EventDelivery crossing = EventDelivery::no_recipient;
     if (focus != EventDelivery::queue_full &&
@@ -641,7 +642,9 @@ ServerState::set_input_focus(FocusKind kind, std::uint32_t window_id,
     next.changed_at = effective_time;
     next.revert_to = revert_to;
     std::vector<PlannedEvent> events;
-    if (append_focus_events(input_.focus, next, 0, events) ==
+    const std::uint32_t pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    if (append_focus_events(input_.focus, next, 0, pointer_window, events) ==
             EventDelivery::queue_full ||
         !queue_events_atomically(events)) {
         return FocusUpdate::queue_full;
@@ -1175,7 +1178,7 @@ ServerState::append_crossing_events(
 EventDelivery
 ServerState::append_focus_events(
     const FocusState &from, const FocusState &to, std::uint8_t mode,
-    std::vector<PlannedEvent> &events) const
+    std::uint32_t pointer_window, std::vector<PlannedEvent> &events) const
 {
     if (from.kind == to.kind &&
         (from.kind != FocusKind::window || from.window == to.window)) {
@@ -1219,8 +1222,6 @@ ServerState::append_focus_events(
         return static_cast<std::uint8_t>(
             kind == FocusKind::pointer_root ? 6 : 7);
     };
-    const std::uint32_t pointer_window = deepest_window_at(
-        root_window_id, input_.pointer_x, input_.pointer_y);
     const auto pointer_related = [&](std::uint32_t left,
                                      std::uint32_t right) {
         return is_descendant(left, right) || is_descendant(right, left);
@@ -1823,7 +1824,7 @@ ServerState::is_descendant(std::uint32_t candidate,
     return false;
 }
 
-bool
+ReparentUpdate
 ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
                              std::int16_t x, std::int16_t y)
 {
@@ -1831,38 +1832,112 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     auto *parent = window(new_parent);
     if (candidate == nullptr || parent == nullptr || id == root_window_id ||
         id == new_parent || is_descendant(new_parent, id)) {
-        return false;
+        return ReparentUpdate::invalid;
     }
     const std::uint32_t old_parent_id = candidate->parent;
-    if (old_parent_id == new_parent) {
-        auto &children = parent->children;
-        children.erase(std::remove(children.begin(), children.end(), id),
-                       children.end());
-        children.push_back(id);
+    auto *old_parent = window(old_parent_id);
+    if (old_parent == nullptr)
+        return ReparentUpdate::invalid;
+
+    const bool same_parent = old_parent_id == new_parent;
+    std::vector<std::uint32_t> old_children;
+    std::vector<std::uint32_t> new_children;
+    try {
+        old_children = old_parent->children;
+        old_children.erase(
+            std::remove(old_children.begin(), old_children.end(), id),
+            old_children.end());
+        if (same_parent) {
+            old_children.push_back(id);
+        }
+        else {
+            new_children = parent->children;
+            new_children.push_back(id);
+        }
     }
-    else {
-        try {
-            parent->children.push_back(id);
-        }
-        catch (const std::bad_alloc &) {
-            return false;
-        }
-        auto *old_parent = window(old_parent_id);
-        if (old_parent != nullptr) {
-            auto &children = old_parent->children;
-            children.erase(std::remove(children.begin(), children.end(), id),
-                           children.end());
-        }
-        candidate->parent = new_parent;
+    catch (const std::bad_alloc &) {
+        return ReparentUpdate::queue_full;
     }
+
+    const std::int16_t old_x = candidate->x;
+    const std::int16_t old_y = candidate->y;
+    const bool was_mapped = candidate->mapped;
+    const std::uint32_t old_pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    const FocusState old_focus = input_.focus;
+    FocusState new_focus = old_focus;
+    std::vector<PlannedEvent> events;
+    EventDelivery focus = EventDelivery::no_recipient;
+    EventDelivery unmap_crossing = EventDelivery::no_recipient;
+    EventDelivery map_crossing = EventDelivery::no_recipient;
+
+    candidate->mapped = false;
+    const std::uint32_t unmapped_pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    if (was_mapped && old_focus.kind == FocusKind::window &&
+        map_state(old_focus.window) != 2) {
+        new_focus = reverted_focus_state();
+    }
+    if (was_mapped &&
+        (old_focus.kind != new_focus.kind ||
+         old_focus.window != new_focus.window)) {
+        focus = append_focus_events(
+            old_focus, new_focus, input_.keyboard_grab ? 3 : 0,
+            old_pointer_window, events);
+    }
+    if (was_mapped && focus != EventDelivery::queue_full &&
+        old_pointer_window != unmapped_pointer_window) {
+        unmap_crossing = append_crossing_events(
+            old_pointer_window, unmapped_pointer_window,
+            input_.pointer_x, input_.pointer_y,
+            input_.modifier_button_mask, 0,
+            input_.pointer_grab ? &*input_.pointer_grab : nullptr,
+            new_focus, events);
+    }
+
+    old_parent->children.swap(old_children);
+    if (!same_parent)
+        parent->children.swap(new_children);
+    candidate->parent = new_parent;
     candidate->x = x;
     candidate->y = y;
-    if (input_.focus.kind == FocusKind::window &&
-        map_state(input_.focus.window) != 2) {
-        revert_focus_from(id);
+    candidate->mapped = was_mapped;
+    const std::uint32_t new_pointer_window = deepest_window_at(
+        root_window_id, input_.pointer_x, input_.pointer_y);
+    if (was_mapped && focus != EventDelivery::queue_full &&
+        unmap_crossing != EventDelivery::queue_full &&
+        unmapped_pointer_window != new_pointer_window) {
+        map_crossing = append_crossing_events(
+            unmapped_pointer_window, new_pointer_window,
+            input_.pointer_x, input_.pointer_y,
+            input_.modifier_button_mask, 0,
+            input_.pointer_grab ? &*input_.pointer_grab : nullptr,
+            new_focus, events);
     }
+
+    candidate->mapped = was_mapped;
+    candidate->parent = old_parent_id;
+    candidate->x = old_x;
+    candidate->y = old_y;
+    old_parent->children.swap(old_children);
+    if (!same_parent)
+        parent->children.swap(new_children);
+    if (focus == EventDelivery::queue_full ||
+        unmap_crossing == EventDelivery::queue_full ||
+        map_crossing == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return ReparentUpdate::queue_full;
+    }
+
+    old_parent->children.swap(old_children);
+    if (!same_parent)
+        parent->children.swap(new_children);
+    candidate->parent = new_parent;
+    candidate->x = x;
+    candidate->y = y;
+    input_.focus = new_focus;
     invalidate_scene();
-    return true;
+    return ReparentUpdate::updated;
 }
 
 EventDelivery

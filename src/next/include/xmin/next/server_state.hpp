@@ -232,6 +232,12 @@ enum class FocusUpdate {
     queue_full,
 };
 
+enum class ReparentUpdate {
+    updated,
+    invalid,
+    queue_full,
+};
+
 enum class PassiveGrabUpdate {
     updated,
     access_denied,
@@ -316,9 +322,9 @@ public:
     void delete_property(WindowRecord &window, AtomId property);
     [[nodiscard]] EventDelivery destroy_window(std::uint32_t id);
     [[nodiscard]] EventDelivery destroy_subwindows(std::uint32_t id);
-    [[nodiscard]] bool reparent_window(std::uint32_t id,
-                                       std::uint32_t new_parent,
-                                       std::int16_t x, std::int16_t y);
+    [[nodiscard]] ReparentUpdate reparent_window(
+        std::uint32_t id, std::uint32_t new_parent,
+        std::int16_t x, std::int16_t y);
     [[nodiscard]] EventDelivery set_subwindows_mapped(
         std::uint32_t id, bool mapped);
     void grab_server(std::uint32_t owner) noexcept
@@ -401,7 +407,8 @@ private:
         std::vector<PlannedEvent> &events) const;
     [[nodiscard]] EventDelivery append_focus_events(
         const FocusState &from, const FocusState &to,
-        std::uint8_t mode, std::vector<PlannedEvent> &events) const;
+        std::uint8_t mode, std::uint32_t pointer_window,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] EventDelivery update_window_mappings(
         const std::uint32_t *windows, std::size_t count, bool mapped);
     [[nodiscard]] FocusState reverted_focus_state(

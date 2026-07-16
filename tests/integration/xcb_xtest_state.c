@@ -63,11 +63,22 @@ main(void)
         xcb_disconnect(connection);
         return 1;
     }
-    const xcb_window_t child = xcb_generate_id(connection);
     const uint32_t child_event_mask =
         XCB_EVENT_MASK_POINTER_MOTION | XCB_EVENT_MASK_ENTER_WINDOW |
         XCB_EVENT_MASK_LEAVE_WINDOW | XCB_EVENT_MASK_FOCUS_CHANGE;
+    const xcb_window_t reparent_parent = xcb_generate_id(connection);
+    const xcb_window_t child = xcb_generate_id(connection);
     if (!checked(connection,
+                 xcb_create_window_checked(
+                     connection, XCB_COPY_FROM_PARENT, reparent_parent,
+                     screen->root, 50, 5, 30, 30, 0,
+                     XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
+                     XCB_CW_EVENT_MASK, &child_event_mask),
+                 "create reparent destination") ||
+        !checked(connection,
+                 xcb_map_window_checked(connection, reparent_parent),
+                 "map reparent destination") ||
+        !checked(connection,
                  xcb_create_window_checked(
                      connection, XCB_COPY_FROM_PARENT, child, screen->root,
                      10, 10, 30, 30, 0, XCB_WINDOW_CLASS_INPUT_OUTPUT,
@@ -547,6 +558,115 @@ main(void)
     }
     free(event);
 
+    const uint32_t reparent_position[] = {5, 5};
+    if (!checked(connection,
+                 xcb_configure_window_checked(
+                     connection, reparent_parent,
+                     XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y,
+                     reparent_position),
+                 "position reparent destination") ||
+        !checked(connection,
+                 xcb_set_input_focus_checked(
+                     connection, XCB_INPUT_FOCUS_PARENT, child,
+                     XCB_CURRENT_TIME),
+                 "focus child for reparent transition")) {
+        goto cleanup;
+    }
+    while ((event = xcb_poll_for_event(connection)) != NULL)
+        free(event);
+    if (!checked(connection,
+                 xcb_reparent_window_checked(
+                     connection, child, reparent_parent, 5, 5),
+                 "reparent focused pointer child")) {
+        goto cleanup;
+    }
+    event = poll_event_type(connection, XCB_FOCUS_OUT);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        focus_event->event != child ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "reparent lifecycle FocusOut failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_FOCUS_IN);
+    focus_event = (xcb_focus_out_event_t *) event;
+    if (focus_event == NULL ||
+        focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        focus_event->event != screen->root ||
+        focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
+        fprintf(stderr, "reparent lifecycle FocusIn failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_NONLINEAR ||
+        leave_event->event != child || leave_event->child != XCB_NONE ||
+        leave_event->event_x != 7 || leave_event->event_y != 9 ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        leave_event->same_screen_focus != 3) {
+        fprintf(stderr, "reparent unmap LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_NONLINEAR ||
+        enter_event->event != reparent_parent ||
+        enter_event->child != XCB_NONE ||
+        enter_event->event_x != 12 || enter_event->event_y != 14 ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        enter_event->same_screen_focus != 3) {
+        fprintf(stderr, "reparent unmap EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_LEAVE_NOTIFY);
+    leave_event = (xcb_leave_notify_event_t *) event;
+    if (leave_event == NULL ||
+        leave_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
+        leave_event->event != reparent_parent ||
+        leave_event->child != XCB_NONE ||
+        leave_event->event_x != 12 || leave_event->event_y != 14 ||
+        leave_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        leave_event->same_screen_focus != 3) {
+        fprintf(stderr, "reparent map LeaveNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    event = poll_event_type(connection, XCB_ENTER_NOTIFY);
+    enter_event = (xcb_enter_notify_event_t *) event;
+    if (enter_event == NULL ||
+        enter_event->detail != XCB_NOTIFY_DETAIL_ANCESTOR ||
+        enter_event->event != child || enter_event->child != XCB_NONE ||
+        enter_event->event_x != 7 || enter_event->event_y != 9 ||
+        enter_event->mode != XCB_NOTIFY_MODE_NORMAL ||
+        enter_event->same_screen_focus != 3) {
+        fprintf(stderr, "reparent map EnterNotify failed\n");
+        free(event);
+        goto cleanup;
+    }
+    free(event);
+    xcb_get_input_focus_reply_t *reparent_focus = xcb_get_input_focus_reply(
+        connection, xcb_get_input_focus(connection), &error);
+    if (error != NULL || reparent_focus == NULL ||
+        reparent_focus->focus != screen->root ||
+        reparent_focus->revert_to != XCB_INPUT_FOCUS_NONE) {
+        fprintf(stderr, "reparent lifecycle focus state failed\n");
+        free(reparent_focus);
+        goto cleanup;
+    }
+    free(reparent_focus);
+
     xcb_test_compare_cursor_reply_t *cursor = xcb_test_compare_cursor_reply(
         connection,
         xcb_test_compare_cursor(
@@ -587,7 +707,7 @@ main(void)
     focus_event = (xcb_focus_out_event_t *) event;
     if (focus_event == NULL ||
         focus_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
-        focus_event->event != screen->root ||
+        focus_event->event != reparent_parent ||
         focus_event->mode != XCB_NOTIFY_MODE_NORMAL) {
         fprintf(stderr, "destroy lifecycle FocusIn failed\n");
         free(event);
@@ -611,8 +731,9 @@ main(void)
     enter_event = (xcb_enter_notify_event_t *) event;
     if (enter_event == NULL ||
         enter_event->detail != XCB_NOTIFY_DETAIL_INFERIOR ||
-        enter_event->event != screen->root || enter_event->child != XCB_NONE ||
-        enter_event->root_x != 17 || enter_event->root_y != 19 ||
+        enter_event->event != reparent_parent ||
+        enter_event->child != XCB_NONE ||
+        enter_event->event_x != 12 || enter_event->event_y != 14 ||
         enter_event->mode != XCB_NOTIFY_MODE_NORMAL ||
         enter_event->same_screen_focus != 3) {
         fprintf(stderr, "destroy lifecycle EnterNotify failed\n");
@@ -623,7 +744,7 @@ main(void)
     xcb_get_input_focus_reply_t *destroy_focus = xcb_get_input_focus_reply(
         connection, xcb_get_input_focus(connection), &error);
     if (error != NULL || destroy_focus == NULL ||
-        destroy_focus->focus != screen->root ||
+        destroy_focus->focus != reparent_parent ||
         destroy_focus->revert_to != XCB_INPUT_FOCUS_NONE) {
         fprintf(stderr, "destroy lifecycle focus state failed\n");
         free(destroy_focus);
