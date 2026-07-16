@@ -148,14 +148,17 @@ test_shared_server_state()
                 "server root window is missing") ||
         !expect(server.input().pointer_x == 160 &&
                     server.input().pointer_y == 120 &&
-                    server.input().modifier_button_mask == 0,
+                    server.input().modifier_button_mask == 0 &&
+                    server.input().pressed_buttons.none(),
                 "input snapshot did not initialize at screen center") ||
         !expect(server.input().pressed_keys ==
                     std::array<std::uint8_t, 32>{},
                 "input snapshot initialized with pressed keys") ||
         !expect(server.input().keymap[96][0] == 0x0000ffc9U &&
                     server.input().modifier_map ==
-                        xmin::next::core_modifier_map &&
+                        std::vector<std::uint8_t>(
+                            xmin::next::core_modifier_map.begin(),
+                            xmin::next::core_modifier_map.end()) &&
                     server.input().auto_repeats ==
                         xmin::next::default_auto_repeats &&
                     server.input().pointer_map ==

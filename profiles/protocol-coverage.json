@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "e13c13b71fd8f9944a717ce8a1a96d6a2c6d9f88142329693629deeb0dab5026",
+    "policy_sha256": "bc8e688370dadb2638eeb963e2d54124f41d74be2d41b47f93af35ec685d5e71",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -846,7 +846,7 @@
       "name": "ChangeKeyboardControl",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 103,
@@ -860,14 +860,14 @@
       "name": "Bell",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 105,
       "name": "ChangePointerControl",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 106,
@@ -944,7 +944,7 @@
       "name": "SetPointerMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 117,
@@ -958,7 +958,7 @@
       "name": "SetModifierMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 119,

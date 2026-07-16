@@ -141,6 +141,8 @@ main(void)
     xcb_get_pointer_control_reply_t *pointer_control = NULL;
     xcb_get_pointer_mapping_reply_t *pointer_mapping = NULL;
     xcb_get_modifier_mapping_reply_t *modifier_mapping = NULL;
+    xcb_set_pointer_mapping_reply_t *set_pointer_mapping = NULL;
+    xcb_set_modifier_mapping_reply_t *set_modifier_mapping = NULL;
     xcb_get_input_focus_reply_t *focus = NULL;
     xcb_grab_pointer_reply_t *pointer_grab = NULL;
     xcb_grab_keyboard_reply_t *keyboard_grab = NULL;
@@ -478,6 +480,141 @@ main(void)
             xcb_get_modifier_mapping_keycodes_length(modifier_mapping) != 32 ||
             memcmp(xcb_get_modifier_mapping_keycodes(modifier_mapping),
                    expected_modifiers, sizeof(expected_modifiers)) != 0) {
+            goto cleanup;
+        }
+    }
+
+    stage = "mutating typed core input maps and controls";
+    {
+        uint32_t keyboard_values[2] = { 23, 17 };
+        uint32_t repeat_values[2] = { 96, XCB_AUTO_REPEAT_MODE_OFF };
+        uint8_t swapped_buttons[10] = { 2, 1, 3, 4, 5, 6, 7, 8, 9, 10 };
+        uint8_t default_buttons[10] = { 1, 2, 3, 4, 5, 6, 7, 8, 9, 10 };
+        uint8_t duplicate_buttons[10] = { 1, 1, 3, 4, 5, 6, 7, 8, 9, 10 };
+        uint8_t empty_modifier = 0;
+        static const uint8_t expected_modifiers[32] = {
+            50, 62, 0, 0, 66, 0, 0, 0, 37, 105, 0, 0, 64, 108, 204, 205,
+            77, 0, 0, 0, 203, 0, 0, 0, 133, 134, 206, 0, 92, 0, 0, 0
+        };
+
+        if (!checked(connection,
+                     xcb_change_keyboard_control_checked(
+                         connection,
+                         XCB_KB_KEY_CLICK_PERCENT | XCB_KB_BELL_PERCENT,
+                         keyboard_values),
+                     "ChangeKeyboardControl feedback") ||
+            !checked(connection,
+                     xcb_change_keyboard_control_checked(
+                         connection, XCB_KB_KEY | XCB_KB_AUTO_REPEAT_MODE,
+                         repeat_values),
+                     "ChangeKeyboardControl repeat")) {
+            goto cleanup;
+        }
+        free(keyboard_control);
+        keyboard_control = xcb_get_keyboard_control_reply(
+            connection, xcb_get_keyboard_control(connection), &error);
+        if (error != NULL || keyboard_control == NULL ||
+            keyboard_control->key_click_percent != 23 ||
+            keyboard_control->bell_percent != 17 ||
+            (keyboard_control->auto_repeats[12] & 1U) != 0 ||
+            !checked_error(
+                connection,
+                xcb_change_pointer_control_checked(
+                    connection, 3, 0, 7, 1, 1),
+                XCB_VALUE, "ChangePointerControl invalid denominator") ||
+            !checked(connection,
+                     xcb_change_pointer_control_checked(
+                         connection, 3, 2, 7, 1, 1),
+                     "ChangePointerControl")) {
+            goto cleanup;
+        }
+        free(pointer_control);
+        pointer_control = xcb_get_pointer_control_reply(
+            connection, xcb_get_pointer_control(connection), &error);
+        if (error != NULL || pointer_control == NULL ||
+            pointer_control->acceleration_numerator != 3 ||
+            pointer_control->acceleration_denominator != 2 ||
+            pointer_control->threshold != 7 ||
+            !checked(connection, xcb_bell_checked(connection, 25), "Bell") ||
+            !checked_error(connection, xcb_bell_checked(connection, 101),
+                           XCB_VALUE, "Bell invalid percentage")) {
+            goto cleanup;
+        }
+
+        set_pointer_mapping = xcb_set_pointer_mapping_reply(
+            connection,
+            xcb_set_pointer_mapping(connection, 10, swapped_buttons),
+            &error);
+        if (error != NULL || set_pointer_mapping == NULL ||
+            set_pointer_mapping->status != XCB_MAPPING_STATUS_SUCCESS)
+            goto cleanup;
+        free(set_pointer_mapping);
+        set_pointer_mapping = NULL;
+        free(pointer_mapping);
+        pointer_mapping = xcb_get_pointer_mapping_reply(
+            connection, xcb_get_pointer_mapping(connection), &error);
+        if (error != NULL || pointer_mapping == NULL ||
+            xcb_get_pointer_mapping_map(pointer_mapping)[0] != 2 ||
+            xcb_get_pointer_mapping_map(pointer_mapping)[1] != 1)
+            goto cleanup;
+        set_pointer_mapping = xcb_set_pointer_mapping_reply(
+            connection,
+            xcb_set_pointer_mapping(connection, 10, duplicate_buttons),
+            &error);
+        if (set_pointer_mapping != NULL || error == NULL ||
+            error->error_code != XCB_VALUE)
+            goto cleanup;
+        free(error);
+        error = NULL;
+        set_pointer_mapping = xcb_set_pointer_mapping_reply(
+            connection,
+            xcb_set_pointer_mapping(connection, 10, default_buttons),
+            &error);
+        if (error != NULL || set_pointer_mapping == NULL ||
+            set_pointer_mapping->status != XCB_MAPPING_STATUS_SUCCESS)
+            goto cleanup;
+
+        set_modifier_mapping = xcb_set_modifier_mapping_reply(
+            connection,
+            xcb_set_modifier_mapping(connection, 0, &empty_modifier),
+            &error);
+        if (error != NULL || set_modifier_mapping == NULL ||
+            set_modifier_mapping->status != XCB_MAPPING_STATUS_SUCCESS)
+            goto cleanup;
+        free(set_modifier_mapping);
+        set_modifier_mapping = NULL;
+        free(modifier_mapping);
+        modifier_mapping = xcb_get_modifier_mapping_reply(
+            connection, xcb_get_modifier_mapping(connection), &error);
+        if (error != NULL || modifier_mapping == NULL ||
+            modifier_mapping->keycodes_per_modifier != 0)
+            goto cleanup;
+        set_modifier_mapping = xcb_set_modifier_mapping_reply(
+            connection,
+            xcb_set_modifier_mapping(connection, 4, expected_modifiers),
+            &error);
+        if (error != NULL || set_modifier_mapping == NULL ||
+            set_modifier_mapping->status != XCB_MAPPING_STATUS_SUCCESS)
+            goto cleanup;
+
+        keyboard_values[0] = UINT32_MAX;
+        keyboard_values[1] = UINT32_MAX;
+        repeat_values[1] = XCB_AUTO_REPEAT_MODE_DEFAULT;
+        if (!checked(connection,
+                     xcb_change_keyboard_control_checked(
+                         connection,
+                         XCB_KB_KEY_CLICK_PERCENT | XCB_KB_BELL_PERCENT,
+                         keyboard_values),
+                     "Restore keyboard feedback") ||
+            !checked(connection,
+                     xcb_change_keyboard_control_checked(
+                         connection, XCB_KB_KEY | XCB_KB_AUTO_REPEAT_MODE,
+                         repeat_values),
+                     "Restore keyboard repeat") ||
+            !checked(connection,
+                     xcb_change_pointer_control_checked(
+                         connection, -1, -1, -1, 1, 1),
+                     "Restore pointer controls")) {
             goto cleanup;
         }
     }
@@ -1161,7 +1298,9 @@ cleanup:
     free(pointer_grab);
     free(focus);
     free(modifier_mapping);
+    free(set_modifier_mapping);
     free(pointer_mapping);
+    free(set_pointer_mapping);
     free(pointer_control);
     free(keyboard_control);
     free(keyboard_mapping);

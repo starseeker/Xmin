@@ -78,6 +78,22 @@ signed_word(std::uint16_t value) noexcept
             : widened - 65536);
 }
 
+std::int16_t
+signed_byte(std::uint8_t value) noexcept
+{
+    const std::int16_t widened = value;
+    return widened <= std::numeric_limits<std::int8_t>::max()
+        ? widened
+        : static_cast<std::int16_t>(widened - 256);
+}
+
+bool
+key_is_pressed(const InputState &input, std::uint8_t keycode) noexcept
+{
+    return (input.pressed_keys[keycode >> 3] &
+            (1U << (keycode & 7U))) != 0;
+}
+
 std::int32_t
 signed_dword(std::uint32_t value) noexcept
 {
@@ -4007,6 +4023,167 @@ Connection::handle_get_keyboard_mapping(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_change_keyboard_control(const RequestContext &context)
+{
+    if (context.request.size() < 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto value_mask = reader.u32();
+    if (!value_mask)
+        return malformed("truncated ChangeKeyboardControl request");
+    const std::size_t value_count = std::bitset<32>(*value_mask).count();
+    if (context.request.size() != 8 + value_count * 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+
+    const auto &input = server_.input();
+    auto auto_repeats = input.auto_repeats;
+    std::uint32_t led_mask = input.led_mask;
+    std::uint16_t bell_pitch = input.bell_pitch;
+    std::uint16_t bell_duration = input.bell_duration;
+    std::uint8_t key_click_percent = input.key_click_percent;
+    std::uint8_t bell_percent = input.bell_percent;
+    bool global_auto_repeat = input.global_auto_repeat;
+    std::optional<std::uint8_t> selected_led;
+    std::optional<std::uint8_t> selected_key;
+
+    for (std::uint32_t bit = 1; bit != 0; bit <<= 1) {
+        if ((*value_mask & bit) == 0)
+            continue;
+        const auto value = reader.u32();
+        if (!value)
+            return malformed("truncated ChangeKeyboardControl values");
+        switch (bit) {
+        case 1U << 0: {
+            std::int16_t percent = signed_byte(
+                static_cast<std::uint8_t>(*value));
+            if (percent == -1)
+                percent = default_key_click_percent;
+            else if (percent < 0 || percent > 100)
+                return send_error(
+                    context.order, bad_value, context.opcode,
+                    context.sequence, static_cast<std::uint32_t>(percent));
+            key_click_percent = static_cast<std::uint8_t>(percent);
+            break;
+        }
+        case 1U << 1: {
+            std::int16_t percent = signed_byte(
+                static_cast<std::uint8_t>(*value));
+            if (percent == -1)
+                percent = default_bell_percent;
+            else if (percent < 0 || percent > 100)
+                return send_error(
+                    context.order, bad_value, context.opcode,
+                    context.sequence, static_cast<std::uint32_t>(percent));
+            bell_percent = static_cast<std::uint8_t>(percent);
+            break;
+        }
+        case 1U << 2: {
+            std::int32_t pitch = signed_word(
+                static_cast<std::uint16_t>(*value));
+            if (pitch == -1)
+                pitch = default_bell_pitch;
+            else if (pitch < 0)
+                return send_error(
+                    context.order, bad_value, context.opcode,
+                    context.sequence, static_cast<std::uint32_t>(pitch));
+            bell_pitch = static_cast<std::uint16_t>(pitch);
+            break;
+        }
+        case 1U << 3: {
+            std::int32_t duration = signed_word(
+                static_cast<std::uint16_t>(*value));
+            if (duration == -1)
+                duration = default_bell_duration;
+            else if (duration < 0)
+                return send_error(
+                    context.order, bad_value, context.opcode,
+                    context.sequence, static_cast<std::uint32_t>(duration));
+            bell_duration = static_cast<std::uint16_t>(duration);
+            break;
+        }
+        case 1U << 4: {
+            const auto led = static_cast<std::uint8_t>(*value);
+            if (led < 1 || led > 32)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, led);
+            if ((*value_mask & (1U << 5)) == 0)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence);
+            selected_led = led;
+            break;
+        }
+        case 1U << 5: {
+            const auto mode = static_cast<std::uint8_t>(*value);
+            if (mode > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, mode);
+            const std::uint32_t affected = selected_led
+                ? 1U << (*selected_led - 1U)
+                : 0xffffffffU;
+            if (mode == 0)
+                led_mask &= ~affected;
+            else
+                led_mask |= affected;
+            break;
+        }
+        case 1U << 6: {
+            const auto key = static_cast<std::uint8_t>(*value);
+            if (key < minimum_keycode || key > maximum_keycode)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, key);
+            if ((*value_mask & (1U << 7)) == 0)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence);
+            selected_key = key;
+            break;
+        }
+        case 1U << 7: {
+            const auto mode = static_cast<std::uint8_t>(*value);
+            if (mode > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, mode);
+            if (!selected_key) {
+                global_auto_repeat = mode == 2
+                    ? default_global_auto_repeat
+                    : mode == 1;
+                break;
+            }
+            const std::uint8_t key = *selected_key;
+            const std::uint8_t mask =
+                static_cast<std::uint8_t>(1U << (key & 7U));
+            auto &repeats = auto_repeats[key >> 3];
+            if (mode == 0)
+                repeats &= static_cast<std::uint8_t>(~mask);
+            else if (mode == 1)
+                repeats |= mask;
+            else {
+                repeats = static_cast<std::uint8_t>(
+                    (repeats & ~mask) |
+                    (default_auto_repeats[key >> 3] & mask));
+            }
+            break;
+        }
+        default:
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, *value_mask);
+        }
+    }
+
+    auto &updated = server_.input();
+    updated.auto_repeats = auto_repeats;
+    updated.led_mask = led_mask;
+    updated.bell_pitch = bell_pitch;
+    updated.bell_duration = bell_duration;
+    updated.key_click_percent = key_click_percent;
+    updated.bell_percent = bell_percent;
+    updated.global_auto_repeat = global_auto_repeat;
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_keyboard_control(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -4030,6 +4207,78 @@ Connection::handle_get_keyboard_control(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_bell(const RequestContext &context)
+{
+    if (context.request.size() != 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    const std::int16_t percent = signed_byte(context.data);
+    if (percent < -100 || percent > 100)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence,
+                          static_cast<std::uint32_t>(percent));
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_change_pointer_control(const RequestContext &context)
+{
+    if (context.request.size() != 12)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader reader(context.request.data() + 4, 8, context.order);
+    const auto numerator_wire = reader.u16();
+    const auto denominator_wire = reader.u16();
+    const auto threshold_wire = reader.u16();
+    const auto change_acceleration = reader.u8();
+    const auto change_threshold = reader.u8();
+    if (!numerator_wire || !denominator_wire || !threshold_wire ||
+        !change_acceleration || !change_threshold) {
+        return malformed("truncated ChangePointerControl request");
+    }
+    if (*change_acceleration > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *change_acceleration);
+    if (*change_threshold > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *change_threshold);
+
+    auto &input = server_.input();
+    std::int16_t numerator = input.pointer_acceleration_numerator;
+    std::int16_t denominator = input.pointer_acceleration_denominator;
+    std::int16_t threshold = input.pointer_threshold;
+    if (*change_acceleration != 0) {
+        numerator = signed_word(*numerator_wire);
+        denominator = signed_word(*denominator_wire);
+        if (numerator == -1)
+            numerator = default_pointer_acceleration_numerator;
+        else if (numerator < 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence,
+                              static_cast<std::uint32_t>(numerator));
+        if (denominator == -1)
+            denominator = default_pointer_acceleration_denominator;
+        else if (denominator <= 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence,
+                              static_cast<std::uint32_t>(denominator));
+    }
+    if (*change_threshold != 0) {
+        threshold = signed_word(*threshold_wire);
+        if (threshold == -1)
+            threshold = default_pointer_threshold;
+        else if (threshold < 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence,
+                              static_cast<std::uint32_t>(threshold));
+    }
+    input.pointer_acceleration_numerator = numerator;
+    input.pointer_acceleration_denominator = denominator;
+    input.pointer_threshold = threshold;
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_pointer_control(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -4047,6 +4296,48 @@ Connection::handle_get_pointer_control(const RequestContext &context)
         input.pointer_acceleration_denominator));
     reply.u16(static_cast<std::uint16_t>(input.pointer_threshold));
     reply.pad(18);
+    return queue(reply.data());
+}
+
+Result<void>
+Connection::handle_set_pointer_mapping(const RequestContext &context)
+{
+    const auto padded = padded_to_four(context.data);
+    if (!padded || context.request.size() != 4 + *padded)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    auto &input = server_.input();
+    if (context.data != input.pointer_map.size())
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    std::array<std::uint8_t, 256> seen{};
+    for (std::size_t index = 0; index < input.pointer_map.size(); ++index) {
+        const std::uint8_t mapped = context.request[4 + index];
+        if (mapped != 0 && seen[mapped] != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, mapped);
+        seen[mapped] = 1;
+    }
+
+    std::uint8_t status = 0;
+    for (std::size_t index = 0; index < input.pointer_map.size(); ++index) {
+        if (input.pointer_map[index] != context.request[4 + index] &&
+            input.pressed_buttons.test(index + 1)) {
+            status = 1;
+            break;
+        }
+    }
+    if (status == 0) {
+        std::copy_n(context.request.begin() + 4, input.pointer_map.size(),
+                    input.pointer_map.begin());
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(status);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.pad(24);
     return queue(reply.data());
 }
 
@@ -4073,6 +4364,77 @@ Connection::handle_get_pointer_mapping(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_set_modifier_mapping(const RequestContext &context)
+{
+    const std::size_t map_size = static_cast<std::size_t>(context.data) * 8;
+    if (context.request.size() != 4 + map_size)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    std::array<std::uint8_t, 256> seen{};
+    std::array<std::uint8_t, 256> assigned_group{};
+    std::array<std::size_t, 8> group_sizes{};
+    const auto &input = server_.input();
+    std::uint8_t status = 0;
+    for (std::size_t index = 0; index < map_size; ++index) {
+        const std::uint8_t keycode = context.request[4 + index];
+        if (keycode == 0)
+            continue;
+        if (seen[keycode] != 0)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence);
+        seen[keycode] = 1;
+        const std::size_t group = index / context.data;
+        assigned_group[keycode] = static_cast<std::uint8_t>(group + 1);
+        ++group_sizes[group];
+        if (keycode < minimum_keycode || keycode > maximum_keycode)
+            return send_error(context.order, bad_value, context.opcode,
+                              context.sequence, keycode);
+        if (key_is_pressed(input, keycode))
+            status = 1;
+    }
+    if (status == 0) {
+        for (const auto keycode : input.modifier_map) {
+            if (keycode != 0 && key_is_pressed(input, keycode)) {
+                status = 1;
+                break;
+            }
+        }
+    }
+    if (status == 0) {
+        try {
+            const std::size_t canonical_width = *std::max_element(
+                group_sizes.begin(), group_sizes.end());
+            std::vector<std::uint8_t> canonical(canonical_width * 8, 0);
+            std::array<std::size_t, 8> offsets{};
+            for (std::size_t keycode = minimum_keycode;
+                 keycode <= maximum_keycode; ++keycode) {
+                if (assigned_group[keycode] == 0)
+                    continue;
+                const std::size_t group = assigned_group[keycode] - 1;
+                canonical[group * canonical_width + offsets[group]++] =
+                    static_cast<std::uint8_t>(keycode);
+            }
+            auto &updated = server_.input();
+            updated.modifier_map = std::move(canonical);
+            updated.modifier_keys_per_group =
+                static_cast<std::uint8_t>(canonical_width);
+        }
+        catch (const std::bad_alloc &) {
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+        }
+    }
+
+    WireWriter reply(context.order);
+    reply.u8(1);
+    reply.u8(status);
+    reply.u16(context.sequence);
+    reply.u32(0);
+    reply.pad(24);
+    return queue(reply.data());
+}
+
+Result<void>
 Connection::handle_get_modifier_mapping(const RequestContext &context)
 {
     if (context.request.size() != 4)
@@ -4081,7 +4443,7 @@ Connection::handle_get_modifier_mapping(const RequestContext &context)
     const auto &mapping = server_.input().modifier_map;
     WireWriter reply(context.order);
     reply.u8(1);
-    reply.u8(static_cast<std::uint8_t>(keys_per_modifier));
+    reply.u8(server_.input().modifier_keys_per_group);
     reply.u16(context.sequence);
     reply.u32(static_cast<std::uint32_t>(mapping.size() / 4));
     reply.pad(24);
@@ -4325,12 +4687,22 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_query_best_size;
         table[opcode_index(CoreOpcode::GetKeyboardMapping)] =
             &Connection::handle_get_keyboard_mapping;
+        table[opcode_index(CoreOpcode::ChangeKeyboardControl)] =
+            &Connection::handle_change_keyboard_control;
         table[opcode_index(CoreOpcode::GetKeyboardControl)] =
             &Connection::handle_get_keyboard_control;
+        table[opcode_index(CoreOpcode::Bell)] =
+            &Connection::handle_bell;
+        table[opcode_index(CoreOpcode::ChangePointerControl)] =
+            &Connection::handle_change_pointer_control;
         table[opcode_index(CoreOpcode::GetPointerControl)] =
             &Connection::handle_get_pointer_control;
+        table[opcode_index(CoreOpcode::SetPointerMapping)] =
+            &Connection::handle_set_pointer_mapping;
         table[opcode_index(CoreOpcode::GetPointerMapping)] =
             &Connection::handle_get_pointer_mapping;
+        table[opcode_index(CoreOpcode::SetModifierMapping)] =
+            &Connection::handle_set_modifier_mapping;
         table[opcode_index(CoreOpcode::GetModifierMapping)] =
             &Connection::handle_get_modifier_mapping;
         table[opcode_index(CoreOpcode::GetInputFocus)] =

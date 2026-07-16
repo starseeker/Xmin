@@ -166,12 +166,14 @@ struct PassiveGrab {
 struct InputState {
     std::array<std::array<std::uint32_t, keysyms_per_keycode>, 256> keymap =
         core_keymap;
-    std::array<std::uint8_t, 32> modifier_map = core_modifier_map;
+    std::vector<std::uint8_t> modifier_map{
+        core_modifier_map.begin(), core_modifier_map.end()};
     std::array<std::uint8_t, 32> auto_repeats = default_auto_repeats;
     std::array<std::uint8_t, 10> pointer_map = default_pointer_map;
     std::int32_t pointer_x = 0;
     std::int32_t pointer_y = 0;
     std::uint16_t modifier_button_mask = 0;
+    std::bitset<256> pressed_buttons;
     std::uint32_t led_mask = 0;
     std::int16_t pointer_acceleration_numerator =
         default_pointer_acceleration_numerator;
@@ -182,6 +184,8 @@ struct InputState {
     std::uint16_t bell_duration = default_bell_duration;
     std::uint8_t key_click_percent = default_key_click_percent;
     std::uint8_t bell_percent = default_bell_percent;
+    std::uint8_t modifier_keys_per_group =
+        static_cast<std::uint8_t>(keys_per_modifier);
     std::array<std::uint8_t, 32> pressed_keys{};
     FocusState focus;
     std::optional<ActiveGrab> pointer_grab;

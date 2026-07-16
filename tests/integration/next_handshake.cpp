@@ -1526,7 +1526,82 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         reply[33] != 62 || reply[63] != 0) {
         return false;
     }
-    return true;
+
+    request.assign(12, 0);
+    request[0] = 105; // ChangePointerControl
+    put16(request, 2, 3, little);
+    put16(request, 4, 3, little);
+    put16(request, 6, 2, little);
+    put16(request, 8, 7, little);
+    request[10] = 1;
+    request[11] = 1;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = 106; // GetPointerControl observes mutation
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 127 ||
+        get16(reply, 8, little) != 3 ||
+        get16(reply, 10, little) != 2 ||
+        get16(reply, 12, little) != 7) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 102; // ChangeKeyboardControl(BellPercent)
+    put16(request, 2, 3, little);
+    put32(request, 4, 1U << 1, little);
+    put32(request, 8, 17, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = 103; // GetKeyboardControl observes mutation
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 52 || get16(reply, 2, little) != 129 ||
+        reply[13] != 17) {
+        return false;
+    }
+
+    request[0] = 104; // Bell rejects an out-of-range signed percentage
+    request[1] = 101;
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 130 ||
+        get32(reply, 4, little) != 101) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = 105; // restore default pointer controls
+    put16(request, 2, 3, little);
+    put16(request, 4, 0xffff, little);
+    put16(request, 6, 0xffff, little);
+    put16(request, 8, 0xffff, little);
+    request[10] = 1;
+    request[11] = 1;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = 102; // restore default bell percentage
+    put16(request, 2, 3, little);
+    put32(request, 4, 1U << 1, little);
+    put32(request, 8, 0xffffffffU, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = 103; // synchronize restored input state
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) &&
+        read_variable_reply(descriptor, little, reply) &&
+        reply.size() == 52 && get16(reply, 2, little) == 133 &&
+        reply[13] == 50;
 }
 
 bool
