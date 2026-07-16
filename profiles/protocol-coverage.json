@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "43fa632c952e66d4c085346d28205ed6fd6ab6c8f0500777e98cfef5afe77509",
+    "policy_sha256": "fd14246f4db16e74da6410cf363185f66b60a3770f5ca2fde279b2d143e5a59b",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -580,28 +580,28 @@
       "name": "PolyPoint",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 65,
       "name": "PolyLine",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 66,
       "name": "PolySegment",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 67,
       "name": "PolyRectangle",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 68,

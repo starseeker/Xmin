@@ -37,6 +37,10 @@ public:
     void draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
                     std::uint8_t function,
                     std::uint32_t plane_mask) noexcept;
+    void draw_line(std::int32_t start_x, std::int32_t start_y,
+                   std::int32_t end_x, std::int32_t end_y,
+                   std::uint32_t source, std::uint8_t function,
+                   std::uint32_t plane_mask) noexcept;
     void copy_from(const Surface &source, std::int32_t source_x,
                    std::int32_t source_y, std::int32_t destination_x,
                    std::int32_t destination_y, std::uint32_t width,

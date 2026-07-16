@@ -67,6 +67,100 @@ raster(std::uint8_t function, std::uint32_t source,
     }
 }
 
+enum : unsigned {
+    clip_left = 1U << 0,
+    clip_right = 1U << 1,
+    clip_top = 1U << 2,
+    clip_bottom = 1U << 3,
+};
+
+unsigned
+line_outcode(std::int64_t x, std::int64_t y, std::int64_t width,
+             std::int64_t height) noexcept
+{
+    unsigned code = 0;
+    if (x < 0)
+        code |= clip_left;
+    else if (x >= width)
+        code |= clip_right;
+    if (y < 0)
+        code |= clip_top;
+    else if (y >= height)
+        code |= clip_bottom;
+    return code;
+}
+
+std::uint64_t
+unsigned_magnitude(std::int64_t value) noexcept
+{
+    return value < 0
+        ? static_cast<std::uint64_t>(-(value + 1)) + 1U
+        : static_cast<std::uint64_t>(value);
+}
+
+std::int64_t
+scaled_offset(std::int64_t delta, std::int64_t numerator,
+              std::int64_t denominator) noexcept
+{
+    const std::uint64_t magnitude =
+        unsigned_magnitude(delta) * unsigned_magnitude(numerator) /
+        unsigned_magnitude(denominator);
+    const auto result = static_cast<std::int64_t>(magnitude);
+    const bool negative =
+        (delta < 0) ^ (numerator < 0) ^ (denominator < 0);
+    return negative ? -result : result;
+}
+
+bool
+clip_line_to_surface(std::int64_t &start_x, std::int64_t &start_y,
+                     std::int64_t &end_x, std::int64_t &end_y,
+                     std::int64_t width, std::int64_t height) noexcept
+{
+    unsigned start_code = line_outcode(start_x, start_y, width, height);
+    unsigned end_code = line_outcode(end_x, end_y, width, height);
+    while (true) {
+        if ((start_code | end_code) == 0)
+            return true;
+        if ((start_code & end_code) != 0)
+            return false;
+
+        const unsigned code = start_code != 0 ? start_code : end_code;
+        std::int64_t x = 0;
+        std::int64_t y = 0;
+        if ((code & clip_top) != 0) {
+            y = 0;
+            x = start_x + scaled_offset(end_x - start_x, y - start_y,
+                                        end_y - start_y);
+        }
+        else if ((code & clip_bottom) != 0) {
+            y = height - 1;
+            x = start_x + scaled_offset(end_x - start_x, y - start_y,
+                                        end_y - start_y);
+        }
+        else if ((code & clip_right) != 0) {
+            x = width - 1;
+            y = start_y + scaled_offset(end_y - start_y, x - start_x,
+                                        end_x - start_x);
+        }
+        else {
+            x = 0;
+            y = start_y + scaled_offset(end_y - start_y, x - start_x,
+                                        end_x - start_x);
+        }
+
+        if (code == start_code) {
+            start_x = x;
+            start_y = y;
+            start_code = line_outcode(start_x, start_y, width, height);
+        }
+        else {
+            end_x = x;
+            end_y = y;
+            end_code = line_outcode(end_x, end_y, width, height);
+        }
+    }
+}
+
 } // namespace
 
 Surface::Surface(std::uint16_t width, std::uint16_t height,
@@ -165,6 +259,42 @@ Surface::draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
     store(static_cast<std::size_t>(y) * width_ +
               static_cast<std::size_t>(x),
           source, function, plane_mask);
+}
+
+void
+Surface::draw_line(std::int32_t start_x, std::int32_t start_y,
+                   std::int32_t end_x, std::int32_t end_y,
+                   std::uint32_t source, std::uint8_t function,
+                   std::uint32_t plane_mask) noexcept
+{
+    std::int64_t x0 = start_x;
+    std::int64_t y0 = start_y;
+    std::int64_t x1 = end_x;
+    std::int64_t y1 = end_y;
+    if (!clip_line_to_surface(x0, y0, x1, y1, width_, height_))
+        return;
+
+    const std::int64_t delta_x = x1 >= x0 ? x1 - x0 : x0 - x1;
+    const std::int64_t step_x = x0 < x1 ? 1 : -1;
+    const std::int64_t delta_y = -(y1 >= y0 ? y1 - y0 : y0 - y1);
+    const std::int64_t step_y = y0 < y1 ? 1 : -1;
+    std::int64_t error = delta_x + delta_y;
+    while (true) {
+        draw_pixel(static_cast<std::int32_t>(x0),
+                   static_cast<std::int32_t>(y0), source, function,
+                   plane_mask);
+        if (x0 == x1 && y0 == y1)
+            break;
+        const std::int64_t twice_error = error * 2;
+        if (twice_error >= delta_y) {
+            error += delta_y;
+            x0 += step_x;
+        }
+        if (twice_error <= delta_x) {
+            error += delta_x;
+            y0 += step_y;
+        }
+    }
 }
 
 void

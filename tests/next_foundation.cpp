@@ -281,11 +281,35 @@ test_surface_raster_and_overlap()
                       static_cast<std::uint32_t>(x + 1), 3, 0xffffffffU);
     }
     surface->copy_from(*surface, 0, 1, 1, 1, 3, 1, 3, 0xffffffffU);
-    return expect(surface->pixel(0, 1) == 1 &&
-                      surface->pixel(1, 1) == 1 &&
-                      surface->pixel(2, 1) == 2 &&
-                      surface->pixel(3, 1) == 3,
-                  "overlapping surface copy did not use a snapshot");
+    if (!expect(surface->pixel(0, 1) == 1 &&
+                    surface->pixel(1, 1) == 1 &&
+                    surface->pixel(2, 1) == 2 &&
+                    surface->pixel(3, 1) == 3,
+                "overlapping surface copy did not use a snapshot")) {
+        return false;
+    }
+
+    auto lines = xmin::next::Surface::create(8, 8, 24);
+    if (!expect(lines.has_value(), "line-test surface creation failed"))
+        return false;
+    lines->draw_line(std::numeric_limits<std::int32_t>::min(),
+                     std::numeric_limits<std::int32_t>::min(),
+                     std::numeric_limits<std::int32_t>::max(),
+                     std::numeric_limits<std::int32_t>::max(),
+                     0x00777777U, 3, 0xffffffffU);
+    lines->draw_line(-1000000, 4, 1000000, 4, 0x00abcdefU, 3,
+                     0xffffffffU);
+    lines->draw_line(-2, -2, 2, 2, 0x00123456U, 3, 0xffffffffU);
+    return expect(lines->pixel(0, 4) == 0x00abcdefU &&
+                      lines->pixel(7, 4) == 0x00abcdefU,
+                  "large clipped line did not span the surface") &&
+        expect(lines->pixel(0, 0) == 0x00123456U &&
+                   lines->pixel(1, 1) == 0x00123456U &&
+                   lines->pixel(2, 2) == 0x00123456U &&
+                   lines->pixel(7, 7) == 0x00777777U,
+               "diagonal clipped line rasterization failed") &&
+        expect(lines->pixel(3, 2) == 0,
+               "clipped line escaped its endpoint");
 }
 
 bool

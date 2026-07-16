@@ -2095,6 +2095,217 @@ Connection::handle_copy_area(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_poly_points(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 3U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    if (!drawable_id || !graphics_id)
+        return malformed("truncated PolyPoint request");
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    if (graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+
+    std::int32_t current_x = 0;
+    std::int32_t current_y = 0;
+    bool first = true;
+    while (reader.remaining() != 0) {
+        const auto x = reader.u16();
+        const auto y = reader.u16();
+        if (!x || !y)
+            return malformed("truncated PolyPoint list");
+        const std::int32_t decoded_x = signed_word(*x);
+        const std::int32_t decoded_y = signed_word(*y);
+        if (context.data == 1 && !first) {
+            current_x += decoded_x;
+            current_y += decoded_y;
+        }
+        else {
+            current_x = decoded_x;
+            current_y = decoded_y;
+        }
+        first = false;
+        surface->draw_pixel(current_x, current_y, graphics->foreground,
+                            graphics->function, graphics->plane_mask);
+    }
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_poly_lines(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 3U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    if (context.data > 1)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, context.data);
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    if (!drawable_id || !graphics_id)
+        return malformed("truncated PolyLine request");
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    if (graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+
+    std::int32_t previous_x = 0;
+    std::int32_t previous_y = 0;
+    bool first = true;
+    while (reader.remaining() != 0) {
+        const auto x = reader.u16();
+        const auto y = reader.u16();
+        if (!x || !y)
+            return malformed("truncated PolyLine list");
+        std::int32_t current_x = signed_word(*x);
+        std::int32_t current_y = signed_word(*y);
+        if (context.data == 1 && !first) {
+            current_x += previous_x;
+            current_y += previous_y;
+        }
+        if (!first) {
+            surface->draw_line(previous_x, previous_y, current_x, current_y,
+                               graphics->foreground, graphics->function,
+                               graphics->plane_mask);
+        }
+        previous_x = current_x;
+        previous_y = current_y;
+        first = false;
+    }
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_poly_segments(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 7U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    if (!drawable_id || !graphics_id)
+        return malformed("truncated PolySegment request");
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    if (graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+
+    while (reader.remaining() != 0) {
+        const auto start_x = reader.u16();
+        const auto start_y = reader.u16();
+        const auto end_x = reader.u16();
+        const auto end_y = reader.u16();
+        if (!start_x || !start_y || !end_x || !end_y)
+            return malformed("truncated PolySegment list");
+        surface->draw_line(signed_word(*start_x), signed_word(*start_y),
+                           signed_word(*end_x), signed_word(*end_y),
+                           graphics->foreground, graphics->function,
+                           graphics->plane_mask);
+    }
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
+Connection::handle_poly_rectangles(const RequestContext &context)
+{
+    if (context.request.size() < 12 ||
+        ((context.request.size() - 12) & 7U) != 0) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+    WireReader reader(context.request.data() + 4,
+                      context.request.size() - 4, context.order);
+    const auto drawable_id = reader.u32();
+    const auto graphics_id = reader.u32();
+    if (!drawable_id || !graphics_id)
+        return malformed("truncated PolyRectangle request");
+    auto *surface = server_.drawable_surface(*drawable_id);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    const auto *graphics = server_.graphics_context(*graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, *graphics_id);
+    if (graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+
+    while (reader.remaining() != 0) {
+        const auto encoded_x = reader.u16();
+        const auto encoded_y = reader.u16();
+        const auto width = reader.u16();
+        const auto height = reader.u16();
+        if (!encoded_x || !encoded_y || !width || !height)
+            return malformed("truncated PolyRectangle list");
+        const std::int32_t x = signed_word(*encoded_x);
+        const std::int32_t y = signed_word(*encoded_y);
+        const std::int32_t right = x + *width;
+        const std::int32_t bottom = y + *height;
+        surface->draw_line(x, y, right, y, graphics->foreground,
+                           graphics->function, graphics->plane_mask);
+        if (*height == 0)
+            continue;
+        surface->draw_line(x, bottom, right, bottom, graphics->foreground,
+                           graphics->function, graphics->plane_mask);
+        if (*height > 1) {
+            surface->draw_line(x, y + 1, x, bottom - 1,
+                               graphics->foreground, graphics->function,
+                               graphics->plane_mask);
+            if (*width != 0) {
+                surface->draw_line(right, y + 1, right, bottom - 1,
+                                   graphics->foreground, graphics->function,
+                                   graphics->plane_mask);
+            }
+        }
+    }
+    server_.invalidate_scene();
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_fill_rectangles(const RequestContext &context)
 {
     if (context.request.size() < 12 ||
@@ -2555,6 +2766,14 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_clear_area;
         table[opcode_index(CoreOpcode::CopyArea)] =
             &Connection::handle_copy_area;
+        table[opcode_index(CoreOpcode::PolyPoint)] =
+            &Connection::handle_poly_points;
+        table[opcode_index(CoreOpcode::PolyLine)] =
+            &Connection::handle_poly_lines;
+        table[opcode_index(CoreOpcode::PolySegment)] =
+            &Connection::handle_poly_segments;
+        table[opcode_index(CoreOpcode::PolyRectangle)] =
+            &Connection::handle_poly_rectangles;
         table[opcode_index(CoreOpcode::PolyFillRectangle)] =
             &Connection::handle_fill_rectangles;
         table[opcode_index(CoreOpcode::PutImage)] =

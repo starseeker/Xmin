@@ -874,11 +874,101 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
         return false;
     }
 
+    request.assign(20, 0);
+    request[0] = 55; // GC for thin solid primitive coverage
+    put16(request, 2, 5, little);
+    put32(request, 4, graphics, little);
+    put32(request, 8, root_window, little);
+    put32(request, 12, 1U << 2, little);
+    put32(request, 16, 0x00fedcbaU, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = 64; // PolyPoint
+    put16(request, 2, 4, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, graphics, little);
+    put16(request, 14, 5, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 65; // PolyLine with relative second coordinate
+    request[1] = 1;
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, graphics, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 5, little);
+    put16(request, 16, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 66; // PolySegment
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, graphics, little);
+    put16(request, 12, 4, little);
+    put16(request, 14, 5, little);
+    put16(request, 16, 4, little);
+    put16(request, 18, 7, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request[0] = 67; // PolyRectangle
+    put16(request, 12, 6, little);
+    put16(request, 16, 2, little);
+    put16(request, 18, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(20, 0);
+    request[0] = 73;
+    request[1] = 2;
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 10, 5, little);
+    put16(request, 12, 9, little);
+    put16(request, 14, 3, little);
+    put32(request, 16, 0xffffffffU, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 140 || reply[0] != 1 || reply[1] != 24 ||
+        get16(reply, 2, little) != 71) {
+        return false;
+    }
+    {
+        constexpr std::uint32_t stroke = 0x00fedcbaU;
+        const auto pixel_at = [&reply, image_little](std::size_t x,
+                                                     std::size_t y) {
+            return get32(reply, 32 + (y * 9 + x) * 4, image_little);
+        };
+        if (pixel_at(0, 0) != stroke || pixel_at(1, 0) != stroke ||
+            pixel_at(2, 0) != stroke || pixel_at(3, 0) != stroke ||
+            pixel_at(4, 0) != stroke || pixel_at(4, 1) != stroke ||
+            pixel_at(4, 2) != stroke || pixel_at(6, 0) != stroke ||
+            pixel_at(7, 0) != stroke || pixel_at(8, 0) != stroke ||
+            pixel_at(6, 1) != stroke || pixel_at(8, 1) != stroke ||
+            pixel_at(6, 2) != stroke || pixel_at(7, 2) != stroke ||
+            pixel_at(8, 2) != stroke || pixel_at(7, 1) != 0) {
+            return false;
+        }
+    }
+
+    request.assign(8, 0);
+    request[0] = 60;
+    put16(request, 2, 2, little);
+    put32(request, 4, graphics, little);
+    if (!write_all(descriptor, request))
+        return false;
+
     request.assign(4, 0);
     request[0] = 43; // synchronize teardown requests
     put16(request, 2, 1, little);
     return write_all(descriptor, request) && read_reply(descriptor, reply) &&
-        reply[0] == 1 && get16(reply, 2, little) == 66;
+        reply[0] == 1 && get16(reply, 2, little) == 73;
 }
 
 bool

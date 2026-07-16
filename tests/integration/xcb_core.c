@@ -317,6 +317,73 @@ main(void)
     memcpy(&pixel, xcb_get_image_data(image) + 4, sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x0000ff00U)
         goto cleanup;
+    stage = "drawing core point and line primitives";
+    {
+        const uint32_t stroke = 0x00fedcbaU;
+        const xcb_point_t point = { 2, 1 };
+        const xcb_point_t line[] = { { 3, 1 }, { 5, 1 } };
+        const xcb_segment_t segment = { 6, 1, 6, 3 };
+        const xcb_rectangle_t outline = { 8, 1, 2, 2 };
+
+        if (!checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics, XCB_GC_FOREGROUND, &stroke),
+                     "ChangeGC for core primitives") ||
+            !checked(connection,
+                     xcb_poly_point_checked(
+                         connection, XCB_COORD_MODE_ORIGIN, child, graphics,
+                         1, &point),
+                     "PolyPoint") ||
+            !checked(connection,
+                     xcb_poly_line_checked(
+                         connection, XCB_COORD_MODE_ORIGIN, child, graphics,
+                         2, line),
+                     "PolyLine") ||
+            !checked(connection,
+                     xcb_poly_segment_checked(
+                         connection, child, graphics, 1, &segment),
+                     "PolySegment") ||
+            !checked(connection,
+                     xcb_poly_rectangle_checked(
+                         connection, child, graphics, 1, &outline),
+                     "PolyRectangle")) {
+            goto cleanup;
+        }
+    }
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, child, 0, 0,
+                      11, 4, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 11 * 4 * 4)
+        goto cleanup;
+    {
+        static const unsigned stroke_pixels[][2] = {
+            { 2, 1 }, { 3, 1 }, { 4, 1 }, { 5, 1 },
+            { 6, 1 }, { 6, 2 }, { 6, 3 },
+            { 8, 1 }, { 9, 1 }, { 10, 1 }, { 8, 2 }, { 10, 2 },
+            { 8, 3 }, { 9, 3 }, { 10, 3 },
+        };
+        size_t index;
+
+        for (index = 0;
+             index < sizeof(stroke_pixels) / sizeof(stroke_pixels[0]);
+             ++index) {
+            const size_t offset =
+                (stroke_pixels[index][1] * 11 + stroke_pixels[index][0]) * 4;
+
+            memcpy(&pixel, xcb_get_image_data(image) + offset,
+                   sizeof(pixel));
+            if ((pixel & 0x00ffffffU) != 0x00fedcbaU)
+                goto cleanup;
+        }
+        memcpy(&pixel, xcb_get_image_data(image) + (2 * 11 + 9) * 4,
+               sizeof(pixel));
+        if ((pixel & 0x00ffffffU) != 0x00ff0000U)
+            goto cleanup;
+    }
     stage = "checking child pixels through the root";
     free(image);
     image = xcb_get_image_reply(
