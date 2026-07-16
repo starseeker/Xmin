@@ -1598,10 +1598,62 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request.assign(4, 0);
     request[0] = 103; // synchronize restored input state
     put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 52 || get16(reply, 2, little) != 133 ||
+        reply[13] != 50) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 100; // ChangeKeyboardMapping
+    request[1] = 1;
+    put16(request, 2, 4, little);
+    request[4] = 96;
+    request[5] = 2;
+    put32(request, 8, 0x00000078U, little);
+    put32(request, 12, 0x00000058U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 101; // GetKeyboardMapping observes replicated core row
+    put16(request, 2, 2, little);
+    request[4] = 96;
+    request[5] = 1;
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 60 || reply[1] != 7 ||
+        get16(reply, 2, little) != 135 ||
+        get32(reply, 32, little) != 0x00000078U ||
+        get32(reply, 36, little) != 0x00000058U ||
+        get32(reply, 40, little) != 0x00000078U ||
+        get32(reply, 44, little) != 0x00000058U) {
+        return false;
+    }
+
+    request.assign(36, 0);
+    request[0] = 100; // restore generated F12 mapping
+    request[1] = 1;
+    put16(request, 2, 9, little);
+    request[4] = 96;
+    request[5] = 7;
+    put32(request, 8, 0x0000ffc9U, little);
+    put32(request, 16, 0x0000ffc9U, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = 101; // synchronize restored keymap
+    put16(request, 2, 2, little);
+    request[4] = 96;
+    request[5] = 1;
     return write_all(descriptor, request) &&
         read_variable_reply(descriptor, little, reply) &&
-        reply.size() == 52 && get16(reply, 2, little) == 133 &&
-        reply[13] == 50;
+        reply.size() == 60 && reply[1] == 7 &&
+        get16(reply, 2, little) == 137 &&
+        get32(reply, 32, little) == 0x0000ffc9U &&
+        get32(reply, 40, little) == 0x0000ffc9U;
 }
 
 bool

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "bc8e688370dadb2638eeb963e2d54124f41d74be2d41b47f93af35ec685d5e71",
+    "policy_sha256": "205d1363ba7ffac908b7ba083ef9e5e1c61014fb517f7b1e821704b84eaa3190",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -832,7 +832,7 @@
       "name": "ChangeKeyboardMapping",
       "contract": "required",
       "legacy_status": "implemented",
-      "next_status": "not_yet_implemented"
+      "next_status": "partial_vertical_slice"
     },
     {
       "opcode": 101,

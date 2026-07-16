@@ -486,6 +486,16 @@ main(void)
 
     stage = "mutating typed core input maps and controls";
     {
+        static const xcb_keysym_t narrow_symbols[2] = {
+            0x00000078U, 0x00000058U
+        };
+        static const xcb_keysym_t wide_symbols[8] = {
+            0x00000031U, 0x00000021U, 0x00000032U, 0x00000040U,
+            0x00000033U, 0x00000023U, 0x00000034U, 0x00000024U
+        };
+        static const xcb_keysym_t original_symbols[7] = {
+            0x0000ffc9U, 0, 0x0000ffc9U, 0, 0, 0, 0
+        };
         uint32_t keyboard_values[2] = { 23, 17 };
         uint32_t repeat_values[2] = { 96, XCB_AUTO_REPEAT_MODE_OFF };
         uint8_t swapped_buttons[10] = { 2, 1, 3, 4, 5, 6, 7, 8, 9, 10 };
@@ -497,6 +507,56 @@ main(void)
             77, 0, 0, 0, 203, 0, 0, 0, 133, 134, 206, 0, 92, 0, 0, 0
         };
 
+        stage = "rejecting an invalid core keyboard map";
+        if (!checked_error(
+                connection,
+                xcb_change_keyboard_mapping_checked(
+                    connection, 1, 96, 0, original_symbols),
+                XCB_VALUE, "ChangeKeyboardMapping zero width") ||
+            !checked(connection,
+                     xcb_change_keyboard_mapping_checked(
+                         connection, 1, 96, 2, narrow_symbols),
+                     "ChangeKeyboardMapping narrow")) {
+            goto cleanup;
+        }
+        stage = "querying a narrow core keyboard map";
+        free(keyboard_mapping);
+        keyboard_mapping = xcb_get_keyboard_mapping_reply(
+            connection, xcb_get_keyboard_mapping(connection, 96, 1), &error);
+        if (error != NULL || keyboard_mapping == NULL ||
+            keyboard_mapping->keysyms_per_keycode != 7 ||
+            xcb_get_keyboard_mapping_keysyms(keyboard_mapping)[0] !=
+                narrow_symbols[0] ||
+            xcb_get_keyboard_mapping_keysyms(keyboard_mapping)[1] !=
+                narrow_symbols[1] ||
+            xcb_get_keyboard_mapping_keysyms(keyboard_mapping)[2] !=
+                narrow_symbols[0] ||
+            xcb_get_keyboard_mapping_keysyms(keyboard_mapping)[3] !=
+                narrow_symbols[1]) {
+            goto cleanup;
+        }
+        stage = "expanding a core keyboard map";
+        if (!checked(connection,
+                     xcb_change_keyboard_mapping_checked(
+                         connection, 1, 96, 8, wide_symbols),
+                     "ChangeKeyboardMapping wide")) {
+            goto cleanup;
+        }
+        free(keyboard_mapping);
+        keyboard_mapping = xcb_get_keyboard_mapping_reply(
+            connection, xcb_get_keyboard_mapping(connection, 96, 1), &error);
+        if (error != NULL || keyboard_mapping == NULL ||
+            keyboard_mapping->keysyms_per_keycode < 8 ||
+            memcmp(xcb_get_keyboard_mapping_keysyms(keyboard_mapping),
+                   wide_symbols, sizeof(wide_symbols)) != 0 ||
+            !checked(connection,
+                     xcb_change_keyboard_mapping_checked(
+                         connection, 1, 96, 7, original_symbols),
+                     "Restore keyboard mapping")) {
+            goto cleanup;
+        }
+
+        stage = "mutating typed core input maps and controls";
         if (!checked(connection,
                      xcb_change_keyboard_control_checked(
                          connection,

@@ -154,7 +154,10 @@ test_shared_server_state()
         !expect(server.input().pressed_keys ==
                     std::array<std::uint8_t, 32>{},
                 "input snapshot initialized with pressed keys") ||
-        !expect(server.input().keymap[96][0] == 0x0000ffc9U &&
+        !expect(server.input().keymap_width ==
+                    xmin::next::keysyms_per_keycode &&
+                    server.input().keymap[
+                        96 * server.input().keymap_width] == 0x0000ffc9U &&
                     server.input().modifier_map ==
                         std::vector<std::uint8_t>(
                             xmin::next::core_modifier_map.begin(),

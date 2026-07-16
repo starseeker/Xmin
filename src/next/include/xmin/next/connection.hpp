@@ -153,6 +153,8 @@ private:
     Result<void> handle_query_colors(const RequestContext &context);
     Result<void> handle_lookup_color(const RequestContext &context);
     Result<void> handle_query_best_size(const RequestContext &context);
+    Result<void> handle_change_keyboard_mapping(
+        const RequestContext &context);
     Result<void> handle_change_keyboard_control(
         const RequestContext &context);
     Result<void> handle_get_keyboard_mapping(const RequestContext &context);

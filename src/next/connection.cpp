@@ -3987,6 +3987,92 @@ Connection::handle_query_best_size(const RequestContext &context)
 }
 
 Result<void>
+Connection::handle_change_keyboard_mapping(const RequestContext &context)
+{
+    if (context.request.size() < 8)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    WireReader header(context.request.data() + 4, 4, context.order);
+    const auto first_keycode = header.u8();
+    const auto requested_width = header.u8();
+    if (!first_keycode || !requested_width || !header.skip(2))
+        return malformed("truncated ChangeKeyboardMapping request");
+
+    const std::size_t symbol_count =
+        static_cast<std::size_t>(context.data) * *requested_width;
+    if (context.request.size() != 8 + symbol_count * 4)
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    if (*first_keycode < minimum_keycode ||
+        *first_keycode > maximum_keycode) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *first_keycode);
+    }
+    const std::uint16_t end =
+        static_cast<std::uint16_t>(*first_keycode) + context.data;
+    if (*requested_width == 0 ||
+        end > static_cast<std::uint16_t>(maximum_keycode) + 1U) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, *requested_width);
+    }
+    if (context.data == 0)
+        return Result<void>::success();
+
+    try {
+        const auto &input = server_.input();
+        auto row_widths = input.keymap_row_widths;
+        const std::uint8_t stored_width = *requested_width <= 2
+            ? 4
+            : *requested_width;
+        for (std::uint16_t keycode = *first_keycode; keycode < end;
+             ++keycode) {
+            row_widths[keycode] = stored_width;
+        }
+        const std::uint8_t map_width = *std::max_element(
+            row_widths.begin(), row_widths.end());
+        std::vector<std::uint32_t> keymap(
+            static_cast<std::size_t>(map_width) * 256, 0);
+        const std::size_t copied_width = std::min<std::size_t>(
+            input.keymap_width, map_width);
+        for (std::size_t keycode = 0; keycode < 256; ++keycode) {
+            std::copy_n(
+                input.keymap.begin() + keycode * input.keymap_width,
+                copied_width,
+                keymap.begin() + keycode * map_width);
+        }
+
+        WireReader symbols(context.request.data() + 8,
+                           context.request.size() - 8, context.order);
+        for (std::uint16_t keycode = *first_keycode; keycode < end;
+             ++keycode) {
+            auto row = keymap.begin() + keycode * map_width;
+            std::fill_n(row, map_width, 0);
+            for (std::size_t index = 0; index < *requested_width; ++index) {
+                const auto keysym = symbols.u32();
+                if (!keysym)
+                    return malformed(
+                        "truncated ChangeKeyboardMapping keysyms");
+                row[index] = *keysym;
+            }
+            if (*requested_width <= 2) {
+                row[2] = row[0];
+                row[3] = *requested_width == 2 ? row[1] : 0;
+            }
+        }
+
+        auto &updated = server_.input();
+        updated.keymap_width = map_width;
+        updated.keymap_row_widths = row_widths;
+        updated.keymap = std::move(keymap);
+    }
+    catch (const std::bad_alloc &) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return Result<void>::success();
+}
+
+Result<void>
 Connection::handle_get_keyboard_mapping(const RequestContext &context)
 {
     if (context.request.size() != 8)
@@ -4010,14 +4096,16 @@ Connection::handle_get_keyboard_mapping(const RequestContext &context)
 
     WireWriter reply(context.order);
     reply.u8(1);
-    reply.u8(static_cast<std::uint8_t>(keysyms_per_keycode));
+    const auto &input = server_.input();
+    reply.u8(input.keymap_width);
     reply.u16(context.sequence);
-    reply.u32(static_cast<std::uint32_t>(keysyms_per_keycode * *count));
+    reply.u32(static_cast<std::uint32_t>(input.keymap_width * *count));
     reply.pad(24);
-    const auto &keymap = server_.input().keymap;
     for (std::uint16_t keycode = *first_keycode; keycode < end; ++keycode) {
-        for (const auto keysym : keymap[keycode])
-            reply.u32(keysym);
+        const auto row = input.keymap.begin() +
+            static_cast<std::size_t>(keycode) * input.keymap_width;
+        for (std::size_t index = 0; index < input.keymap_width; ++index)
+            reply.u32(row[index]);
     }
     return queue(reply.data());
 }
@@ -4685,6 +4773,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_lookup_color;
         table[opcode_index(CoreOpcode::QueryBestSize)] =
             &Connection::handle_query_best_size;
+        table[opcode_index(CoreOpcode::ChangeKeyboardMapping)] =
+            &Connection::handle_change_keyboard_mapping;
         table[opcode_index(CoreOpcode::GetKeyboardMapping)] =
             &Connection::handle_get_keyboard_mapping;
         table[opcode_index(CoreOpcode::ChangeKeyboardControl)] =

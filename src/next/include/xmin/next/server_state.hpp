@@ -164,8 +164,24 @@ struct PassiveGrab {
     std::uint16_t modifiers) noexcept;
 
 struct InputState {
-    std::array<std::array<std::uint32_t, keysyms_per_keycode>, 256> keymap =
-        core_keymap;
+    std::uint8_t keymap_width =
+        static_cast<std::uint8_t>(keysyms_per_keycode);
+    std::array<std::uint8_t, 256> keymap_row_widths = [] {
+        std::array<std::uint8_t, 256> widths{};
+        for (std::size_t keycode = minimum_keycode;
+             keycode <= maximum_keycode; ++keycode) {
+            widths[keycode] = static_cast<std::uint8_t>(
+                keysyms_per_keycode);
+        }
+        return widths;
+    }();
+    std::vector<std::uint32_t> keymap = [] {
+        std::vector<std::uint32_t> symbols;
+        symbols.reserve(core_keymap.size() * keysyms_per_keycode);
+        for (const auto &row : core_keymap)
+            symbols.insert(symbols.end(), row.begin(), row.end());
+        return symbols;
+    }();
     std::vector<std::uint8_t> modifier_map{
         core_modifier_map.begin(), core_modifier_map.end()};
     std::array<std::uint8_t, 32> auto_repeats = default_auto_repeats;
