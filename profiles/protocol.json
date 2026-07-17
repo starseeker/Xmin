@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "product": "Xmin clean 2D",
   "wire_protocol": "X11 11.0",
   "transport": {
@@ -23,8 +23,7 @@
     "xml": "xproto.xml",
     "contract": "required",
     "reserved_opcodes": [120, 121, 122, 123, 124, 125, 126],
-    "legacy_status": "implemented",
-    "next_status": "implemented"
+    "status": "implemented"
   },
   "extensions": [
     {
@@ -32,22 +31,22 @@
       "xml": "ge.xml",
       "version": "1.0",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "SHAPE",
       "xml": "shape.xml",
       "version": "1.1",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "XInputExtension",
       "xml": "xinput.xml",
       "version": "2.4",
       "contract": "required",
-      "next_status": "implemented",
-      "next_compatibility_status": "implemented",
+      "status": "implemented",
+      "compatibility_status": "implemented",
       "compatibility_opcodes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12,
         13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
         29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39]
@@ -57,118 +56,120 @@
       "xml": "xtest.xml",
       "version": "2.2",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "BIG-REQUESTS",
       "xml": "bigreq.xml",
       "version": "0.0",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "SYNC",
       "xml": "sync.xml",
       "version": "3.1",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "XKEYBOARD",
       "xml": "xkb.xml",
       "version": "1.0",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "XC-MISC",
       "xml": "xc_misc.xml",
       "version": "1.1",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "XFIXES",
       "xml": "xfixes.xml",
       "version": "6.0",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "RENDER",
       "xml": "render.xml",
       "version": "0.11",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "RANDR",
       "xml": "randr.xml",
       "version": "1.6",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "Composite",
       "xml": "composite.xml",
       "version": "0.4",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "DAMAGE",
       "xml": "damage.xml",
       "version": "1.1",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "Present",
       "xml": "present.xml",
       "version": "1.4",
       "contract": "required",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "MIT-SHM",
       "xml": "shm.xml",
       "version": "1.2",
       "contract": "platform_conditional",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "DOUBLE-BUFFER",
       "xml": "dbe.xml",
       "version": "1.0",
       "contract": "compatibility",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "MIT-SCREEN-SAVER",
       "xml": "screensaver.xml",
       "version": "1.1",
       "contract": "compatibility",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "XINERAMA",
       "xml": "xinerama.xml",
       "version": "1.1",
       "contract": "compatibility",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "name": "GLX",
       "xml": "glx.xml",
       "version": "1.4",
-      "contract": "optional_legacy"
+      "contract": "intentionally_unsupported",
+      "status": "intentionally_unsupported"
     }
   ],
   "cli": {
-    "server": ["display", "-screen", "-auth", "-ac", "-displayfd",
-      "-nolisten tcp", "--help", "--version"],
-    "launcher": ["xmin-run"],
+    "server": ["DISPLAY", "--display-fd", "--auth", "--cookie-hex",
+      "--no-auth", "--screen", "--max-clients", "--client-fd", "--help",
+      "--version"],
+    "launcher": ["xmin-run", "--server", "--screen"],
     "controller": ["xminctl"],
-    "capture": ["xmincapture"]
+    "capture": ["xminctl capture-root", "xminctl capture-window"]
   }
 }

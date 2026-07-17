@@ -1,167 +1,53 @@
-# Test organization
+# Tests
 
-Keep new fast project-owned unit tests under `tests/unit`, X11 wire tests under
-`tests/protocol`, process and authentication tests under `tests/integration`, toolkit
-acceptance tests under `tests/qt`, and GLX/OpenGL tests under `tests/glx`. Earlier
-focused tests remain directly under `tests` while the suite is reorganized. External
-Xlib, XCB, Qt, GTK, and GL implementations are test-only dependencies and must not
-enter Xmin's installed link interface. When Qt 5/6 Gui or GTK 3 development files
-are present, CMake automatically adds their raster acceptance tests. Qt builds also
-add an OpenGL 2.0/GLSL test when the bundled client bridge is enabled; every toolkit
-test executes through the authenticated launcher.
+The suite is layered so protocol results are not trusted solely because the
+server and client share code.
 
-The integration suite intentionally uses raw X11/GLX wire requests and the embedded
-libXau subset, so its baseline has no host X client or OpenGL dependency. It covers
-the server setup/extension handshake and GLX 1.4/FBConfig negotiation in native and
-opposite byte orders, a swapped malformed-GLX `BadLength` response, a swapped
-multi-byte core geometry request, private launcher authentication, concurrent dynamic
-display allocation, stale-lock recovery, and complete signal-driven launcher cleanup
-of its command, authority state, lock, and socket. It also covers an indirect
-fixed-function GLX render/swap/readback. The
-`xmin.control-automation` gate additionally uses the private bundled XCB subset to
-start a named target window, focus it, inject precise pointer and keyboard events,
-including delayed clicks and a stepped modified drag, wait for DAMAGE quiescence,
-verify both per-window and root PPM pixels, send
-`WM_DELETE_WINDOW`, and confirm clean application exit. It does not discover or link
-host X11 client libraries. The
-indirect GLX test also binds different-sized draw/read windows, verifies `glReadPixels`
-uses the read window, verifies rendering and swap target the draw window, and proves
-that a single-buffered indirect `glFlush` presents without a context switch. It also
-creates a pbuffer through GLX 1.3, renders and reads it, unbinds, and destroys it. The
-GLXPixmap case copies color-buffer state between indirect contexts, wraps a core
-pixmap, renders with that state, synchronizes through `WaitGL`, validates the X
-pixels, and tears down both resources. The
-optional XCB integration test authenticates through `xmin-run`, checks screen and
-the exact configured extension list, lists/opens/queries/renders both embedded core
-fonts, then
-creates, draws, and reads back a window through XCB. When
-the generated extension bindings are installed, a second XCB test exercises RENDER
-and negotiates BIG-REQUESTS, Generic Event 1.0, and XC-MISC 1.1 before exercising
-RENDER formats, opaque and premultiplied-alpha composites, A8 trapezoids and glyph sets
-with pixel readback, RANDR output/CRTC/mode and output-property state, XFIXES regions/selection/cursor notification,
-SHAPE bounds, SYNC counters, single-screen Xinerama layout, SCREEN-SAVER state/event
-selection, XI2 master devices, reversible XKB lock state, two-key US-map XTEST
-pointer/keyboard injection, COMPOSITE redirection,
-DAMAGE notification, PresentPixmap complete/idle/future-MSC notifications and
-readback, and DOUBLE-BUFFER swap/readback. The next-server MIT-SHM test covers
-SysV and descriptor attachments, CreateSegment descriptor replies, PutImage
-completion, GetImage, bounds and read-only errors, and detach lifetime. With
-MIT-SHM enabled it additionally performs a real SysV
-attach, shared-memory upload, readback, and detach; the minimal profile verifies
-omission and client fallback discovery.
-The core XCB companion covers properties, window hierarchy/configuration,
-geometry/translation, mutable window/GC state, background clearing, pixmap
-copy/readback, selection ownership, fixed TrueColor colormap lifecycle and color
-queries, and synthetic events. The raw
-opposite-endian setup test also checks a malformed core
-request receives `BadLength` without terminating the connection. The `Xmin-next`
-variant additionally exercises the same semantic handlers in both byte orders for
-atoms, window lifecycle/configuration/reparenting/subwindow operations/coordinate
-translation, mutable attributes and GCs, background clearing, and property mutation,
-partial retrieval, listing, deletion, signed rotation, framebuffer best-size queries,
-centered pointer/window coordinates, source-gated/clamped pointer warps, empty motion
-history, key-state snapshots, and timestamped focus/reversion state,
-generated core keysyms plus mutable keysym/modifier/repeat/button mappings and feedback
-controls, including both-endian dynamic-width keymap updates, atomic invalid-update
-rejection, mapping-busy replies, per-client `MappingNotify` sequencing, and silent bell
-validation,
-stable BIG-REQUESTS, XC-MISC 1.1, and Generic Event 1.0 discovery and versioning,
-exact manifest listing, pre-enable extended-length rejection, and post-enable fragmented
-extended-header handling with a genuinely oversized request in both byte orders,
-all SHAPE 1.1 requests with canonical region algebra, bitmap masks, exact extents and
-rectangle replies, typed notifications, subscription teardown, atomic queue rollback,
-input hit-testing, bounded composition, and a retained-Xorg XCB oracle,
-all SYNC 3.1 requests in both byte orders, typed counter/alarm notifications,
-cross-client Await and AwaitFence suspension with buffered-request ordering, checked
-64-bit alarm/counter arithmetic, disconnect cleanup, and a retained-Xorg XCB oracle,
-all non-reserved RENDER 0.11 requests in both byte orders, fixed-format discovery,
-picture attributes and lifetime, every operator class, gradients, transforms,
-filters, clips, A1/A8 staging, trapezoids/triangles/traps, shared glyph sets and
-8/16/32-bit composition streams, core/ARGB/animated cursor lifecycle, exact extension
-errors, and an independent generated-libxcb pixel oracle against both servers,
-all XFIXES 6.0 requests through a generated-libxcb oracle against both servers,
-including canonical region operations, GC/window/picture clip installation, selection
-and cursor notifications followed immediately by reply-producing requests, cursor
-names/replacement/visibility, save-set validation, pointer barriers, disconnect mode,
-typed resource cleanup, exact extension errors, and raw native/opposite-endian region
-and barrier coverage,
-all RANDR 1.6 opcodes through a generated-libxcb oracle against both servers,
-including screen resources and dynamic resize, output/CRTC/mode lifecycle,
-properties and pending values, gamma, transforms, panning, primary output, monitor
-topology, exact extension errors, an explicitly empty provider/lease profile, and
-raw native/opposite-endian 1.0/1.6 framing,
-all DAMAGE 1.1 requests through a generated-libxcb oracle against both servers,
-including explicit and core-rendering damage, accumulated-region subtraction,
-typed notifications, exact extension errors, shared-surface aliases, atomic
-queue-pressure rollback, resource teardown, and raw native/opposite-endian framing,
-all Composite 0.4 requests through typed state tests and a generated-libxcb oracle
-against both servers, including automatic/manual window and subwindow redirects,
-manual exclusion from the root scene, border-clip regions, named-pixmap lifetime,
-resize/unredirect copy-on-write, RENDER rebinding, disconnect cleanup, exact errors,
-raw native/opposite-endian framing, and explicit overlay `BadMatch` behavior,
-Present 1.4 software-vblank scheduling through fake-clock state tests, typed
-Configure/Complete/Idle Generic Events, region-offset pixmap copies, additional notify
-windows, future-MSC completion, SYNC idle fences, exact capability/error behavior,
-raw native/opposite-endian CARD64 framing, and a generated-libxcb oracle against both
-servers, with deliberate `BadMatch` rejection of DRI3-backed PixmapSynced,
-and `BadValue` rejection of compositor RedirectNotify selection,
-XKEYBOARD 1.0 fixed-map discovery, state, controls, indicators, names, per-client
-detectable repeat, and typed State/Controls/Map notifications, including raw
-native/opposite-endian framing, transactional fake-clock state tests, an independent
-generated-libxcb oracle against both servers, and direct xkbcommon-x11 keymap/state
-consumption with reversible Caps Lock,
-XInput 2.4 as a fixed two-master-device view over the same core pointer, keyboard,
-focus, grab, and property state, including device/class discovery, pointer and client-
-pointer queries, event selection round trips, typed normal/raw GenericEvents, mutable
-device properties and PropertyEvents, transactional queue-pressure tests, raw native/
-opposite-endian framing, and an independent generated-libxcb oracle against both
-servers; XI1 compatibility, hierarchy mutation, touch, and gesture hardware remain
-explicitly outside the modern profile,
-stable XTEST discovery/versioning and both-endian key/button/motion state injection and
-typed event encoding, with an independent XCB oracle for pre-transition event state,
-focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and
-ancestor/descendant/nonlinear crossing paths with atomic queue-failure rollback and
-automatic-grab first-press/final-release transitions, plus both-endian explicit focus
-paths, `PointerRoot`/`NotifyPointer` side-runs, and atomic focus queue-failure rollback,
-plus legacy-oracle map/unmap/destroy/reparent focus-reversion and stationary-pointer
-crossings and all-or-nothing tree/geometry/focus rollback under queue pressure,
-plus confinement-driven pointer `NotifyUngrab` ordering and grab-state rollback,
-keyboard `NotifyUngrab` focus restoration for distinct and coincident real focus,
-explicit pointer/keyboard `NotifyGrab`/`NotifyUngrab` wire order, passive-key focus
-transitions, activation rollback, and abandoned-output hangup cleanup,
-fake-clock key-repeat delay/catch-up/control/cancellation/queue rollback and a
-legacy-oracle real-deadline repeat pair with persistent `QueryKeymap` state,
-two-client disconnect ungrab ordering and full-observer-queue teardown fallback,
-plus cross-client active pointer/keyboard grab exclusion and release,
-passive key/button wildcard subtraction and cross-client conflict arbitration,
-selection ownership, fixed TrueColor named-color
-queries and colormap install/copy/free semantics, and synthetic client-message
-delivery. It checks an unadvertised opcode at 255
-cannot escape the 128-slot core table, and proves that one client's window is visible
-to another while a 32-bit property remains correctly encoded for the opposite-endian
-client after disconnect teardown. The standalone two-client test also proves that a
-server grab defers the opposite-endian client's request until the owner ungrabs.
-The next-server graphics vertical slice independently covers surface allocation caps,
-plane masks, overlap-safe self-copy, canonical GC clip-region unions and origins,
-clipped point/line/segment/rectangle drawing, and
-pixmap-to-window fill/copy/readback plus cross-depth `CopyPlane` foreground/background
-mapping in native and opposite client byte orders while
-respecting the setup image byte order. Raw uploads
-cover 32-bit pixels and padded 1-bit scanlines in both client byte orders. Scene tests
-cover root backing preservation, borders, nested clipping, map/unmap restoration, and an
-independent XCB child-to-root pixel readback shared with the legacy oracle.
-The OSMesa unit check confirms that the renderer itself reports OpenGL 2.0, that the
-host-endian BGRA/ARGB choice produces a native X `0x00RRGGBB` pixel, and that distinct
-draw/read memory buffers work. The software-direct tests go further: they
-compile/link GLSL 1.10, bind different-sized draw/read pbuffers, verify shared
-texture objects and drawable color persistence across context switches, and copy
-attribute state with `glXCopyContext` through the public `libGL` ABI. When test-only Xlib is available they also cover modern GLX
-windows, resize without context rebinding, GLXPixmap presentation, double-buffered
-swap, single-buffered `glFlush`, and X image readback. The Qt tests cover xcb-platform startup, clipboard,
-cursor, backing-store painting, resize, screenshot readback, and an OpenGL 2.0 GLSL
-render with both GL readback and post-swap X-window screenshot validation. The GTK 3
-test covers startup, drawing-area painting, and screenshot readback.
-They are omitted, with no product-build impact, on hosts where those external test
-packages are unavailable. Set `XMIN_REQUIRE_TOOLKIT_TESTS=ON` in a release/CI build
-to make configuration fail unless at least one Qt generation and GTK 3 are present;
-the configuration summary always reports which toolkit targets were enabled.
+`xmin.foundation` exercises checked arithmetic, wire byte order, typed
+resources, atoms, regions, surfaces, rendering, state transitions, event
+transactions, clocks, input, and extension models directly. `xmin.platform`
+covers display reservation, stale state, sockets, authority files, random
+cookies, ownership, and shared-memory facilities.
+
+The raw C++ handshake and standalone clients cover native and opposite-endian
+setup, authentication rejection, fragmented and malformed input, bounded
+output, multiple clients, server grabs, teardown, dynamic display allocation,
+signals, sockets, and locks without using XCB.
+
+Independent host-XCB programs cover:
+
+- core windows, resources, properties, selections, events, fonts, images,
+  GCs, drawing, clipping, copy operations, and readback;
+- exact extension advertisement and general extension framing;
+- XTEST input/focus/grab/crossing behavior;
+- XFIXES, RANDR, DAMAGE, Composite, Present, XKB, XI2, and MIT-SHM state;
+- RENDER raster operators, pictures, glyphs, geometry, and pixel readback; and
+- an xkbcommon-x11 consumer over the fixed server keymap.
+
+Launcher tests verify authenticated startup, simultaneous display allocation,
+signal forwarding, and cleanup. Controller automation launches a real target,
+discovers and manipulates its window, injects input, waits for DAMAGE
+stability, and validates PPM capture.
+
+When client GL is enabled, the public `libGL` tests compile and execute GLSL
+1.10, context sharing/copying, draw/read split, pbuffer and window surfaces,
+resize, single-buffer flush, double-buffer swap, and X readback where test
+Xlib is available. Optional Qt 5/6 and GTK 3 tests add toolkit raster,
+clipboard, cursor, resize, screenshot, and OpenGL acceptance.
+
+`xmin.install-relocation-dependencies` stages the package under an arbitrary
+prefix, runs the installed launcher/server/controller workflow, checks GL
+development files when applicable, and audits every installed executable/DSO
+with `ldd` or `otool` for forbidden host graphics, font, crypto, and DRM
+dependencies.
+
+Run the normal, optimized no-GL, and instrumented gates with:
+
+```sh
+ctest --preset dev
+ctest --preset minimal
+ctest --preset sanitizer
+```
+
+Set `XMIN_REQUIRE_TOOLKIT_TESTS=ON` in the release job intended to enforce Qt
+and GTK availability. Toolkit libraries remain test-only.

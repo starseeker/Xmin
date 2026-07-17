@@ -434,7 +434,7 @@ main(void)
         goto cleanup;
 
     stage = "round-tripping an output property";
-    property_atom = atom(connection, "_XMIN_NEXT_RANDR_TEST");
+    property_atom = atom(connection, "_XMIN_SERVER_RANDR_TEST");
     if (property_atom == XCB_NONE ||
         !checked(connection,
                  xcb_randr_configure_output_property_checked(

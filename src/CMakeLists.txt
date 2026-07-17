@@ -1,5 +1,5 @@
 # The C++17 server is the product. Its source tree is independent of Xorg.
-add_subdirectory(next)
+add_subdirectory(server)
 add_subdirectory(control)
 
 if(XMIN_BUILD_LAUNCHER)

@@ -1,6 +1,67 @@
 # Xmin radical C++17 modernization plan
 
-Status: active implementation plan for the full-fork branch, 2026-07-16
+Status: implemented on the full-fork branch, 2026-07-17
+
+## 0. Completion record
+
+The plan below has been carried through to cutover.  It remains in this file
+as the design rationale and migration record; references to `Xmin-next`, the
+legacy oracle, and future phases describe the route taken rather than current
+build targets.
+
+The resulting product has one executable server implementation under
+`src/server`, in the `xmin::server` namespace.  The Xorg DIX/MI/fb/vfb/OS,
+extension, XKB, XI and indirect-GLX implementations have been deleted, along
+with xtrans, libXfont2 runtime code, libXau, bundled libxcb, libxkbfile,
+xorgproto headers, compatibility config headers, patch queues, and obsolete
+import scripts.  The cutover removed 801 files and about 330,500 lines in one
+checkpoint after a fresh configure/build/test proved they were unreachable.
+
+The completed implementation provides:
+
+- a single C++17 server owner, typed resources, bounded wire codecs, one
+  native/swapped semantic path, direct POSIX platform code, RAII display and
+  shared-memory ownership, and injected monotonic scheduling;
+- complete handling of all 127 core opcode slots and 383 requests in 19
+  declared extension XML contracts, including the compatibility profile and
+  platform-conditional MIT-SHM;
+- pixman-backed surfaces, regions, scene composition, core raster operations,
+  RENDER, generated fixed/cursor fonts, and a canonical constexpr US keymap;
+- one input/event engine shared by core, XKB, XI2, XI1, and XTEST;
+- small state views for SYNC, SHAPE, XFIXES, RANDR, DAMAGE, Composite,
+  Present, DBE, screen saver, and XINERAMA;
+- a shared platform/authentication library for `Xmin`, `xmin-run`, and the
+  focused C++ `xminctl` client, with the old shell behavior removed; and
+- optional client-only OSMesa `libGL`, with all Mesa-private access confined
+  to one dependency-side adapter and no GLX or OSMesa in the server.
+
+Measured on the FreeBSD/Clang host after the final cutover:
+
+- 33,161 server source lines and 38,361 total project source lines, under the
+  50,000-line design alarm;
+- 89 translation units in the optimized no-GL build including its independent
+  tests, of which 35 are project units, down from the 452-unit baseline;
+- a 1,883,576-byte optimized no-GL server, below the prior approximately
+  2.2 MiB server and the plan's size alarm;
+- 24/24 optimized no-GL tests and 26/26 normal GL-enabled tests on FreeBSD;
+  the normal suite includes installed-prefix relocation and dependency audit;
+  and
+- installed `Xmin`, `xmin-run`, `xminctl`, and optional `libGL` load no host
+  X11, XCB, Xau, font, GL/EGL, crypto/SSL, or DRM libraries.
+
+The sanitizer preset, repeated lifecycle/handshake runs, raw opposite-endian
+clients, host-XCB protocol/raster clients, xkbcommon, controller automation,
+and software-direct GL tests are the retained gates.  Qt/GTK gates remain
+conditional on test-only host packages.
+
+One genuine cross-platform defect was found before the rewrite: the old GLX
+bridge and OSMesa objects disagreed about a dependency-private mutex/layout
+definition.  It was fixed first on `main` as commit `52ea4d2`, and this branch
+was rebased on it as requested.  No later failure exposed a retained/common
+bug; the two cutover failures were stale test size assumptions after changing
+the setup vendor string, and the header-removal compile failure was a missing
+test-only keysym constant.  Those branch-local issues did not warrant changes
+to `main`.
 
 ## 1. Recommendation
 

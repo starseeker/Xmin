@@ -14,7 +14,6 @@ VALID_CONTRACTS = {
     "required",
     "compatibility",
     "platform_conditional",
-    "optional_legacy",
     "intentionally_unsupported",
 }
 
@@ -52,8 +51,8 @@ def write_cpp_header(path: pathlib.Path, core_requests: list[dict[str, object]],
         )
 
     text = "\n".join([
-        "#ifndef XMIN_NEXT_GENERATED_CORE_PROTOCOL_HPP",
-        "#define XMIN_NEXT_GENERATED_CORE_PROTOCOL_HPP",
+        "#ifndef XMIN_SERVER_GENERATED_CORE_PROTOCOL_HPP",
+        "#define XMIN_SERVER_GENERATED_CORE_PROTOCOL_HPP",
         "",
         f"// Generated from xproto.xml; sha256: {source_hash}",
         "// Run tools/generate-protocol-coverage.py; do not edit.",
@@ -62,7 +61,7 @@ def write_cpp_header(path: pathlib.Path, core_requests: list[dict[str, object]],
         "#include <cstdint>",
         "#include <string_view>",
         "",
-        "namespace xmin::next {",
+        "namespace xmin::server {",
         "",
         "enum class CoreOpcode : std::uint8_t {",
         *enum_entries,
@@ -78,7 +77,7 @@ def write_cpp_header(path: pathlib.Path, core_requests: list[dict[str, object]],
         *table_entries,
         "}};",
         "",
-        "} // namespace xmin::next",
+        "} // namespace xmin::server",
         "",
         "#endif",
         "",
@@ -96,7 +95,7 @@ def main() -> None:
     args = parser.parse_args()
 
     policy = json.loads(args.policy.read_text(encoding="utf-8"))
-    if policy.get("schema_version") != 1:
+    if policy.get("schema_version") != 2:
         raise SystemExit("unsupported protocol policy schema")
 
     core_policy = policy["core"]
@@ -105,7 +104,7 @@ def main() -> None:
         entry["opcode"]: entry for entry in requests_from_xml(core_xml)
     }
     reserved = set(core_policy["reserved_opcodes"])
-    next_partial = set(core_policy.get("next_partial_opcodes", []))
+    partial = set(core_policy.get("partial_opcodes", []))
     core_requests = []
     for opcode in range(1, 128):
         source = core_by_opcode.get(opcode)
@@ -118,11 +117,9 @@ def main() -> None:
             "name": source["name"] if source is not None else "Reserved",
             "contract": (core_policy["contract"] if source is not None
                          else "intentionally_unsupported"),
-            "legacy_status": (core_policy["legacy_status"] if source is not None
-                              else "not_applicable"),
-            "next_status": (
-                "partial_vertical_slice" if opcode in next_partial
-                else (core_policy["next_status"] if source is not None
+            "status": (
+                "partial_vertical_slice" if opcode in partial
+                else (core_policy["status"] if source is not None
                       else "not_applicable")
             ),
         })
@@ -137,10 +134,10 @@ def main() -> None:
             )
         xml_path = args.xml_directory / extension["xml"]
         compatibility = set(extension.get("compatibility_opcodes", []))
-        next_partial = set(extension.get("next_partial_opcodes", []))
-        next_status = extension.get("next_status", "not_yet_implemented")
-        next_compatibility_status = extension.get(
-            "next_compatibility_status", next_status
+        partial = set(extension.get("partial_opcodes", []))
+        status = extension.get("status", "not_yet_implemented")
+        compatibility_status = extension.get(
+            "compatibility_status", status
         )
         requests = requests_from_xml(xml_path)
         if not requests:
@@ -150,13 +147,12 @@ def main() -> None:
                 "compatibility" if request["opcode"] in compatibility
                 else contract
             )
-            request["legacy_status"] = "implemented"
-            request["next_status"] = (
+            request["status"] = (
                 "partial_vertical_slice"
-                if request["opcode"] in next_partial
-                else (next_compatibility_status
+                if request["opcode"] in partial
+                else (compatibility_status
                       if request["opcode"] in compatibility
-                      else next_status)
+                      else status)
             )
         extensions.append({
             "name": extension["name"],
@@ -168,7 +164,7 @@ def main() -> None:
         xml_hashes.append({"file": extension["xml"], "sha256": sha256(xml_path)})
 
     report = {
-        "schema_version": 1,
+        "schema_version": 2,
         "generated_from": {
             "policy_sha256": sha256(args.policy),
             "xml": sorted(xml_hashes, key=lambda entry: entry["file"]),

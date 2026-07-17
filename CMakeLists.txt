@@ -54,7 +54,7 @@ xmin_verify_protocol_profile(
   "${PROJECT_SOURCE_DIR}/profiles/protocol.json"
   "${PROJECT_SOURCE_DIR}/profiles/protocol-coverage.json"
   "${PROJECT_SOURCE_DIR}/protocol/xcb"
-  "${PROJECT_SOURCE_DIR}/src/next/include/xmin/next/generated/core_protocol.hpp"
+  "${PROJECT_SOURCE_DIR}/src/server/include/xmin/server/generated/core_protocol.hpp"
 )
 
 configure_file(

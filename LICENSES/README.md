@@ -1,6 +1,10 @@
 # License records
 
-Place the project license and complete notices for every imported source here.
-Do not mark an entry in `UPSTREAM.toml` as imported until its applicable license
-text and retained-file attribution have been recorded.
+This directory contains the complete notices for every retained third-party
+source or generated-data input listed in `UPSTREAM.toml`.
+
+Xmin ships source from pixman and, when client OpenGL is enabled, OSMesa. The
+xcb-proto XML is maintenance input. The libXfont2 and xkeyboard-config notices
+cover the fixed font and keymap data derived from those releases; no runtime
+code from either project remains.
 

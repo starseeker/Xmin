@@ -166,7 +166,7 @@ main(void)
 
     {
         stage = "testing selection input";
-        xcb_atom_t selection = intern(connection, "_XMIN_NEXT_SELECTION");
+        xcb_atom_t selection = intern(connection, "_XMIN_SERVER_SELECTION");
         if (selection == XCB_ATOM_NONE ||
             !checked(connection,
                      xcb_xfixes_select_selection_input_checked(

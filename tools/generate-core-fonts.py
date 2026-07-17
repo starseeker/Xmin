@@ -199,18 +199,18 @@ def main() -> None:
 
     digest = hashlib.sha256(source_bytes).hexdigest()
     output = [
-        "#ifndef XMIN_NEXT_GENERATED_CORE_FONTS_HPP",
-        "#define XMIN_NEXT_GENERATED_CORE_FONTS_HPP",
+        "#ifndef XMIN_SERVER_GENERATED_CORE_FONTS_HPP",
+        "#define XMIN_SERVER_GENERATED_CORE_FONTS_HPP",
         "",
         f"// Generated from xmin_builtin_fonts.c; sha256: {digest}",
         "// Run tools/generate-core-fonts.py; do not edit.",
         "",
-        '#include "xmin/next/font.hpp"',
+        '#include "xmin/server/font.hpp"',
         "",
         "#include <array>",
         "#include <cstdint>",
         "",
-        "namespace xmin::next::generated {",
+        "namespace xmin::server::generated {",
         "",
     ]
     for (symbol, canonical, alias, minimum, maximum, ascent, descent,
@@ -239,7 +239,7 @@ def main() -> None:
     # Python repr uses the same quoting for these ASCII names except that C++
     # requires double quotes.
     text = "\n".join(output).replace("'", '"')
-    text += "} // namespace xmin::next::generated\n\n#endif\n"
+    text += "} // namespace xmin::server::generated\n\n#endif\n"
     args.output.write_text(text, encoding="utf-8")
 
 

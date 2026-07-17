@@ -9,7 +9,7 @@ function(xmin_verify_protocol_profile policy report xml_directory)
 
   file(READ "${report}" profile_json)
   string(JSON schema GET "${profile_json}" schema_version)
-  if(NOT schema EQUAL 1)
+  if(NOT schema EQUAL 2)
     message(FATAL_ERROR "Unsupported generated protocol profile schema: ${schema}")
   endif()
 

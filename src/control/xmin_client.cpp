@@ -1,8 +1,8 @@
 #include "xmin_client.h"
 
-#include "xmin/next/generated/core_protocol.hpp"
-#include "xmin/next/unique_fd.hpp"
-#include "xmin/next/xauthority.hpp"
+#include "xmin/server/generated/core_protocol.hpp"
+#include "xmin/server/unique_fd.hpp"
+#include "xmin/server/xauthority.hpp"
 
 #include <algorithm>
 #include <array>
@@ -27,8 +27,8 @@
 
 namespace {
 
-using xmin::next::CoreOpcode;
-using xmin::next::UniqueFd;
+using xmin::server::CoreOpcode;
+using xmin::server::UniqueFd;
 
 constexpr std::string_view auth_protocol = "MIT-MAGIC-COOKIE-1";
 
@@ -341,7 +341,7 @@ private:
         std::vector<std::uint8_t> cookie;
         const char *authority = std::getenv("XAUTHORITY");
         if (authority != nullptr && *authority != '\0') {
-            auto loaded = xmin::next::load_xauthority_cookie(
+            auto loaded = xmin::server::load_xauthority_cookie(
                 authority, static_cast<unsigned>(display_number_));
             if (!loaded) {
                 error = loaded.error().message;

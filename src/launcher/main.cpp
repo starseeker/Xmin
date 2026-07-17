@@ -1,6 +1,6 @@
 #include "xmin/config.h"
-#include "xmin/next/unique_fd.hpp"
-#include "xmin/next/xauthority.hpp"
+#include "xmin/server/unique_fd.hpp"
+#include "xmin/server/xauthority.hpp"
 
 #include <algorithm>
 #include <array>
@@ -28,7 +28,7 @@
 
 namespace {
 
-using xmin::next::UniqueFd;
+using xmin::server::UniqueFd;
 
 volatile sig_atomic_t signal_write_descriptor = -1;
 
@@ -142,8 +142,7 @@ void
 print_usage(std::ostream &stream, std::string_view program)
 {
     stream << "usage: " << program
-           << " [--server PATH] [--screen WxHxD] [--dpi DPI] -- "
-              "COMMAND [ARG ...]\n";
+           << " [--server PATH] [--screen WxHxD] -- COMMAND [ARG ...]\n";
 }
 
 std::string
@@ -310,7 +309,6 @@ run(int argc, char **argv)
 {
     std::string server_override;
     std::string screen;
-    std::string dpi;
     int command_index = -1;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
@@ -326,12 +324,10 @@ run(int argc, char **argv)
             std::cout << "xmin-run " << XMIN_VERSION << '\n';
             return 0;
         }
-        if ((argument == "--server" || argument == "--screen" ||
-             argument == "--dpi") &&
+        if ((argument == "--server" || argument == "--screen") &&
             index + 1 < argc) {
-            std::string &destination = argument == "--server"
-                ? server_override
-                : argument == "--screen" ? screen : dpi;
+            std::string &destination =
+                argument == "--server" ? server_override : screen;
             destination = argv[++index];
             continue;
         }
@@ -356,14 +352,14 @@ run(int argc, char **argv)
         return 125;
     }
     const std::string authority = *temporary + "/Xauthority";
-    auto cookie = xmin::next::secure_random_bytes(16);
+    auto cookie = xmin::server::secure_random_bytes(16);
     if (!cookie) {
         std::cerr << "xmin-run: " << cookie.error().message << '\n';
         static_cast<void>(::rmdir(temporary->c_str()));
         return 125;
     }
     auto authority_result =
-        xmin::next::write_xauthority_cookie(authority, cookie.value());
+        xmin::server::write_xauthority_cookie(authority, cookie.value());
     std::fill(cookie.value().begin(), cookie.value().end(), 0);
     if (!authority_result) {
         std::cerr << "xmin-run: " << authority_result.error().message << '\n';
@@ -394,10 +390,6 @@ run(int argc, char **argv)
         server_arguments.emplace_back("-screen");
         server_arguments.emplace_back("0");
         server_arguments.push_back(screen);
-    }
-    if (!dpi.empty()) {
-        server_arguments.emplace_back("-dpi");
-        server_arguments.push_back(dpi);
     }
     auto server_pointers = argument_pointers(server_arguments);
 

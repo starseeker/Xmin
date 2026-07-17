@@ -45,23 +45,11 @@ function(xmin_configure_platform)
   check_symbol_exists(SCM_RIGHTS
     "sys/types.h;sys/socket.h" XMIN_HAVE_SCM_RIGHTS)
 
-  # pixman portability configuration.
-  check_symbol_exists(alarm "unistd.h" HAVE_ALARM)
-  check_symbol_exists(getpagesize "unistd.h" HAVE_GETPAGESIZE)
-  check_symbol_exists(gettimeofday "sys/time.h" HAVE_GETTIMEOFDAY)
-  check_symbol_exists(mmap "sys/mman.h" HAVE_MMAP)
-  check_symbol_exists(mprotect "sys/mman.h" HAVE_MPROTECT)
-  check_symbol_exists(posix_memalign "stdlib.h" HAVE_POSIX_MEMALIGN)
-  check_symbol_exists(sigaction "signal.h" HAVE_SIGACTION)
-  check_include_files("sys/mman.h" HAVE_SYS_MMAN_H)
-  check_include_files("unistd.h" HAVE_UNISTD_H)
+  # Configuration consumed by the retained portable pixman source set.
   check_symbol_exists(__builtin_clz "" HAVE_BUILTIN_CLZ)
   check_type_size("long" SIZEOF_LONG LANGUAGE C)
   test_big_endian(XMIN_IS_BIG_ENDIAN)
   set(WORDS_BIGENDIAN ${XMIN_IS_BIG_ENDIAN})
-
-  find_package(Threads REQUIRED)
-  set(HAVE_PTHREADS TRUE)
 
   foreach(variable IN ITEMS
       XMIN_HAVE_UNIX_SOCKETS
@@ -71,16 +59,6 @@ function(xmin_configure_platform)
       XMIN_HAVE_ARC4RANDOM_BUF
       XMIN_HAVE_SCM_RIGHTS
       XMIN_IS_BIG_ENDIAN
-      HAVE_ALARM
-      HAVE_GETPAGESIZE
-      HAVE_GETTIMEOFDAY
-      HAVE_MMAP
-      HAVE_MPROTECT
-      HAVE_POSIX_MEMALIGN
-      HAVE_SIGACTION
-      HAVE_SYS_MMAN_H
-      HAVE_UNISTD_H
-      HAVE_PTHREADS
       HAVE_BUILTIN_CLZ
       SIZEOF_LONG
       WORDS_BIGENDIAN)

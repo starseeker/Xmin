@@ -1,24 +1,4 @@
-manifest_version = 1
-
-# Candidate entries have not yet been imported. Imported and partial entries record
-# the exact archive, checksum, retained paths, license location, and local patches.
-
-[[source]]
-name = "libxcb"
-revision = "1.17.0"
-url = "https://www.x.org/releases/individual/xcb/"
-archive = "libxcb-1.17.0.tar.xz"
-sha256 = "599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55"
-status = "partial"
-local_path = "third_party/libxcb"
-retained_paths = [
-  "xcb.h, xcbext.h, and the six connection/request core sources needed by xcb_connect_to_fd",
-  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
-]
-license_paths = ["LICENSES/libxcb/COPYING"]
-patches = []
-importer = "tools/import-libxcb.sh"
-generator = "libxcb 1.17.0 c_client.py with xcb-proto 1.17.0"
+manifest_version = 2
 
 [[source]]
 name = "xcb-proto"
@@ -26,92 +6,12 @@ revision = "1.17.0"
 url = "https://www.x.org/releases/individual/xcb/"
 archive = "xcb-proto-1.17.0.tar.xz"
 sha256 = "2c1bacd2110f4799f74de6ebb714b94cf6f80fb112316b1219480fd22562148c"
-status = "partial"
-local_path = "protocol/xcb and third_party/libxcb/include/xcb"
-retained_paths = [
-  "generated core, BIG-REQUESTS, XC-MISC, RENDER, SHAPE, XFIXES, DAMAGE, COMPOSITE, and XTEST C bindings",
-  "declarative XML for the core, clean, compatibility, conditional MIT-SHM, and optional indirect-GLX profiles",
-]
+status = "generation-input"
+local_path = "protocol/xcb"
+retained_paths = ["20 XML protocol descriptions used by the support manifest generator"]
 license_paths = ["LICENSES/xcb-proto/COPYING"]
 patches = []
-importer = "tools/import-libxcb.sh"
-generator = "libxcb 1.17.0 c_client.py"
-
-[[source]]
-name = "xorg-server"
-revision = "21.1.23"
-url = "https://www.x.org/releases/individual/xserver/"
-archive = "xorg-server-21.1.23.tar.xz"
-sha256 = "e39832e5617dadaf072fdf9f0e19e5d2e1c2a13607ac280bac1aba9f8fe14634"
-signature_key = "3C2C43D9447D5938EF4551EBE23B7E70B467F0BF"
-signature_verified = false
-signature_note = "Detached signature present; release public key was unavailable in the import environment."
-status = "partial"
-local_path = "third_party/xorg-server"
-retained_paths = [
-  "include/*.h",
-  "Xext/bigreq.c, geext.c, saver.c, shape.c, sleepuntil.c, sync.c, xcmisc.c, and xtest.c (unconditional baseline plus MIT-SCREEN-SAVER)",
-  "Xext/shm.c (conditional MIT-SHM implementation)",
-  "Xext/geext.h, geint.h, hashtable.c, hashtable.h, shmint.h, sleepuntil.h, syncsdk.h, syncsrv.h, and xace.h",
-  "Xi/*.c and Xi/*.h for the complete upstream srcs_xi implementation plus stubs.c virtual-server DDX hooks",
-  "xkb/*.c from upstream srcs_xkb plus xkb.h, xkbDflts.h, and xkbgeom.h; ddxLoad.c, maprules.c, xkbtext.c, xkbfmisc.c, and xkbout.c are retained for provenance but replaced or excluded from the Xmin target",
-  "dix/*.c excluding stubmain.c (complete upstream srcs_dix list)",
-  "dix/dispatch.h and dix/enterleave.h",
-  "fb/*.c and fb/*.h (complete upstream srcs_fb implementation)",
-  "hw/vfb/InitInput.c, hw/vfb/InitOutput.c, and hw/vfb/man/Xvfb.man",
-  "mi/*.c and mi/*.h for the complete upstream srcs_mi implementation plus miinitext.c static extension registry",
-  "miext/damage/damage.c, damage.h, and damagestr.h (complete upstream srcs_miext_damage implementation)",
-  "miext/sync/misync.c, misyncfd.c, misync.h, misyncfd.h, and misyncstr.h (complete non-DRI upstream implementation; excludes misyncshm)",
-  "randr/*.c and randr/*.h for the complete upstream srcs_randr implementation plus the rrxinerama.c single-screen compatibility adapter",
-  "render/*.c and render/*.h for the complete upstream srcs_render implementation",
-  "damageext/damageext.c and damageextint.h (complete upstream srcs_damageext implementation)",
-  "glx/*.c and glx/*.h for the complete non-DRI indirect GLX protocol dispatcher and in-server vendor router; excludes glxdriswrast.c, glxdricommon.c, and glxdri2.c in favor of src/glx/xmin_glx_osmesa.c",
-  "xfixes/*.c, xfixes.h, and xfixesint.h (complete upstream srcs_xfixes implementation)",
-  "present/*.c, present.h, presentext.h, and present_priv.h (complete upstream srcs_present implementation; Xmin uses its software fake-vblank mode)",
-  "composite/*.c, compint.h, and compositeext.h (complete upstream srcs_composite implementation)",
-  "dbe/dbe.c, midbe.c, dbestruct.h, and midbe.h (complete upstream MI DOUBLE-BUFFER implementation)",
-  "os/WaitFor.c, access.c, auth.c, backtrace.c (portable no-op branch), client.c, connection.c, inputthread.c (disabled-mode stubs), io.c, log.c, mitauth.c, oscolor.c, osinit.c, ospoll.c, utils.c, xprintf.c, and xstrans.c",
-  "os/osdep.h and os/ospoll.h",
-  "os/xserver_poll.c plus portable libc fallbacks, selected by CMake probes",
-]
-license_paths = ["LICENSES/xorg-server/COPYING"]
-patches = [
-  "patches/xorg-server/0001-omit-network-si-hosts-without-tcp.patch",
-  "patches/xorg-server/0002-vfb-xmin-defaults-and-cleanup.patch",
-  "patches/xorg-server/0003-vfb-xmin-device-names.patch",
-  "patches/xorg-server/0004-randr-xinerama-without-panoramix.patch",
-  "patches/xorg-server/0005-skip-absent-tcp-xtrans.patch",
-  "patches/xorg-server/0006-enable-xmin-indirect-glx.patch",
-  "patches/xorg-server/0007-lock-dynamic-display-allocation.patch",
-  "patches/xorg-server/0008-use-compiler-typeof-for-list-container.patch",
-  "patches/xorg-server/0009-use-typed-noop-callbacks.patch",
-  "patches/xorg-server/0010-use-type-safe-reply-swap-adapters.patch",
-  "patches/xorg-server/0011-use-type-safe-pixman-shape-adapters.patch",
-  "patches/xorg-server/0012-avoid-shifting-negative-line-errors.patch",
-]
-importer = "tools/import-xorg.sh"
-
-[[source]]
-name = "xorgproto"
-revision = "2024.1"
-url = "https://www.x.org/releases/individual/proto/"
-archive = "xorgproto-2024.1.tar.xz"
-sha256 = "372225fd40815b8423547f5d890c5debc72e88b91088fbfb13158c20495ccb59"
-signature_key = "67DC86F2623FC5FD4BB5225D14706DBE1E4B4540"
-signature_verified = false
-signature_note = "Detached signature present; release public key was unavailable in the import environment."
-status = "imported"
-local_path = "third_party/xorgproto"
-retained_paths = [
-  "core X11 protocol headers",
-  "declared Xmin extension protocol headers",
-  "GLX protocol headers",
-  "core font and legacy font-server type/protocol headers used internally by libXfont2",
-  "dri3proto.h as a Present wire-type dependency only",
-]
-license_paths = ["LICENSES/xorgproto/COPYING-*"]
-patches = []
-importer = "tools/import-xorg.sh"
+generator = "tools/generate-protocol-coverage.py"
 
 [[source]]
 name = "pixman"
@@ -121,116 +21,10 @@ archive = "pixman-0.46.2.tar.gz"
 sha256 = "3e0de5ba6e356916946a3d958192f15505dcab85134771bfeab4ce4e29bbd733"
 status = "imported"
 local_path = "third_party/pixman"
-retained_paths = [
-  "generic C implementation",
-  "public and private headers",
-  "generated blue-noise table",
-]
+retained_paths = ["exact C raster implementation and headers listed in tools/pixman-files.txt"]
 license_paths = ["LICENSES/pixman/COPYING"]
 patches = []
-importer = "tools/import-xorg.sh"
-
-[[source]]
-name = "xtrans"
-revision = "1.6.0"
-url = "https://www.x.org/releases/individual/lib/"
-archive = "xtrans-1.6.0.tar.xz"
-sha256 = "faafea166bf2451a173d9d593352940ec6404145c5d1da5c213423ce4d359e92"
-signature_key = "2F7DBCAD5B30E668BBD516C1CFDF148828C642A7"
-signature_verified = false
-signature_note = "Detached signature present; release public key was unavailable in the import environment."
-status = "imported"
-local_path = "third_party/xtrans"
-retained_paths = [
-  "include/X11/Xtrans/Xtrans.c",
-  "include/X11/Xtrans/Xtrans.h",
-  "include/X11/Xtrans/Xtransint.h",
-  "include/X11/Xtrans/Xtranssock.c",
-  "include/X11/Xtrans/Xtransutil.c",
-  "include/X11/Xtrans/transport.c",
-]
-license_paths = ["LICENSES/xtrans/COPYING"]
-patches = []
-importer = "tools/import-xorg.sh"
-
-[[source]]
-name = "libXfont2"
-revision = "2.0.8"
-url = "https://www.x.org/releases/individual/lib/"
-archive = "libXfont2-2.0.8.tar.gz"
-sha256 = "a53d621b6ceb1dcbd05a0b9bd7f13c34efa40401cd5c05af904035c567a30f18"
-status = "partial"
-local_path = "third_party/libXfont2"
-retained_paths = [
-  "public libxfont2.h plus private bitmap, buffer, font-directory, PCF, and utility headers",
-  "src/stubs/atom.c and libxfontstubs.c",
-  "fontaccel, fontnames, fontutil, fontxlfd, format, patcache, private, and utilbitmap utility sources",
-  "bitsource, bufio, defaults, fontdir, fontfile, fontscale, and renderers fontfile sources",
-  "bitmap/bitmap.c and bitmap/pcfread.c",
-  "builtins/builtin.h, dir.c, fpe.c, and render.c",
-  "data/fonts/xmin_builtin_fonts.c generated as uncompressed PCF arrays from upstream builtins/fonts.c",
-  "upstream builtins/file.c replaced by src/fonts/xmin_builtin_file.c; util/miscutil.c replaced by src/fonts/xmin_xfont_registry.c",
-]
-license_paths = ["LICENSES/libXfont2/COPYING"]
-patches = [
-  "patches/libXfont2/0001-builtins-only-fontfile-fpe.patch",
-  "patches/libXfont2/0002-construct-pcf-words-unsigned.patch",
-]
-importer = "tools/import-xorg.sh"
-generator = "Python 3 standard library via tools/generate-builtin-fonts.py"
-
-[[source]]
-name = "libXau"
-revision = "1.0.12"
-url = "https://www.x.org/releases/individual/lib/"
-archive = "libXau-1.0.12.tar.xz"
-sha256 = "74d0e4dfa3d39ad8939e99bda37f5967aba528211076828464d2777d477fc0fb"
-signature_key = "2F7DBCAD5B30E668BBD516C1CFDF148828C642A7"
-signature_verified = false
-signature_note = "Detached signature present; release public key was unavailable in the import environment."
-status = "imported"
-local_path = "third_party/libXau"
-retained_paths = [
-  "AuRead.c",
-  "AuDispose.c",
-  "include/X11/Xauth.h",
-]
-license_paths = ["LICENSES/libXau/COPYING"]
-patches = []
-importer = "tools/import-xorg.sh"
-
-[[source]]
-name = "libxkbfile"
-revision = "1.2.0"
-url = "https://www.x.org/releases/individual/lib/"
-archive = "libxkbfile-1.2.0.tar.xz"
-sha256 = "7f71884e5faf56fb0e823f3848599cf9b5a9afce51c90982baeb64f635233ebf"
-status = "partial"
-local_path = "third_party/libxkbfile"
-retained_paths = [
-  "include/X11/extensions/XKM.h",
-  "include/X11/extensions/XKMformat.h",
-]
-license_paths = ["LICENSES/libxkbfile/COPYING"]
-patches = []
-importer = "tools/import-xorg.sh"
-
-[[source]]
-name = "xkeyboard-config"
-revision = "2.47"
-url = "https://www.x.org/releases/individual/data/xkeyboard-config/"
-archive = "xkeyboard-config-2.47.tar.xz"
-sha256 = "e59984416a72d58b46a52bfec1b1361aa7d84354628227ee2783626c7a6db6b6"
-status = "generation-only"
-local_path = "data/xkb/xmin-us-map.h"
-retained_paths = [
-  "generated US map from keycodes/evdev, types/complete, compat/complete, and symbols/pc+us",
-  "data/xkb/xmin-us.xkb generation recipe",
-]
-license_paths = ["LICENSES/xkeyboard-config/COPYING"]
-patches = []
-importer = "tools/import-xorg.sh"
-generator = "xkbcomp 1.5.0 via tools/generate-xkb-map.sh"
+importer = "tools/import-pixman.sh"
 
 [[source]]
 name = "osmesa"
@@ -238,14 +32,40 @@ revision = "986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c"
 url = "https://github.com/starseeker/osmesa"
 tree = "18c2c015ca9d8373ee0159ea558effb439814a73"
 archive_sha256 = "1048a8fb53cee26acaf943b5175098832e259aadc5fcdc9b7cff04b981fc1224"
-status = "imported"
+status = "optional-import"
 local_path = "third_party/osmesa"
 retained_paths = [
-  "include/OSMesa/*.h",
-  "all 171 sources in the upstream osmesa_srcs target plus private headers and included grammar.c",
-  "upstream CMake source manifest, README, and LICENSE for provenance",
+  "public OSMesa headers",
+  "sources in third_party/osmesa/osmesa-sources.cmake",
+  "private headers required to build those sources",
+  "Xmin-owned drivers/osmesa/xmin_osmesa_adapter.c integration boundary",
 ]
 license_paths = ["LICENSES/osmesa/LICENSE"]
 patches = ["patches/osmesa/0001-separate-draw-read-buffers.patch"]
 importer = "tools/import-osmesa.sh"
-generator = "Python 3 standard library via tools/generate-osmesa-sources.py"
+generator = "tools/generate-osmesa-sources.py"
+
+[[source]]
+name = "libXfont2-font-data"
+revision = "2.0.8"
+url = "https://www.x.org/releases/individual/lib/"
+archive = "libXfont2-2.0.8.tar.gz"
+sha256 = "a53d621b6ceb1dcbd05a0b9bd7f13c34efa40401cd5c05af904035c567a30f18"
+status = "generation-only"
+local_path = "data/fonts/xmin_builtin_fonts.c"
+retained_paths = ["uncompressed fixed and cursor PCF arrays; no libXfont code"]
+license_paths = ["LICENSES/libXfont2/COPYING"]
+patches = []
+generator = "tools/generate-builtin-fonts.py and tools/generate-core-fonts.py"
+
+[[source]]
+name = "xkeyboard-config-keymap-data"
+revision = "2.47"
+url = "https://www.x.org/releases/individual/data/xkeyboard-config/"
+archive = "xkeyboard-config-2.47.tar.xz"
+sha256 = "e59984416a72d58b46a52bfec1b1361aa7d84354628227ee2783626c7a6db6b6"
+status = "fixed-data"
+local_path = "src/server/include/xmin/server/generated/core_keymap.hpp"
+retained_paths = ["canonical fixed US PC keysyms, modifiers, repeat and input defaults"]
+license_paths = ["LICENSES/xkeyboard-config/COPYING"]
+patches = []

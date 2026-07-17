@@ -7,20 +7,20 @@ set_tests_properties(xmin.help PROPERTIES
   PASS_REGULAR_EXPRESSION "usage: Xmin .*DISPLAY"
 )
 
-add_executable(xmin_foundation next_foundation.cpp)
+add_executable(xmin_foundation foundation.cpp)
 target_compile_features(xmin_foundation PRIVATE cxx_std_17)
 target_link_libraries(xmin_foundation PRIVATE Xmin::server_core)
 xmin_enable_warnings(xmin_foundation)
 add_test(NAME xmin.foundation COMMAND xmin_foundation)
 
-add_executable(xmin_platform_test next_platform.cpp)
+add_executable(xmin_platform_test platform.cpp)
 target_compile_features(xmin_platform_test PRIVATE cxx_std_17)
 target_compile_definitions(xmin_platform_test PRIVATE _POSIX_C_SOURCE=200809L)
-target_link_libraries(xmin_platform_test PRIVATE Xmin::next_platform)
+target_link_libraries(xmin_platform_test PRIVATE Xmin::platform)
 xmin_enable_warnings(xmin_platform_test)
 add_test(NAME xmin.platform COMMAND xmin_platform_test)
 
-add_executable(xmin_handshake integration/next_handshake.cpp)
+add_executable(xmin_handshake integration/handshake.cpp)
 target_compile_features(xmin_handshake PRIVATE cxx_std_17)
 target_compile_definitions(xmin_handshake PRIVATE _POSIX_C_SOURCE=200809L)
 target_include_directories(xmin_handshake PRIVATE "${PROJECT_BINARY_DIR}/generated")
@@ -30,7 +30,7 @@ add_test(NAME xmin.handshake
 )
 set_tests_properties(xmin.handshake PROPERTIES TIMEOUT 20)
 
-add_executable(xmin_standalone integration/next_standalone.cpp)
+add_executable(xmin_standalone integration/standalone.cpp)
 target_compile_features(xmin_standalone PRIVATE cxx_std_17)
 target_compile_definitions(xmin_standalone PRIVATE _POSIX_C_SOURCE=200809L)
 xmin_enable_warnings(xmin_standalone)
@@ -105,7 +105,6 @@ if(TARGET Xmin::run)
     function(xmin_add_core_xcb_test target source test_name width height)
       add_executable(${target} ${source})
       target_compile_features(${target} PRIVATE c_std_11)
-      target_compile_definitions(${target} PRIVATE XMIN_NEXT_RASTER=1)
       target_include_directories(${target}
         PRIVATE "${PROJECT_BINARY_DIR}/generated"
         SYSTEM PRIVATE "${XMIN_TEST_XCB_INCLUDE_DIR}"
@@ -338,6 +337,37 @@ if(XMIN_REQUIRE_TOOLKIT_TESTS)
   if(NOT XMIN_HAVE_GTK3_TESTS)
     message(FATAL_ERROR "Toolkit tests require GTK 3 development files")
   endif()
+endif()
+
+if(XMIN_ENABLE_INSTALL)
+  set(xmin_install_have_launcher FALSE)
+  set(xmin_install_have_gl FALSE)
+  set(xmin_install_test_arguments
+    "-DBINARY_DIR=${PROJECT_BINARY_DIR}"
+    "-DSTAGE_DIR=${PROJECT_BINARY_DIR}/install-test/prefix"
+    "-DBINDIR=${CMAKE_INSTALL_BINDIR}"
+    "-DLIBDIR=${CMAKE_INSTALL_LIBDIR}"
+    "-DVERSION=${PROJECT_VERSION}"
+  )
+  if(TARGET Xmin::run)
+    set(xmin_install_have_launcher TRUE)
+    list(APPEND xmin_install_test_arguments
+      "-DTEST_CHILD=$<TARGET_FILE:xmin_launcher_child>"
+    )
+  endif()
+  if(TARGET Xmin::gl_client)
+    set(xmin_install_have_gl TRUE)
+  endif()
+  list(APPEND xmin_install_test_arguments
+    "-DHAVE_LAUNCHER=${xmin_install_have_launcher}"
+    "-DHAVE_GL=${xmin_install_have_gl}"
+  )
+  add_test(NAME xmin.install-relocation-dependencies
+    COMMAND "${CMAKE_COMMAND}" ${xmin_install_test_arguments}
+      -P "${PROJECT_SOURCE_DIR}/cmake/VerifyInstall.cmake"
+  )
+  set_tests_properties(xmin.install-relocation-dependencies PROPERTIES
+    RUN_SERIAL TRUE TIMEOUT 60)
 endif()
 
 set(XMIN_HAVE_QT5_TESTS ${XMIN_HAVE_QT5_TESTS} PARENT_SCOPE)

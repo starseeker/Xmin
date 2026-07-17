@@ -34,7 +34,4 @@
 #Qt Creator
 CMakeLists.txt.user
 
-# Misc
-.clang-format
-
 

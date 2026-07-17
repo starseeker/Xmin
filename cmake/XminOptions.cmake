@@ -32,17 +32,13 @@ endif()
 
 set(XMIN_ENABLE_MITSHM "AUTO" CACHE STRING
   "Build MIT-SHM support when the platform provides SysV shared memory")
-set(XMIN_PIXMAN_SIMD "AUTO" CACHE STRING
-  "Enable supported pixman SIMD implementations")
 xmin_normalize_tristate(XMIN_ENABLE_MITSHM)
-xmin_normalize_tristate(XMIN_PIXMAN_SIMD)
 
 set(XMIN_DEFAULT_WIDTH "1280" CACHE STRING "Default screen width in pixels")
 set(XMIN_DEFAULT_HEIGHT "1024" CACHE STRING "Default screen height in pixels")
-set(XMIN_DEFAULT_DPI "96" CACHE STRING "Default screen DPI")
 
 foreach(variable IN ITEMS
-    XMIN_DEFAULT_WIDTH XMIN_DEFAULT_HEIGHT XMIN_DEFAULT_DPI)
+    XMIN_DEFAULT_WIDTH XMIN_DEFAULT_HEIGHT)
   if(NOT "${${variable}}" MATCHES "^[1-9][0-9]*$")
     message(FATAL_ERROR "${variable} must be a positive integer.")
   endif()

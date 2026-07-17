@@ -22,10 +22,27 @@ function(xmin_count_sources directory prefix)
   set(${prefix}_LINES "${line_count}" PARENT_SCOPE)
 endfunction()
 
+function(xmin_count_c_implementation directory prefix)
+  file(GLOB_RECURSE source_files LIST_DIRECTORIES FALSE
+    "${directory}/*.c"
+  )
+  list(LENGTH source_files source_count)
+  set(line_count 0)
+  foreach(source IN LISTS source_files)
+    file(READ "${source}" contents)
+    string(REGEX MATCHALL "\n" line_breaks "${contents}")
+    list(LENGTH line_breaks file_lines)
+    math(EXPR line_count "${line_count} + ${file_lines}")
+  endforeach()
+  set(${prefix}_FILES "${source_count}" PARENT_SCOPE)
+  set(${prefix}_LINES "${line_count}" PARENT_SCOPE)
+endfunction()
+
 xmin_count_sources("${SOURCE_DIR}/src" PROJECT)
-xmin_count_sources("${SOURCE_DIR}/src/next" SERVER)
+xmin_count_sources("${SOURCE_DIR}/src/server" SERVER)
 xmin_count_sources("${SOURCE_DIR}/src/control" CONTROL)
 xmin_count_sources("${SOURCE_DIR}/third_party/osmesa" OSMESA)
+xmin_count_c_implementation("${SOURCE_DIR}/third_party/osmesa" OSMESA_C)
 xmin_count_sources("${SOURCE_DIR}/third_party/pixman" PIXMAN)
 
 set(translation_units "unavailable")
@@ -68,6 +85,8 @@ string(CONCAT report
   "pixman_source_lines=${PIXMAN_LINES}\n"
   "osmesa_source_files=${OSMESA_FILES}\n"
   "osmesa_source_lines=${OSMESA_LINES}\n"
+  "osmesa_c_implementation_files=${OSMESA_C_FILES}\n"
+  "osmesa_c_implementation_lines=${OSMESA_C_LINES}\n"
   "translation_units=${translation_units}\n"
   "project_translation_units=${project_translation_units}\n"
   "server_binary_bytes=${server_bytes}\n"

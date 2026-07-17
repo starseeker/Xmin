@@ -1,12 +1,13 @@
 set(xmin_client_gl_include "${CMAKE_CURRENT_SOURCE_DIR}/include")
+find_package(Threads REQUIRED)
 
 # Keep the project-owned ABI adapter under the normal warning policy. The
 # renderer sources themselves are an upstream target below.
-add_library(xmin_glx_client_api OBJECT xmin_glx_client.c)
+add_library(xmin_glx_client_api OBJECT xmin_glx_client.cpp)
 set_target_properties(xmin_glx_client_api PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
-target_compile_features(xmin_glx_client_api PRIVATE c_std_11)
+target_compile_features(xmin_glx_client_api PRIVATE cxx_std_17)
 target_compile_definitions(xmin_glx_client_api PRIVATE
   _POSIX_C_SOURCE=200809L
 )
@@ -44,8 +45,12 @@ target_compile_features(xmin_gl_client PRIVATE c_std_11 cxx_std_17)
 target_compile_definitions(xmin_gl_client PRIVATE
   LIBRARYBUILD
   GL_DLL_EXPORTS
-  PTHREADS
 )
+if(WIN32)
+  target_compile_definitions(xmin_gl_client PRIVATE WIN32_THREADS)
+else()
+  target_compile_definitions(xmin_gl_client PRIVATE PTHREADS)
+endif()
 target_include_directories(xmin_gl_client
   PUBLIC
     "$<BUILD_INTERFACE:${xmin_client_gl_include}>"

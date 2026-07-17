@@ -1,7 +1,7 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "generated_from": {
-    "policy_sha256": "3f020a14ac135c1239d85d1db6bc86a64642b69d2f54907d9fbfbdb4a47a0619",
+    "policy_sha256": "fc33904315c76df9da6b583be0d79114c08febb7c25036ae57361c093b54f3ac",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -86,7 +86,7 @@
     ]
   },
   "product": {
-    "schema_version": 1,
+    "schema_version": 2,
     "product": "Xmin clean 2D",
     "wire_protocol": "X11 11.0",
     "transport": {
@@ -113,23 +113,28 @@
     },
     "cli": {
       "server": [
-        "display",
-        "-screen",
-        "-auth",
-        "-ac",
-        "-displayfd",
-        "-nolisten tcp",
+        "DISPLAY",
+        "--display-fd",
+        "--auth",
+        "--cookie-hex",
+        "--no-auth",
+        "--screen",
+        "--max-clients",
+        "--client-fd",
         "--help",
         "--version"
       ],
       "launcher": [
-        "xmin-run"
+        "xmin-run",
+        "--server",
+        "--screen"
       ],
       "controller": [
         "xminctl"
       ],
       "capture": [
-        "xmincapture"
+        "xminctl capture-root",
+        "xminctl capture-window"
       ]
     }
   },
@@ -138,890 +143,763 @@
       "opcode": 1,
       "name": "CreateWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 2,
       "name": "ChangeWindowAttributes",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 3,
       "name": "GetWindowAttributes",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 4,
       "name": "DestroyWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 5,
       "name": "DestroySubwindows",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 6,
       "name": "ChangeSaveSet",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 7,
       "name": "ReparentWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 8,
       "name": "MapWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 9,
       "name": "MapSubwindows",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 10,
       "name": "UnmapWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 11,
       "name": "UnmapSubwindows",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 12,
       "name": "ConfigureWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 13,
       "name": "CirculateWindow",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 14,
       "name": "GetGeometry",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 15,
       "name": "QueryTree",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 16,
       "name": "InternAtom",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 17,
       "name": "GetAtomName",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 18,
       "name": "ChangeProperty",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 19,
       "name": "DeleteProperty",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 20,
       "name": "GetProperty",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 21,
       "name": "ListProperties",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 22,
       "name": "SetSelectionOwner",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 23,
       "name": "GetSelectionOwner",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 24,
       "name": "ConvertSelection",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 25,
       "name": "SendEvent",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 26,
       "name": "GrabPointer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 27,
       "name": "UngrabPointer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 28,
       "name": "GrabButton",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 29,
       "name": "UngrabButton",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 30,
       "name": "ChangeActivePointerGrab",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 31,
       "name": "GrabKeyboard",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 32,
       "name": "UngrabKeyboard",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 33,
       "name": "GrabKey",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 34,
       "name": "UngrabKey",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 35,
       "name": "AllowEvents",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 36,
       "name": "GrabServer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 37,
       "name": "UngrabServer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 38,
       "name": "QueryPointer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 39,
       "name": "GetMotionEvents",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 40,
       "name": "TranslateCoordinates",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 41,
       "name": "WarpPointer",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 42,
       "name": "SetInputFocus",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 43,
       "name": "GetInputFocus",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 44,
       "name": "QueryKeymap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 45,
       "name": "OpenFont",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 46,
       "name": "CloseFont",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 47,
       "name": "QueryFont",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 48,
       "name": "QueryTextExtents",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 49,
       "name": "ListFonts",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 50,
       "name": "ListFontsWithInfo",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 51,
       "name": "SetFontPath",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 52,
       "name": "GetFontPath",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 53,
       "name": "CreatePixmap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 54,
       "name": "FreePixmap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 55,
       "name": "CreateGC",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 56,
       "name": "ChangeGC",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 57,
       "name": "CopyGC",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 58,
       "name": "SetDashes",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 59,
       "name": "SetClipRectangles",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 60,
       "name": "FreeGC",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 61,
       "name": "ClearArea",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 62,
       "name": "CopyArea",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 63,
       "name": "CopyPlane",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 64,
       "name": "PolyPoint",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 65,
       "name": "PolyLine",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 66,
       "name": "PolySegment",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 67,
       "name": "PolyRectangle",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 68,
       "name": "PolyArc",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 69,
       "name": "FillPoly",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 70,
       "name": "PolyFillRectangle",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 71,
       "name": "PolyFillArc",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 72,
       "name": "PutImage",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 73,
       "name": "GetImage",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 74,
       "name": "PolyText8",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 75,
       "name": "PolyText16",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 76,
       "name": "ImageText8",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 77,
       "name": "ImageText16",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 78,
       "name": "CreateColormap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 79,
       "name": "FreeColormap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 80,
       "name": "CopyColormapAndFree",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 81,
       "name": "InstallColormap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 82,
       "name": "UninstallColormap",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 83,
       "name": "ListInstalledColormaps",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 84,
       "name": "AllocColor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 85,
       "name": "AllocNamedColor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 86,
       "name": "AllocColorCells",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 87,
       "name": "AllocColorPlanes",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 88,
       "name": "FreeColors",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 89,
       "name": "StoreColors",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 90,
       "name": "StoreNamedColor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 91,
       "name": "QueryColors",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 92,
       "name": "LookupColor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 93,
       "name": "CreateCursor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 94,
       "name": "CreateGlyphCursor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 95,
       "name": "FreeCursor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 96,
       "name": "RecolorCursor",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 97,
       "name": "QueryBestSize",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 98,
       "name": "QueryExtension",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 99,
       "name": "ListExtensions",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 100,
       "name": "ChangeKeyboardMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 101,
       "name": "GetKeyboardMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 102,
       "name": "ChangeKeyboardControl",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 103,
       "name": "GetKeyboardControl",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 104,
       "name": "Bell",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 105,
       "name": "ChangePointerControl",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 106,
       "name": "GetPointerControl",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 107,
       "name": "SetScreenSaver",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 108,
       "name": "GetScreenSaver",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 109,
       "name": "ChangeHosts",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 110,
       "name": "ListHosts",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 111,
       "name": "SetAccessControl",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 112,
       "name": "SetCloseDownMode",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 113,
       "name": "KillClient",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 114,
       "name": "RotateProperties",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 115,
       "name": "ForceScreenSaver",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 116,
       "name": "SetPointerMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 117,
       "name": "GetPointerMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 118,
       "name": "SetModifierMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 119,
       "name": "GetModifierMapping",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     },
     {
       "opcode": 120,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 121,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 122,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 123,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 124,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 125,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 126,
       "name": "Reserved",
       "contract": "intentionally_unsupported",
-      "legacy_status": "not_applicable",
-      "next_status": "not_applicable"
+      "status": "not_applicable"
     },
     {
       "opcode": 127,
       "name": "NoOperation",
       "contract": "required",
-      "legacy_status": "implemented",
-      "next_status": "implemented"
+      "status": "implemented"
     }
   ],
   "extensions": [
@@ -1035,8 +913,7 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1050,64 +927,55 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Rectangles",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Mask",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "Combine",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "Offset",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "QueryExtents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "SelectInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "InputSelected",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "GetRectangles",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1121,428 +989,367 @@
           "opcode": 1,
           "name": "GetExtensionVersion",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "ListInputDevices",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "OpenDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "CloseDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "SetDeviceMode",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "SelectExtensionEvent",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "GetSelectedExtensionEvents",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "ChangeDeviceDontPropagateList",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 9,
           "name": "GetDeviceDontPropagateList",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "GetDeviceMotionEvents",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "ChangeKeyboardDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "ChangePointerDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "GrabDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 14,
           "name": "UngrabDevice",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 15,
           "name": "GrabDeviceKey",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 16,
           "name": "UngrabDeviceKey",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "GrabDeviceButton",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "UngrabDeviceButton",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 19,
           "name": "AllowDeviceEvents",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 20,
           "name": "GetDeviceFocus",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 21,
           "name": "SetDeviceFocus",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 22,
           "name": "GetFeedbackControl",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 23,
           "name": "ChangeFeedbackControl",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 24,
           "name": "GetDeviceKeyMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 25,
           "name": "ChangeDeviceKeyMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 26,
           "name": "GetDeviceModifierMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 27,
           "name": "SetDeviceModifierMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 28,
           "name": "GetDeviceButtonMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 29,
           "name": "SetDeviceButtonMapping",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 30,
           "name": "QueryDeviceState",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 31,
           "name": "SendExtensionEvent",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 32,
           "name": "DeviceBell",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 33,
           "name": "SetDeviceValuators",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 34,
           "name": "GetDeviceControl",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 35,
           "name": "ChangeDeviceControl",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 36,
           "name": "ListDeviceProperties",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 37,
           "name": "ChangeDeviceProperty",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 38,
           "name": "DeleteDeviceProperty",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 39,
           "name": "GetDeviceProperty",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 40,
           "name": "XIQueryPointer",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 41,
           "name": "XIWarpPointer",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 42,
           "name": "XIChangeCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 43,
           "name": "XIChangeHierarchy",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 44,
           "name": "XISetClientPointer",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 45,
           "name": "XIGetClientPointer",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 46,
           "name": "XISelectEvents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 47,
           "name": "XIQueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 48,
           "name": "XIQueryDevice",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 49,
           "name": "XISetFocus",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 50,
           "name": "XIGetFocus",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 51,
           "name": "XIGrabDevice",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 52,
           "name": "XIUngrabDevice",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 53,
           "name": "XIAllowEvents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 54,
           "name": "XIPassiveGrabDevice",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 55,
           "name": "XIPassiveUngrabDevice",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 56,
           "name": "XIListProperties",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 57,
           "name": "XIChangeProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 58,
           "name": "XIDeleteProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 59,
           "name": "XIGetProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 60,
           "name": "XIGetSelectedEvents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 61,
           "name": "XIBarrierReleasePointer",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1556,29 +1363,25 @@
           "opcode": 0,
           "name": "GetVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "CompareCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "FakeInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "GrabControl",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1592,8 +1395,7 @@
           "opcode": 0,
           "name": "Enable",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1607,141 +1409,121 @@
           "opcode": 0,
           "name": "Initialize",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "ListSystemCounters",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "CreateCounter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SetCounter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "ChangeCounter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "QueryCounter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "DestroyCounter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "Await",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "CreateAlarm",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 9,
           "name": "ChangeAlarm",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "QueryAlarm",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "DestroyAlarm",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "SetPriority",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "GetPriority",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 14,
           "name": "CreateFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 15,
           "name": "TriggerFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 16,
           "name": "ResetFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "DestroyFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "QueryFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 19,
           "name": "AwaitFence",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1755,169 +1537,145 @@
           "opcode": 0,
           "name": "UseExtension",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "SelectEvents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "Bell",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "GetState",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "LatchLockState",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "GetControls",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "SetControls",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "GetMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 9,
           "name": "SetMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "GetCompatMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "SetCompatMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "GetIndicatorState",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "GetIndicatorMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 14,
           "name": "SetIndicatorMap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 15,
           "name": "GetNamedIndicator",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 16,
           "name": "SetNamedIndicator",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "GetNames",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "SetNames",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 21,
           "name": "PerClientFlags",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 22,
           "name": "ListComponents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 23,
           "name": "GetKbdByName",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 24,
           "name": "GetDeviceInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 25,
           "name": "SetDeviceInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 101,
           "name": "SetDebuggingFlags",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1931,22 +1689,19 @@
           "opcode": 0,
           "name": "GetVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "GetXIDRange",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "GetXIDList",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -1960,246 +1715,211 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "ChangeSaveSet",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "SelectSelectionInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SelectCursorInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "GetCursorImage",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "CreateRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "CreateRegionFromBitmap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "CreateRegionFromWindow",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "CreateRegionFromGC",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 9,
           "name": "CreateRegionFromPicture",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "DestroyRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "SetRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "CopyRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "UnionRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 14,
           "name": "IntersectRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 15,
           "name": "SubtractRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 16,
           "name": "InvertRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "TranslateRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "RegionExtents",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 19,
           "name": "FetchRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 20,
           "name": "SetGCClipRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 21,
           "name": "SetWindowShapeRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 22,
           "name": "SetPictureClipRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 23,
           "name": "SetCursorName",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 24,
           "name": "GetCursorName",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 25,
           "name": "GetCursorImageAndName",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 26,
           "name": "ChangeCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 27,
           "name": "ChangeCursorByName",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 28,
           "name": "ExpandRegion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 29,
           "name": "HideCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 30,
           "name": "ShowCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 31,
           "name": "CreatePointerBarrier",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 32,
           "name": "DeletePointerBarrier",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 33,
           "name": "SetClientDisconnectMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 34,
           "name": "GetClientDisconnectMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2213,218 +1933,187 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "QueryPictFormats",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "QueryPictIndexValues",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "CreatePicture",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "ChangePicture",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "SetPictureClipRectangles",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "FreePicture",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "Composite",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "Trapezoids",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "Triangles",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "TriStrip",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "TriFan",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "CreateGlyphSet",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "ReferenceGlyphSet",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 19,
           "name": "FreeGlyphSet",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 20,
           "name": "AddGlyphs",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 22,
           "name": "FreeGlyphs",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 23,
           "name": "CompositeGlyphs8",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 24,
           "name": "CompositeGlyphs16",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 25,
           "name": "CompositeGlyphs32",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 26,
           "name": "FillRectangles",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 27,
           "name": "CreateCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 28,
           "name": "SetPictureTransform",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 29,
           "name": "QueryFilters",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 30,
           "name": "SetPictureFilter",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 31,
           "name": "CreateAnimCursor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 32,
           "name": "AddTraps",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 33,
           "name": "CreateSolidFill",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 34,
           "name": "CreateLinearGradient",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 35,
           "name": "CreateRadialGradient",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 36,
           "name": "CreateConicalGradient",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2438,316 +2127,271 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "SetScreenConfig",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "SelectInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "GetScreenInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "GetScreenSizeRange",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "SetScreenSize",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "GetScreenResources",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 9,
           "name": "GetOutputInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 10,
           "name": "ListOutputProperties",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 11,
           "name": "QueryOutputProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 12,
           "name": "ConfigureOutputProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 13,
           "name": "ChangeOutputProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 14,
           "name": "DeleteOutputProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 15,
           "name": "GetOutputProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 16,
           "name": "CreateMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 17,
           "name": "DestroyMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 18,
           "name": "AddOutputMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 19,
           "name": "DeleteOutputMode",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 20,
           "name": "GetCrtcInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 21,
           "name": "SetCrtcConfig",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 22,
           "name": "GetCrtcGammaSize",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 23,
           "name": "GetCrtcGamma",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 24,
           "name": "SetCrtcGamma",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 25,
           "name": "GetScreenResourcesCurrent",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 26,
           "name": "SetCrtcTransform",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 27,
           "name": "GetCrtcTransform",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 28,
           "name": "GetPanning",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 29,
           "name": "SetPanning",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 30,
           "name": "SetOutputPrimary",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 31,
           "name": "GetOutputPrimary",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 32,
           "name": "GetProviders",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 33,
           "name": "GetProviderInfo",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 34,
           "name": "SetProviderOffloadSink",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 35,
           "name": "SetProviderOutputSource",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 36,
           "name": "ListProviderProperties",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 37,
           "name": "QueryProviderProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 38,
           "name": "ConfigureProviderProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 39,
           "name": "ChangeProviderProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 40,
           "name": "DeleteProviderProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 41,
           "name": "GetProviderProperty",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 42,
           "name": "GetMonitors",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 43,
           "name": "SetMonitor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 44,
           "name": "DeleteMonitor",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 45,
           "name": "CreateLease",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 46,
           "name": "FreeLease",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2761,64 +2405,55 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "RedirectWindow",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "RedirectSubwindows",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "UnredirectWindow",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "UnredirectSubwindows",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "CreateRegionFromBorderClip",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "NameWindowPixmap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "GetOverlayWindow",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 8,
           "name": "ReleaseOverlayWindow",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2832,36 +2467,31 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Create",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Destroy",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "Subtract",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "Add",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2875,43 +2505,37 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Pixmap",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "NotifyMSC",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SelectInput",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "QueryCapabilities",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "PixmapSynced",
           "contract": "required",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2925,57 +2549,49 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Attach",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Detach",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "PutImage",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "GetImage",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "CreatePixmap",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "AttachFd",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "CreateSegment",
           "contract": "platform_conditional",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -2989,57 +2605,49 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "AllocateBackBuffer",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "DeallocateBackBuffer",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SwapBuffers",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "BeginIdiom",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "EndIdiom",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 6,
           "name": "GetVisualInfo",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 7,
           "name": "GetBackBufferAttributes",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -3053,43 +2661,37 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "QueryInfo",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "SelectInput",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SetAttributes",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "UnsetAttributes",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "Suspend",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
@@ -3103,758 +2705,651 @@
           "opcode": 0,
           "name": "QueryVersion",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 1,
           "name": "GetState",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 2,
           "name": "GetScreenCount",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 3,
           "name": "GetScreenSize",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 4,
           "name": "IsActive",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         },
         {
           "opcode": 5,
           "name": "QueryScreens",
           "contract": "compatibility",
-          "legacy_status": "implemented",
-          "next_status": "implemented"
+          "status": "implemented"
         }
       ]
     },
     {
       "name": "GLX",
       "version": "1.4",
-      "contract": "optional_legacy",
+      "contract": "intentionally_unsupported",
       "xml": "glx.xml",
       "requests": [
         {
           "opcode": 1,
           "name": "Render",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 2,
           "name": "RenderLarge",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 3,
           "name": "CreateContext",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 4,
           "name": "DestroyContext",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 5,
           "name": "MakeCurrent",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 6,
           "name": "IsDirect",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 7,
           "name": "QueryVersion",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 8,
           "name": "WaitGL",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 9,
           "name": "WaitX",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 10,
           "name": "CopyContext",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 11,
           "name": "SwapBuffers",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 12,
           "name": "UseXFont",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 13,
           "name": "CreateGLXPixmap",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 14,
           "name": "GetVisualConfigs",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 15,
           "name": "DestroyGLXPixmap",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 16,
           "name": "VendorPrivate",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 17,
           "name": "VendorPrivateWithReply",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 18,
           "name": "QueryExtensionsString",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 19,
           "name": "QueryServerString",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 20,
           "name": "ClientInfo",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 21,
           "name": "GetFBConfigs",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 22,
           "name": "CreatePixmap",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 23,
           "name": "DestroyPixmap",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 24,
           "name": "CreateNewContext",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 25,
           "name": "QueryContext",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 26,
           "name": "MakeContextCurrent",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 27,
           "name": "CreatePbuffer",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 28,
           "name": "DestroyPbuffer",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 29,
           "name": "GetDrawableAttributes",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 30,
           "name": "ChangeDrawableAttributes",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 31,
           "name": "CreateWindow",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 32,
           "name": "DeleteWindow",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 33,
           "name": "SetClientInfoARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 34,
           "name": "CreateContextAttribsARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 35,
           "name": "SetClientInfo2ARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 101,
           "name": "NewList",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 102,
           "name": "EndList",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 103,
           "name": "DeleteLists",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 104,
           "name": "GenLists",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 105,
           "name": "FeedbackBuffer",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 106,
           "name": "SelectBuffer",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 107,
           "name": "RenderMode",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 108,
           "name": "Finish",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 109,
           "name": "PixelStoref",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 110,
           "name": "PixelStorei",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 111,
           "name": "ReadPixels",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 112,
           "name": "GetBooleanv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 113,
           "name": "GetClipPlane",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 114,
           "name": "GetDoublev",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 115,
           "name": "GetError",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 116,
           "name": "GetFloatv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 117,
           "name": "GetIntegerv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 118,
           "name": "GetLightfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 119,
           "name": "GetLightiv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 120,
           "name": "GetMapdv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 121,
           "name": "GetMapfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 122,
           "name": "GetMapiv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 123,
           "name": "GetMaterialfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 124,
           "name": "GetMaterialiv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 125,
           "name": "GetPixelMapfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 126,
           "name": "GetPixelMapuiv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 127,
           "name": "GetPixelMapusv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 128,
           "name": "GetPolygonStipple",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 129,
           "name": "GetString",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 130,
           "name": "GetTexEnvfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 131,
           "name": "GetTexEnviv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 132,
           "name": "GetTexGendv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 133,
           "name": "GetTexGenfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 134,
           "name": "GetTexGeniv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 135,
           "name": "GetTexImage",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 136,
           "name": "GetTexParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 137,
           "name": "GetTexParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 138,
           "name": "GetTexLevelParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 139,
           "name": "GetTexLevelParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 140,
           "name": "IsEnabled",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 141,
           "name": "IsList",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 142,
           "name": "Flush",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 143,
           "name": "AreTexturesResident",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 144,
           "name": "DeleteTextures",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 145,
           "name": "GenTextures",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 146,
           "name": "IsTexture",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 147,
           "name": "GetColorTable",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 148,
           "name": "GetColorTableParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 149,
           "name": "GetColorTableParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 150,
           "name": "GetConvolutionFilter",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 151,
           "name": "GetConvolutionParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 152,
           "name": "GetConvolutionParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 153,
           "name": "GetSeparableFilter",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 154,
           "name": "GetHistogram",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 155,
           "name": "GetHistogramParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 156,
           "name": "GetHistogramParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 157,
           "name": "GetMinmax",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 158,
           "name": "GetMinmaxParameterfv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 159,
           "name": "GetMinmaxParameteriv",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 160,
           "name": "GetCompressedTexImageARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 161,
           "name": "DeleteQueriesARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 162,
           "name": "GenQueriesARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 163,
           "name": "IsQueryARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 164,
           "name": "GetQueryivARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 165,
           "name": "GetQueryObjectivARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         },
         {
           "opcode": 166,
           "name": "GetQueryObjectuivARB",
-          "contract": "optional_legacy",
-          "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "contract": "intentionally_unsupported",
+          "status": "intentionally_unsupported"
         }
       ]
     }

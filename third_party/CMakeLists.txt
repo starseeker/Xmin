@@ -37,7 +37,7 @@ set(xmin_pixman_sources
 )
 list(TRANSFORM xmin_pixman_sources PREPEND "${xmin_pixman_source_dir}/")
 
-set(xmin_pixman_libraries Threads::Threads)
+set(xmin_pixman_libraries)
 if(NOT WIN32)
   find_library(XMIN_M_LIBRARY m)
   if(XMIN_M_LIBRARY)
@@ -49,7 +49,10 @@ xmin_add_component(pixman
   UPSTREAM
   TYPE STATIC
   SOURCES ${xmin_pixman_sources}
-  PRIVATE_DEFINITIONS HAVE_CONFIG_H=1
+  # Xmin's server and renderer are deliberately single-threaded. Keeping
+  # pixman's one fast-path cache process-local removes an otherwise needless
+  # platform threading dependency from the server.
+  PRIVATE_DEFINITIONS HAVE_CONFIG_H=1 PIXMAN_NO_TLS=1
   PRIVATE_INCLUDE_DIRS
     "${xmin_pixman_source_dir}"
     "${PROJECT_BINARY_DIR}/generated/pixman"
