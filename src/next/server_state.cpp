@@ -1542,6 +1542,44 @@ ServerState::erase_graphics_context(std::uint32_t id)
     return true;
 }
 
+FontRecord *
+ServerState::font(std::uint32_t id)
+{
+    const auto found = fonts_.find(id);
+    return found == fonts_.end() ? nullptr : &found->second;
+}
+
+const FontRecord *
+ServerState::font(std::uint32_t id) const
+{
+    const auto found = fonts_.find(id);
+    return found == fonts_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_font(FontRecord added, std::uint32_t owner)
+{
+    if (added.font == nullptr || resource_exists(added.id) ||
+        !resources_.insert(added.id, ResourceKind::font, owner)) {
+        return false;
+    }
+    const std::uint32_t id = added.id;
+    if (!fonts_.emplace(id, added).second) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_font(std::uint32_t id)
+{
+    if (fonts_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
 SharedMemory *
 ServerState::shared_memory(std::uint32_t id)
 {
@@ -6316,6 +6354,9 @@ ServerState::disconnect_client(std::uint32_t owner)
         resources_.owned_by(owner, ResourceKind::shared_memory);
     for (const auto id : shared_memory)
         static_cast<void>(erase_shared_memory(id));
+    const auto fonts = resources_.owned_by(owner, ResourceKind::font);
+    for (const auto id : fonts)
+        static_cast<void>(erase_font(id));
     const auto pixmaps = resources_.owned_by(owner, ResourceKind::pixmap);
     for (const auto id : pixmaps)
         static_cast<void>(erase_pixmap(id));

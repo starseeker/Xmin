@@ -4,6 +4,7 @@
 #include "xmin/next/atom_table.hpp"
 #include "xmin/next/client_event.hpp"
 #include "xmin/next/clock.hpp"
+#include "xmin/next/font.hpp"
 #include "xmin/next/generated/core_keymap.hpp"
 #include "xmin/next/render.hpp"
 #include "xmin/next/resource_registry.hpp"
@@ -313,6 +314,11 @@ struct PixmapRecord {
     std::shared_ptr<Surface> surface;
 };
 
+struct FontRecord {
+    std::uint32_t id = 0;
+    const EmbeddedFont *font = nullptr;
+};
+
 struct GraphicsContextRecord {
     std::uint32_t id = 0;
     std::uint8_t depth = 0;
@@ -320,6 +326,22 @@ struct GraphicsContextRecord {
     std::uint32_t plane_mask = 0xffffffffU;
     std::uint32_t foreground = 0;
     std::uint32_t background = 1;
+    const EmbeddedFont *font = nullptr;
+    std::uint16_t line_width = 0;
+    std::uint16_t dash_offset = 0;
+    std::uint8_t line_style = 0;
+    std::uint8_t cap_style = 1;
+    std::uint8_t join_style = 0;
+    std::uint8_t fill_style = 0;
+    std::uint8_t fill_rule = 0;
+    std::uint8_t arc_mode = 1;
+    std::array<std::uint8_t, 256> dashes = [] {
+        std::array<std::uint8_t, 256> result{};
+        result[0] = 4;
+        result[1] = 4;
+        return result;
+    }();
+    std::uint16_t dash_count = 2;
     std::int32_t clip_x_origin = 0;
     std::int32_t clip_y_origin = 0;
     std::optional<Region> clip_region;
@@ -777,6 +799,10 @@ public:
     [[nodiscard]] bool add_graphics_context(GraphicsContextRecord context,
                                             std::uint32_t owner);
     [[nodiscard]] bool erase_graphics_context(std::uint32_t id);
+    [[nodiscard]] FontRecord *font(std::uint32_t id);
+    [[nodiscard]] const FontRecord *font(std::uint32_t id) const;
+    [[nodiscard]] bool add_font(FontRecord font, std::uint32_t owner);
+    [[nodiscard]] bool erase_font(std::uint32_t id);
     [[nodiscard]] SharedMemory *shared_memory(std::uint32_t id);
     [[nodiscard]] const SharedMemory *shared_memory(std::uint32_t id) const;
     [[nodiscard]] bool add_shared_memory(
@@ -1024,6 +1050,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> xkb_client_flags_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
+    std::unordered_map<std::uint32_t, FontRecord> fonts_;
     std::unordered_map<std::uint32_t, SharedMemory> shared_memory_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;

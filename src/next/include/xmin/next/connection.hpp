@@ -180,6 +180,16 @@ private:
     Result<void> handle_get_modifier_mapping(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_keymap(const RequestContext &context);
+    Result<void> handle_open_font(const RequestContext &context);
+    Result<void> handle_close_font(const RequestContext &context);
+    Result<void> handle_query_font(const RequestContext &context);
+    Result<void> handle_query_text_extents(const RequestContext &context);
+    Result<void> handle_list_fonts(const RequestContext &context);
+    Result<void> handle_list_fonts_with_info(const RequestContext &context);
+    Result<void> handle_set_font_path(const RequestContext &context);
+    Result<void> handle_get_font_path(const RequestContext &context);
+    Result<void> handle_poly_text(const RequestContext &context);
+    Result<void> handle_image_text(const RequestContext &context);
     Result<void> handle_query_extension(const RequestContext &context);
     Result<void> handle_list_extensions(const RequestContext &context);
     Result<void> handle_big_requests(const RequestContext &context);
@@ -205,6 +215,11 @@ private:
         std::int16_t destination_x, std::int16_t destination_y,
         std::uint8_t depth, const std::uint8_t *image,
         std::size_t image_size, bool exact_image_size);
+    Result<void> paint_text(
+        const RequestContext &context, std::uint32_t drawable,
+        std::uint32_t graphics, const EmbeddedFont &font,
+        const std::vector<std::uint16_t> &characters,
+        std::int32_t x, std::int32_t baseline, bool image_text);
     Result<void> finish_draw(const RequestContext &context,
                              std::uint32_t drawable);
     Result<void> update_shape(

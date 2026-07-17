@@ -24,6 +24,7 @@ enum class ResourceKind {
     damage,
     present_event,
     shared_memory,
+    font,
 };
 
 struct ResourceRecord {

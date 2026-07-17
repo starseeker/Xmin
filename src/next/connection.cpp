@@ -62,6 +62,7 @@ constexpr std::uint32_t exclusive_event_masks =
 constexpr std::uint32_t input_only_attribute_masks =
     (1U << 5) | (1U << 9) | (1U << 11) | (1U << 12) | (1U << 14);
 constexpr std::uint32_t basic_graphics_context_mask = 0x0000000fU;
+constexpr std::uint32_t graphics_context_font = 1U << 14;
 constexpr std::uint32_t graphics_context_clip_origins =
     (1U << 17) | (1U << 18);
 constexpr std::uint16_t pointer_grab_mask = 0x7ffcU;
@@ -80,6 +81,7 @@ enum : std::uint8_t {
     bad_pixmap = 4,
     bad_atom = 5,
     bad_cursor = 6,
+    bad_font = 7,
     bad_match = 8,
     bad_drawable = 9,
     bad_access = 10,
@@ -3302,7 +3304,7 @@ Connection::handle_create_graphics_context(const RequestContext &context)
     if (!id || !drawable || !value_mask)
         return malformed("truncated CreateGC request");
     constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_clip_origins;
+        graphics_context_font | graphics_context_clip_origins;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3352,6 +3354,14 @@ Connection::handle_create_graphics_context(const RequestContext &context)
         case 3:
             graphics.background = *value;
             break;
+        case 14: {
+            const auto *font = server_.font(*value);
+            if (font == nullptr)
+                return send_error(context.order, bad_font, context.opcode,
+                                  context.sequence, *value);
+            graphics.font = font->font;
+            break;
+        }
         case 17:
             graphics.clip_x_origin = signed_dword(*value);
             break;
@@ -3381,7 +3391,7 @@ Connection::handle_change_graphics_context(const RequestContext &context)
     if (!id || !value_mask)
         return malformed("truncated ChangeGC request");
     constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_clip_origins;
+        graphics_context_font | graphics_context_clip_origins;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3428,6 +3438,14 @@ Connection::handle_change_graphics_context(const RequestContext &context)
         case 3:
             updated->background = *value;
             break;
+        case 14: {
+            const auto *font = server_.font(*value);
+            if (font == nullptr)
+                return send_error(context.order, bad_font, context.opcode,
+                                  context.sequence, *value);
+            updated->font = font->font;
+            break;
+        }
         case 17:
             updated->clip_x_origin = signed_dword(*value);
             break;
@@ -3453,7 +3471,7 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
     if (!source_id || !destination_id || !value_mask)
         return malformed("truncated CopyGC request");
     constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_clip_origins | (1U << 19);
+        graphics_context_font | graphics_context_clip_origins | (1U << 19);
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3476,6 +3494,8 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
             updated->foreground = source->foreground;
         if ((*value_mask & (1U << 3)) != 0)
             updated->background = source->background;
+        if ((*value_mask & (1U << 14)) != 0)
+            updated->font = source->font;
         if ((*value_mask & (1U << 17)) != 0)
             updated->clip_x_origin = source->clip_x_origin;
         if ((*value_mask & (1U << 18)) != 0)
@@ -6807,6 +6827,22 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_warp_pointer;
         table[opcode_index(CoreOpcode::SetInputFocus)] =
             &Connection::handle_set_input_focus;
+        table[opcode_index(CoreOpcode::OpenFont)] =
+            &Connection::handle_open_font;
+        table[opcode_index(CoreOpcode::CloseFont)] =
+            &Connection::handle_close_font;
+        table[opcode_index(CoreOpcode::QueryFont)] =
+            &Connection::handle_query_font;
+        table[opcode_index(CoreOpcode::QueryTextExtents)] =
+            &Connection::handle_query_text_extents;
+        table[opcode_index(CoreOpcode::ListFonts)] =
+            &Connection::handle_list_fonts;
+        table[opcode_index(CoreOpcode::ListFontsWithInfo)] =
+            &Connection::handle_list_fonts_with_info;
+        table[opcode_index(CoreOpcode::SetFontPath)] =
+            &Connection::handle_set_font_path;
+        table[opcode_index(CoreOpcode::GetFontPath)] =
+            &Connection::handle_get_font_path;
         table[opcode_index(CoreOpcode::CreatePixmap)] =
             &Connection::handle_create_pixmap;
         table[opcode_index(CoreOpcode::FreePixmap)] =
@@ -6837,6 +6873,14 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_poly_rectangles;
         table[opcode_index(CoreOpcode::PolyFillRectangle)] =
             &Connection::handle_fill_rectangles;
+        table[opcode_index(CoreOpcode::PolyText8)] =
+            &Connection::handle_poly_text;
+        table[opcode_index(CoreOpcode::PolyText16)] =
+            &Connection::handle_poly_text;
+        table[opcode_index(CoreOpcode::ImageText8)] =
+            &Connection::handle_image_text;
+        table[opcode_index(CoreOpcode::ImageText16)] =
+            &Connection::handle_image_text;
         table[opcode_index(CoreOpcode::PutImage)] =
             &Connection::handle_put_image;
         table[opcode_index(CoreOpcode::GetImage)] =

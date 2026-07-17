@@ -20,6 +20,15 @@ Extension policy entries may set an extension-wide `next_status` and may list
 Compatibility subsets may use `next_compatibility_status` when their migration state
 differs from the extension's required request set.
 
+`generate-core-fonts.py` converts the pinned uncompressed PCF arrays into the
+compact glyph/metric tables used by the C++ server, avoiding a runtime PCF
+parser and libXfont dependency:
+
+```sh
+python3 tools/generate-core-fonts.py data/fonts/xmin_builtin_fonts.c \
+  src/next/include/xmin/next/generated/core_fonts.hpp
+```
+
 `capture-next-core-keymap.c` converts the legacy oracle's core view of the pinned
 `xmin-us.xkb` map and input defaults into the committed C++17 keymap header.  It is
 a migration-time maintenance utility, not a product build dependency.  Start the

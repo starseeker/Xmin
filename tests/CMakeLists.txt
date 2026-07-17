@@ -168,6 +168,29 @@ if(TARGET Xmin::run)
     )
     set_tests_properties(xmin.xcb-raster PROPERTIES TIMEOUT 20)
 
+    if(TARGET Xmin::next_server)
+      add_executable(xmin_next_xcb_raster integration/xcb_raster.c)
+      target_compile_features(xmin_next_xcb_raster PRIVATE c_std_11)
+      target_compile_definitions(xmin_next_xcb_raster PRIVATE
+        XMIN_NEXT_RASTER=1
+      )
+      target_include_directories(xmin_next_xcb_raster
+        PRIVATE "${PROJECT_BINARY_DIR}/generated"
+        SYSTEM PRIVATE "${XMIN_TEST_XCB_INCLUDE_DIR}"
+      )
+      target_link_libraries(xmin_next_xcb_raster PRIVATE
+        "${XMIN_TEST_XCB_LIBRARY}"
+      )
+      xmin_enable_warnings(xmin_next_xcb_raster)
+      add_test(NAME xmin.next-xcb-raster
+        COMMAND Xmin::run
+          --server $<TARGET_FILE:xmin_next>
+          --screen 96x80x24
+          -- $<TARGET_FILE:xmin_next_xcb_raster>
+      )
+      set_tests_properties(xmin.next-xcb-raster PROPERTIES TIMEOUT 20)
+    endif()
+
     add_executable(xmin_xcb_core integration/xcb_core.c)
     target_compile_features(xmin_xcb_core PRIVATE c_std_11)
     target_include_directories(xmin_xcb_core

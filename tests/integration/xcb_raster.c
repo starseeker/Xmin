@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 
+#ifndef XMIN_NEXT_RASTER
 static int
 query_extension(xcb_connection_t *connection, const char *name)
 {
@@ -78,6 +79,7 @@ cleanup:
     free(reply);
     return result;
 }
+#endif
 
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
@@ -132,9 +134,13 @@ test_builtin_fonts(xcb_connection_t *connection, xcb_window_t window,
     xcb_generic_error_t *error = NULL;
     xcb_query_font_reply_t *fixed_info = NULL;
     xcb_query_font_reply_t *cursor_info = NULL;
+    xcb_query_text_extents_reply_t *extents = NULL;
+    xcb_get_font_path_reply_t *font_path = NULL;
     xcb_get_image_reply_t *image = NULL;
     xcb_font_t fixed = xcb_generate_id(connection);
     xcb_font_t cursor = xcb_generate_id(connection);
+    xcb_cursor_t glyph_cursor = XCB_NONE;
+    xcb_char2b_t letter_a = { 0, 'A' };
     uint32_t values[3] = { 0x00ff0000U, 0, fixed };
     uint16_t width = 0;
     uint16_t height = 0;
@@ -182,6 +188,32 @@ test_builtin_fonts(xcb_connection_t *connection, xcb_window_t window,
     width = (uint16_t) fixed_info->max_bounds.character_width;
     height = (uint16_t) (fixed_info->font_ascent + fixed_info->font_descent);
     if (width == 0 || height == 0 || width > 32 || height > 32)
+        goto cleanup;
+
+    stage = "querying text extents and the built-in font path";
+    extents = xcb_query_text_extents_reply(
+        connection,
+        xcb_query_text_extents(connection, fixed, 1, &letter_a), &error);
+    font_path = xcb_get_font_path_reply(
+        connection, xcb_get_font_path(connection), &error);
+    if (error != NULL || extents == NULL || font_path == NULL ||
+        extents->overall_width <= 0 ||
+        xcb_get_font_path_path_length(font_path) != 1)
+        goto cleanup;
+
+    stage = "creating a cursor-font cursor";
+    glyph_cursor = xcb_generate_id(connection);
+    if (!checked(connection,
+                 xcb_create_glyph_cursor_checked(
+                     connection, glyph_cursor, cursor, cursor,
+                     cursor_info->min_char_or_byte2,
+                     (uint16_t) (cursor_info->min_char_or_byte2 + 1),
+                     UINT16_MAX, UINT16_MAX, UINT16_MAX, 0, 0, 0),
+                 "CreateGlyphCursor") ||
+        !checked(connection,
+                 xcb_change_window_attributes_checked(
+                     connection, window, XCB_CW_CURSOR, &glyph_cursor),
+                 "install glyph cursor"))
         goto cleanup;
 
     stage = "rendering core text";
@@ -263,6 +295,8 @@ test_builtin_fonts(xcb_connection_t *connection, xcb_window_t window,
     result = 1;
 
 cleanup:
+    if (glyph_cursor != XCB_NONE)
+        xcb_free_cursor(connection, glyph_cursor);
     if (cursor_open)
         xcb_close_font(connection, cursor);
     if (fixed_open)
@@ -271,6 +305,8 @@ cleanup:
         fprintf(stderr, "built-in font acceptance failed while %s\n", stage);
     free(error);
     free(image);
+    free(font_path);
+    free(extents);
     free(cursor_info);
     free(fixed_info);
     return result;
@@ -279,6 +315,7 @@ cleanup:
 int
 main(void)
 {
+#ifndef XMIN_NEXT_RASTER
     static const char *const required_extensions[] = {
         "Generic Event Extension",
         "SHAPE",
@@ -304,6 +341,7 @@ main(void)
         "MIT-SHM",
 #endif
     };
+#endif
     xcb_connection_t *connection;
     const xcb_setup_t *setup;
     xcb_screen_iterator_t screens;
@@ -335,6 +373,7 @@ main(void)
         screen->root_depth != 24)
         goto cleanup;
 
+#ifndef XMIN_NEXT_RASTER
     for (i = 0; i < sizeof(required_extensions) /
                     sizeof(required_extensions[0]); ++i) {
         if (!query_extension(connection, required_extensions[i])) {
@@ -347,6 +386,7 @@ main(void)
             connection, required_extensions,
             sizeof(required_extensions) / sizeof(required_extensions[0])))
         goto cleanup;
+#endif
 
     window = xcb_generate_id(connection);
     xcb_create_window(connection, screen->root_depth, window, screen->root,
