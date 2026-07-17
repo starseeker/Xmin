@@ -39,6 +39,9 @@ if(TARGET Xmin::next_server)
   target_compile_definitions(xmin_next_handshake PRIVATE
     _POSIX_C_SOURCE=200809L
   )
+  target_include_directories(xmin_next_handshake PRIVATE
+    "${PROJECT_BINARY_DIR}/generated"
+  )
   xmin_enable_warnings(xmin_next_handshake)
   add_test(NAME xmin.next-handshake
     COMMAND xmin_next_handshake $<TARGET_FILE:xmin_next>
@@ -435,6 +438,32 @@ if(TARGET Xmin::run)
         set_tests_properties(xmin.next-xcb-xi2-state
           PROPERTIES TIMEOUT 20
         )
+        if(XMIN_HAVE_MITSHM)
+          add_executable(xmin_xcb_shm_state
+            integration/xcb_shm_state.c
+          )
+          target_compile_features(xmin_xcb_shm_state PRIVATE c_std_11)
+          target_compile_definitions(xmin_xcb_shm_state PRIVATE
+            _POSIX_C_SOURCE=200809L
+          )
+          target_include_directories(xmin_xcb_shm_state PRIVATE
+            "${PROJECT_BINARY_DIR}/generated"
+          )
+          target_link_libraries(xmin_xcb_shm_state PRIVATE
+            PkgConfig::XMIN_TEST_XCB_EXTENSIONS
+            "${XMIN_TEST_XCB_LIBRARY}"
+          )
+          xmin_enable_warnings(xmin_xcb_shm_state)
+          add_test(NAME xmin.next-xcb-shm-state
+            COMMAND Xmin::run
+              --server $<TARGET_FILE:xmin_next>
+              --screen 96x80x24
+              -- $<TARGET_FILE:xmin_xcb_shm_state>
+          )
+          set_tests_properties(xmin.next-xcb-shm-state
+            PROPERTIES TIMEOUT 20
+          )
+        endif()
         add_test(NAME xmin.xcb-xi2-oracle
           COMMAND Xmin::run
             --server $<TARGET_FILE:xmin_server>

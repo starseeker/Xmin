@@ -16,6 +16,7 @@
 #include <new>
 #include <poll.h>
 #include <string_view>
+#include <sys/socket.h>
 #include <unistd.h>
 #include <utility>
 
@@ -33,6 +34,26 @@ constexpr std::size_t maximum_extended_request_bytes =
 constexpr std::size_t maximum_buffered_input =
     maximum_extended_request_bytes + 16384U;
 constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
+constexpr std::size_t maximum_pending_descriptors = 16;
+// SCM_RIGHTS payloads use the socket ABI's word alignment.  In particular,
+// FreeBSD's cmsghdr type itself has four-byte alignment on 64-bit systems,
+// while CMSG_DATA is still aligned to an eight-byte machine word.
+constexpr std::size_t ancillary_alignment = sizeof(std::size_t);
+constexpr std::size_t
+align_ancillary(std::size_t size) noexcept
+{
+    return (size + ancillary_alignment - 1) & ~(ancillary_alignment - 1);
+}
+constexpr std::size_t
+ancillary_length(std::size_t payload) noexcept
+{
+    return align_ancillary(sizeof(cmsghdr)) + payload;
+}
+constexpr std::size_t
+ancillary_space(std::size_t payload) noexcept
+{
+    return align_ancillary(sizeof(cmsghdr)) + align_ancillary(payload);
+}
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
 constexpr std::uint32_t all_event_masks = 0x01ffffffU;
 constexpr std::uint32_t propagate_event_masks = 0x00003f4fU;
@@ -340,24 +361,83 @@ Connection::queue(const std::vector<std::uint8_t> &bytes)
     if (bytes.empty())
         return Result<void>::success();
 
-    if (output_offset_ == output_.size()) {
-        output_.clear();
-        output_offset_ = 0;
-    }
-    else if (output_offset_ != 0) {
-        output_.erase(
-            output_.begin(),
-            output_.begin() + static_cast<std::ptrdiff_t>(output_offset_));
-        output_offset_ = 0;
-    }
+    compact_output();
 
     const auto new_size = checked_add(output_.size(), bytes.size());
     if (!new_size || *new_size > maximum_buffered_output) {
         return Result<void>::failure(
             ErrorCode::io, "connection output buffer limit exceeded");
     }
+    try {
+        output_.reserve(*new_size);
+        output_.insert(output_.end(), bytes.begin(), bytes.end());
+    }
+    catch (const std::bad_alloc &) {
+        return Result<void>::failure(
+            ErrorCode::io, "connection output buffer allocation failed");
+    }
+    return Result<void>::success();
+}
+
+void
+Connection::compact_output()
+{
+    if (output_offset_ == 0)
+        return;
+
+    if (output_offset_ == output_.size()) {
+        output_.clear();
+        output_offset_ = 0;
+        pending_output_fds_.clear();
+    }
+    else {
+        const std::size_t consumed = output_offset_;
+        output_.erase(
+            output_.begin(),
+            output_.begin() + static_cast<std::ptrdiff_t>(output_offset_));
+        output_offset_ = 0;
+        for (auto &pending : pending_output_fds_)
+            pending.offset -= consumed;
+    }
+}
+
+Result<void>
+Connection::queue_with_fd(const std::vector<std::uint8_t> &bytes, UniqueFd fd)
+{
+    if (bytes.empty() || !fd) {
+        return Result<void>::failure(
+            ErrorCode::invalid_argument,
+            "descriptor output requires bytes and a valid descriptor");
+    }
+    compact_output();
+    const auto new_size = checked_add(output_.size(), bytes.size());
+    if (!new_size || *new_size > maximum_buffered_output) {
+        return Result<void>::failure(
+            ErrorCode::io, "connection output buffer limit exceeded");
+    }
+    const std::size_t offset = output_.size();
+    try {
+        output_.reserve(*new_size);
+        pending_output_fds_.push_back(PendingOutputFd{offset, std::move(fd)});
+    }
+    catch (const std::bad_alloc &) {
+        return Result<void>::failure(
+            ErrorCode::io, "descriptor output queue allocation failed");
+    }
+    // reserve() above makes insertion of byte values non-throwing, preserving
+    // the descriptor marker and byte stream as one transaction.
     output_.insert(output_.end(), bytes.begin(), bytes.end());
     return Result<void>::success();
+}
+
+UniqueFd
+Connection::take_received_fd() noexcept
+{
+    if (received_fds_.empty())
+        return {};
+    UniqueFd result = std::move(received_fds_.front());
+    received_fds_.pop_front();
+    return result;
 }
 
 std::vector<std::uint8_t>
@@ -3913,67 +3993,97 @@ Connection::handle_put_image(const RequestContext &context)
         !reader.skip(2)) {
         return malformed("truncated PutImage request");
     }
-    auto *surface = server_.drawable_surface(*drawable_id);
-    if (surface == nullptr)
-        return send_error(context.order, bad_drawable, context.opcode,
-                          context.sequence, *drawable_id);
-    const auto *graphics = server_.graphics_context(*graphics_id);
-    if (graphics == nullptr)
-        return send_error(context.order, bad_graphics_context, context.opcode,
-                          context.sequence, *graphics_id);
     if (context.data != 2)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, context.data);
     if (*left_pad != 0)
         return send_error(context.order, bad_match, context.opcode,
                           context.sequence);
-    if (*width == 0 || *height == 0)
-        return send_error(context.order, bad_value, context.opcode,
-                          context.sequence);
-    if (*depth != surface->depth() || graphics->depth != surface->depth())
-        return send_error(context.order, bad_match, context.opcode,
-                          context.sequence);
+    return draw_zpixmap(
+        context, *drawable_id, *graphics_id, *width, *height, 0, 0,
+        *width, *height, signed_word(*destination_x),
+        signed_word(*destination_y), *depth, context.request.data() + 24,
+        context.request.size() - 24, true);
+}
 
-    const std::size_t bits_per_pixel = *depth == 1
+Result<void>
+Connection::draw_zpixmap(
+    const RequestContext &context, std::uint32_t drawable,
+    std::uint32_t graphics_id, std::uint16_t total_width,
+    std::uint16_t total_height, std::uint16_t source_x,
+    std::uint16_t source_y, std::uint16_t width, std::uint16_t height,
+    std::int16_t destination_x, std::int16_t destination_y,
+    std::uint8_t depth, const std::uint8_t *image, std::size_t image_size,
+    bool exact_image_size)
+{
+    const std::uint16_t minor_opcode =
+        extension_by_opcode(context.opcode) == nullptr ? 0 : context.data;
+    auto *surface = server_.drawable_surface(drawable);
+    if (surface == nullptr)
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, drawable, minor_opcode);
+    const auto *graphics = server_.graphics_context(graphics_id);
+    if (graphics == nullptr)
+        return send_error(context.order, bad_graphics_context, context.opcode,
+                          context.sequence, graphics_id, minor_opcode);
+    if (total_width == 0 || total_height == 0 || width == 0 || height == 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, 0, minor_opcode);
+    const auto source_right = checked_add(
+        static_cast<std::size_t>(source_x), static_cast<std::size_t>(width));
+    const auto source_bottom = checked_add(
+        static_cast<std::size_t>(source_y), static_cast<std::size_t>(height));
+    if (!source_right || !source_bottom || *source_right > total_width ||
+        *source_bottom > total_height) {
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence, 0, minor_opcode);
+    }
+    if (depth != surface->depth() || graphics->depth != surface->depth())
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence, 0, minor_opcode);
+
+    const std::size_t bits_per_pixel = depth == 1
         ? 1
-        : (*depth == 8 ? 8 : 32);
+        : (depth == 8 ? 8 : 32);
     const auto row_bits = checked_multiply(
-        static_cast<std::size_t>(*width), bits_per_pixel);
+        static_cast<std::size_t>(total_width), bits_per_pixel);
     const auto rounded_bits = row_bits
         ? checked_add(*row_bits, std::size_t{7})
         : std::optional<std::size_t>{};
     const auto stride = rounded_bits
         ? padded_to_four(*rounded_bits / 8)
         : std::optional<std::size_t>{};
-    const auto image_size = stride
-        ? checked_multiply(*stride, static_cast<std::size_t>(*height))
+    const auto expected_size = stride
+        ? checked_multiply(*stride, static_cast<std::size_t>(total_height))
         : std::optional<std::size_t>{};
-    const auto expected_size = image_size
-        ? checked_add(std::size_t{24}, *image_size)
-        : std::optional<std::size_t>{};
-    if (!expected_size || context.request.size() != *expected_size)
+    if (!expected_size || image == nullptr || image_size < *expected_size ||
+        (exact_image_size && image_size != *expected_size)) {
         return send_error(context.order, bad_length, context.opcode,
-                          context.sequence);
+                          context.sequence, 0, minor_opcode);
+    }
 
-    const auto *image = context.request.data() + 24;
     const bool least_significant_bit_first =
         host_byte_order() == ByteOrder::little;
-    const std::int32_t target_x = signed_word(*destination_x);
-    const std::int32_t target_y = signed_word(*destination_y);
-    for (std::uint32_t row = 0; row < *height; ++row) {
-        const auto *row_data = image + static_cast<std::size_t>(row) * *stride;
+    for (std::uint32_t row = 0; row < height; ++row) {
+        const auto *row_data = image +
+            static_cast<std::size_t>(source_y + row) * *stride;
         WireReader pixels(row_data, *stride, host_byte_order());
-        for (std::uint32_t column = 0; column < *width; ++column) {
+        if (!pixels.skip(static_cast<std::size_t>(source_x) *
+                         (depth == 1 ? 0 : bits_per_pixel / 8))) {
+            return malformed("truncated ZPixmap source offset");
+        }
+        for (std::uint32_t column = 0; column < width; ++column) {
             std::uint32_t pixel = 0;
-            if (*depth == 1) {
-                const auto byte = row_data[column / 8];
+            const std::uint32_t source_column = source_x + column;
+            if (depth == 1) {
+                const auto byte = row_data[source_column / 8];
                 const unsigned bit = least_significant_bit_first
-                    ? column & 7U
-                    : 7U - (column & 7U);
+                    ? source_column & 7U
+                    : 7U - (source_column & 7U);
                 pixel = (byte >> bit) & 1U;
             }
-            else if (*depth == 8) {
-                pixel = row_data[column];
+            else if (depth == 8) {
+                pixel = row_data[source_column];
             }
             else {
                 const auto value = pixels.u32();
@@ -3981,13 +4091,14 @@ Connection::handle_put_image(const RequestContext &context)
                     return malformed("truncated ZPixmap scanline");
                 pixel = *value;
             }
-            surface->draw_pixel(target_x + static_cast<std::int32_t>(column),
-                                target_y + static_cast<std::int32_t>(row),
+            surface->draw_pixel(
+                                destination_x + static_cast<std::int32_t>(column),
+                                destination_y + static_cast<std::int32_t>(row),
                                 pixel, graphics->function,
                                 graphics->plane_mask, graphics->clip());
         }
     }
-    return finish_draw(context, *drawable_id);
+    return finish_draw(context, drawable);
 }
 
 Result<void>
@@ -6608,6 +6719,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_xkb(context);
         case ExtensionKind::xinput:
             return handle_xinput(context);
+        case ExtensionKind::shm:
+            return handle_shm(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {
@@ -6968,7 +7081,63 @@ Connection::on_readable()
 
     std::array<std::uint8_t, 16384> bytes{};
     for (;;) {
-        const auto count = ::read(socket_.get(), bytes.data(), bytes.size());
+        ssize_t count = -1;
+#if XMIN_HAVE_SCM_RIGHTS
+        std::array<unsigned char,
+                   ancillary_space(sizeof(int) * 4)> control{};
+        iovec vector{bytes.data(), bytes.size()};
+        msghdr message{};
+        message.msg_iov = &vector;
+        message.msg_iovlen = 1;
+        message.msg_control = control.data();
+        message.msg_controllen = control.size();
+        count = ::recvmsg(socket_.get(), &message, 0);
+        if (count >= 0) {
+            if ((message.msg_flags & MSG_CTRUNC) != 0) {
+                return Result<void>::failure(
+                    ErrorCode::malformed,
+                    "client sent too many ancillary descriptors");
+            }
+            for (auto *header = CMSG_FIRSTHDR(&message); header != nullptr;
+                 header = CMSG_NXTHDR(&message, header)) {
+                if (header->cmsg_level != SOL_SOCKET ||
+                    header->cmsg_type != SCM_RIGHTS ||
+                    header->cmsg_len < ancillary_length(sizeof(int))) {
+                    continue;
+                }
+                const std::size_t payload =
+                    header->cmsg_len - ancillary_length(0);
+                const std::size_t descriptor_count = payload / sizeof(int);
+                const auto *descriptors =
+                    reinterpret_cast<const int *>(CMSG_DATA(header));
+                for (std::size_t index = 0; index < descriptor_count;
+                     ++index) {
+                    UniqueFd descriptor(descriptors[index]);
+                    const int flags = ::fcntl(descriptor.get(), F_GETFD);
+                    if (flags >= 0) {
+                        static_cast<void>(::fcntl(
+                            descriptor.get(), F_SETFD, flags | FD_CLOEXEC));
+                    }
+                    if (received_fds_.size() >=
+                        maximum_pending_descriptors) {
+                        return Result<void>::failure(
+                            ErrorCode::malformed,
+                            "client descriptor queue limit exceeded");
+                    }
+                    try {
+                        received_fds_.push_back(std::move(descriptor));
+                    }
+                    catch (const std::bad_alloc &) {
+                        return Result<void>::failure(
+                            ErrorCode::io,
+                            "client descriptor queue allocation failed");
+                    }
+                }
+            }
+        }
+#else
+        count = ::read(socket_.get(), bytes.data(), bytes.size());
+#endif
         if (count > 0) {
             const auto new_size = checked_add(
                 input_.size(), static_cast<std::size_t>(count));
@@ -7027,11 +7196,57 @@ Connection::on_writable()
     if (!drained)
         return drained;
     while (output_offset_ < output_.size()) {
-        const auto count = ::write(
-            socket_.get(), output_.data() + output_offset_,
-            output_.size() - output_offset_);
+        if (!pending_output_fds_.empty() &&
+            pending_output_fds_.front().offset < output_offset_) {
+            return Result<void>::failure(
+                ErrorCode::malformed,
+                "descriptor output marker was passed without being sent");
+        }
+        const bool send_descriptor = !pending_output_fds_.empty() &&
+            pending_output_fds_.front().offset == output_offset_;
+        std::size_t end = output_.size();
+        if (send_descriptor) {
+            if (pending_output_fds_.size() > 1)
+                end = pending_output_fds_[1].offset;
+        }
+        else if (!pending_output_fds_.empty()) {
+            end = pending_output_fds_.front().offset;
+        }
+
+        ssize_t count = -1;
+        if (send_descriptor) {
+#if XMIN_HAVE_SCM_RIGHTS
+            std::array<unsigned char,
+                       ancillary_space(sizeof(int))> control{};
+            iovec vector{
+                output_.data() + output_offset_, end - output_offset_};
+            msghdr message{};
+            message.msg_iov = &vector;
+            message.msg_iovlen = 1;
+            message.msg_control = control.data();
+            message.msg_controllen = control.size();
+            auto *header = CMSG_FIRSTHDR(&message);
+            header->cmsg_level = SOL_SOCKET;
+            header->cmsg_type = SCM_RIGHTS;
+            header->cmsg_len = ancillary_length(sizeof(int));
+            const int descriptor = pending_output_fds_.front().fd.get();
+            std::memcpy(CMSG_DATA(header), &descriptor, sizeof(descriptor));
+            count = ::sendmsg(socket_.get(), &message, 0);
+#else
+            return Result<void>::failure(
+                ErrorCode::invalid_argument,
+                "descriptor passing is unavailable on this platform");
+#endif
+        }
+        else {
+            count = ::write(
+                socket_.get(), output_.data() + output_offset_,
+                end - output_offset_);
+        }
         if (count > 0) {
             output_offset_ += static_cast<std::size_t>(count);
+            if (send_descriptor)
+                pending_output_fds_.pop_front();
             continue;
         }
         if (count == 0)
@@ -7046,6 +7261,10 @@ Connection::on_writable()
 
     output_.clear();
     output_offset_ = 0;
+    if (!pending_output_fds_.empty()) {
+        return Result<void>::failure(
+            ErrorCode::malformed, "unsent descriptor output marker");
+    }
     if (close_after_output_)
         finished_ = true;
     return Result<void>::success();

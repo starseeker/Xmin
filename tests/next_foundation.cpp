@@ -14,6 +14,7 @@
 #include <array>
 #include <cerrno>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
 #include <fcntl.h>
 #include <iostream>
@@ -4636,6 +4637,37 @@ test_colormap_state()
 }
 
 bool
+test_shared_memory_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t segment = owner + 1;
+    xmin::next::UniqueFd client_descriptor;
+    auto created = xmin::next::SharedMemory::create(
+        4096, false, client_descriptor);
+    if (!expect(created && client_descriptor,
+                "shared-memory RAII mapping creation failed")) {
+        return false;
+    }
+    created.value().writable_data()[0] = std::byte{0x5a};
+    xmin::next::ServerState server(32, 24);
+    if (!expect(server.add_shared_memory(
+                    segment, std::move(created.value()), owner),
+                "shared-memory resource insertion failed") ||
+        !expect(server.shared_memory(segment) != nullptr &&
+                    server.shared_memory(segment)->data()[0] ==
+                        std::byte{0x5a},
+                "shared-memory resource did not retain its mapping") ||
+        !expect(!server.add_shared_memory(
+                    segment, xmin::next::SharedMemory{}, owner),
+                "invalid shared-memory resource insertion succeeded")) {
+        return false;
+    }
+    server.disconnect_client(owner);
+    return expect(server.shared_memory(segment) == nullptr,
+                  "disconnect retained a shared-memory mapping");
+}
+
+bool
 test_result()
 {
     const auto value = xmin::next::Result<int>::success(17);
@@ -4679,6 +4711,7 @@ main()
             test_composite_state() &&
             test_present_state() &&
             test_colormap_state() &&
+            test_shared_memory_state() &&
             test_result()
         ? 0
         : 1;

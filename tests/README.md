@@ -43,7 +43,9 @@ SHAPE bounds, SYNC counters, single-screen Xinerama layout, SCREEN-SAVER state/e
 selection, XI2 master devices, reversible XKB lock state, two-key US-map XTEST
 pointer/keyboard injection, COMPOSITE redirection,
 DAMAGE notification, PresentPixmap complete/idle/future-MSC notifications and
-readback, and DOUBLE-BUFFER swap/readback. With
+readback, and DOUBLE-BUFFER swap/readback. The next-server MIT-SHM test covers
+SysV and descriptor attachments, CreateSegment descriptor replies, PutImage
+completion, GetImage, bounds and read-only errors, and detach lifetime. With
 MIT-SHM enabled it additionally performs a real SysV
 attach, shared-memory upload, readback, and detach; the minimal profile verifies
 omission and client fallback discovery.

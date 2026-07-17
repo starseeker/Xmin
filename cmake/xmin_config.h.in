@@ -21,6 +21,7 @@
 #cmakedefine01 XMIN_HAVE_ARC4RANDOM_BUF
 #cmakedefine01 XMIN_HAVE_ACCEPT4
 #cmakedefine01 XMIN_HAVE_PIPE2
+#cmakedefine01 XMIN_HAVE_SCM_RIGHTS
 #cmakedefine01 XMIN_IS_BIG_ENDIAN
 
 #endif

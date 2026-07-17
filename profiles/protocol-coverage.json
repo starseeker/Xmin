@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "cc20f975558f8ee4b1448fa437b28b3ab9e82847e5b0777f0c115cc230bf1b59",
+    "policy_sha256": "6f98682d7365bf75c31202198b5c788e9701ea26399edd7fb84ed2438431d636",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -2926,56 +2926,56 @@
           "name": "QueryVersion",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Attach",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "Detach",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 3,
           "name": "PutImage",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "GetImage",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "CreatePixmap",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 6,
           "name": "AttachFd",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 7,
           "name": "CreateSegment",
           "contract": "platform_conditional",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

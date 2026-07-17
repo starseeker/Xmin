@@ -1542,6 +1542,45 @@ ServerState::erase_graphics_context(std::uint32_t id)
     return true;
 }
 
+SharedMemory *
+ServerState::shared_memory(std::uint32_t id)
+{
+    const auto found = shared_memory_.find(id);
+    return found == shared_memory_.end() ? nullptr : &found->second;
+}
+
+const SharedMemory *
+ServerState::shared_memory(std::uint32_t id) const
+{
+    const auto found = shared_memory_.find(id);
+    return found == shared_memory_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_shared_memory(std::uint32_t id, SharedMemory memory,
+                               std::uint32_t owner)
+{
+    if (!memory || shared_memory_.size() >= maximum_shared_memory_segments ||
+        resource_exists(id) ||
+        !resources_.insert(id, ResourceKind::shared_memory, owner)) {
+        return false;
+    }
+    if (!shared_memory_.emplace(id, std::move(memory)).second) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_shared_memory(std::uint32_t id)
+{
+    if (shared_memory_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
 bool
 ServerState::colormap_exists(std::uint32_t id) const
 {
@@ -6273,6 +6312,10 @@ ServerState::disconnect_client(std::uint32_t owner)
         resources_.owned_by(owner, ResourceKind::graphics_context);
     for (const auto id : contexts)
         static_cast<void>(erase_graphics_context(id));
+    const auto shared_memory =
+        resources_.owned_by(owner, ResourceKind::shared_memory);
+    for (const auto id : shared_memory)
+        static_cast<void>(erase_shared_memory(id));
     const auto pixmaps = resources_.owned_by(owner, ResourceKind::pixmap);
     for (const auto id : pixmaps)
         static_cast<void>(erase_pixmap(id));

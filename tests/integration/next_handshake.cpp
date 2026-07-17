@@ -1,3 +1,5 @@
+#include "xmin/config.h"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -21,6 +23,12 @@ constexpr std::string_view auth_name = "MIT-MAGIC-COOKIE-1";
 constexpr std::string_view cookie_hex = "000102030405060708090a0b0c0d0e0f";
 constexpr std::uint32_t pointer_root = 1;
 constexpr std::uint32_t root_window = 0x00000100;
+constexpr std::uint8_t extension_count =
+#if XMIN_HAVE_MITSHM
+    15;
+#else
+    14;
+#endif
 
 struct Child {
     pid_t process = -1;
@@ -293,7 +301,13 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 14> extensions{{
+    constexpr std::array<std::string_view,
+#if XMIN_HAVE_MITSHM
+                         15
+#else
+                         14
+#endif
+                         > extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -308,6 +322,9 @@ extension_list_payload()
         "Present",
         "XKEYBOARD",
         "XInputExtension",
+#if XMIN_HAVE_MITSHM
+        "MIT-SHM",
+#endif
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -325,7 +342,8 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 14 && get16(reply, 2, little) == sequence &&
+        reply[1] == extension_count &&
+        get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -4206,6 +4224,46 @@ check_xkb(int descriptor, bool little)
     return true;
 }
 
+#if XMIN_HAVE_MITSHM
+bool
+check_shm(int descriptor, bool little)
+{
+    constexpr std::uint8_t opcode = 142;
+    constexpr std::uint8_t first_event = 73;
+    constexpr std::uint8_t first_error = 149;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+    if (!query_extension(descriptor, little, "MIT-SHM", 1, opcode, reply,
+                         first_event, first_error)) {
+        return false;
+    }
+
+    request.assign(4, 0);
+    request[0] = opcode;
+    request[1] = 0; // QueryVersion
+    put16(request, 2, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 0 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 1 ||
+        get16(reply, 10, little) < 1 || reply[16] != 2) {
+        return false;
+    }
+
+    constexpr std::uint32_t missing_segment = 0x00abcdef;
+    request.assign(8, 0);
+    request[0] = opcode;
+    request[1] = 2; // Detach
+    put16(request, 2, 2, little);
+    put32(request, 4, missing_segment, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 0 && reply[1] == first_error &&
+        get16(reply, 2, little) == 3 &&
+        get32(reply, 4, little) == missing_segment &&
+        get16(reply, 8, little) == 2 && reply[10] == opcode;
+}
+#endif
+
 bool
 run_randr_case(const char *server, bool little)
 {
@@ -4285,6 +4343,24 @@ run_xinput_case(const char *server, bool little)
     const bool exited = wait_for_success(child.process);
     return passed && exited;
 }
+
+#if XMIN_HAVE_MITSHM
+bool
+run_shm_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_shm(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+#endif
 
 bool
 run_xkb_case(const char *server, bool little)
@@ -4526,6 +4602,13 @@ main(int argc, char **argv)
         std::cerr << "XI2 extension case failed\n";
         return 1;
     }
+#if XMIN_HAVE_MITSHM
+    if (!run_shm_case(argv[1], native) ||
+        !run_shm_case(argv[1], !native)) {
+        std::cerr << "MIT-SHM extension case failed\n";
+        return 1;
+    }
+#endif
     if (!run_xtest_case(argv[1], native) ||
         !run_xtest_case(argv[1], !native)) {
         std::cerr << "XTEST state injection case failed\n";

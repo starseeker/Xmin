@@ -15,6 +15,8 @@ add_library(xmin_next_core STATIC
   region.cpp
   server.cpp
   server_state.cpp
+  shared_memory.cpp
+  shm_protocol.cpp
   surface.cpp
   wire.cpp
   xauthority.cpp

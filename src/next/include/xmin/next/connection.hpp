@@ -6,7 +6,9 @@
 #include "xmin/next/unique_fd.hpp"
 #include "xmin/next/wire.hpp"
 
+#include <cstddef>
 #include <cstdint>
+#include <deque>
 #include <optional>
 #include <string>
 #include <vector>
@@ -69,6 +71,10 @@ private:
     void consume_input(std::size_t size);
     void close_after_output() noexcept;
     Result<void> queue(const std::vector<std::uint8_t> &bytes);
+    Result<void> queue_with_fd(const std::vector<std::uint8_t> &bytes,
+                               UniqueFd fd);
+    void compact_output();
+    [[nodiscard]] UniqueFd take_received_fd() noexcept;
     Result<void> drain_pending_events();
     [[nodiscard]] std::vector<std::uint8_t>
     encode_event(const ClientEvent &event) const;
@@ -190,6 +196,15 @@ private:
     Result<void> handle_present(const RequestContext &context);
     Result<void> handle_xkb(const RequestContext &context);
     Result<void> handle_xinput(const RequestContext &context);
+    Result<void> handle_shm(const RequestContext &context);
+    Result<void> draw_zpixmap(
+        const RequestContext &context, std::uint32_t drawable,
+        std::uint32_t graphics, std::uint16_t total_width,
+        std::uint16_t total_height, std::uint16_t source_x,
+        std::uint16_t source_y, std::uint16_t width, std::uint16_t height,
+        std::int16_t destination_x, std::int16_t destination_y,
+        std::uint8_t depth, const std::uint8_t *image,
+        std::size_t image_size, bool exact_image_size);
     Result<void> finish_draw(const RequestContext &context,
                              std::uint32_t drawable);
     Result<void> update_shape(
@@ -210,6 +225,12 @@ private:
     std::vector<std::uint8_t> input_;
     std::vector<std::uint8_t> output_;
     std::size_t output_offset_ = 0;
+    struct PendingOutputFd {
+        std::size_t offset = 0;
+        UniqueFd fd;
+    };
+    std::deque<PendingOutputFd> pending_output_fds_;
+    std::deque<UniqueFd> received_fds_;
     std::size_t setup_payload_size_ = 0;
     std::size_t setup_name_size_ = 0;
     std::size_t setup_data_size_ = 0;

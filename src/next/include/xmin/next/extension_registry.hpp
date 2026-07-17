@@ -1,6 +1,8 @@
 #ifndef XMIN_NEXT_EXTENSION_REGISTRY_HPP
 #define XMIN_NEXT_EXTENSION_REGISTRY_HPP
 
+#include "xmin/config.h"
+
 #include <array>
 #include <cstdint>
 #include <string_view>
@@ -22,6 +24,7 @@ enum class ExtensionKind : std::uint8_t {
     present,
     xkb,
     xinput,
+    shm,
 };
 
 struct ExtensionInfo {
@@ -63,8 +66,16 @@ inline constexpr ExtensionInfo xkb_extension{
     "XKEYBOARD", 140, 72, 143, 1, 0, ExtensionKind::xkb};
 inline constexpr ExtensionInfo xinput_extension{
     "XInputExtension", 141, 0, 144, 2, 4, ExtensionKind::xinput};
+inline constexpr ExtensionInfo shm_extension{
+    "MIT-SHM", 142, 73, 149, 1, 2, ExtensionKind::shm};
 
-inline constexpr std::array<ExtensionInfo, 14> extension_registry{{
+inline constexpr std::array<ExtensionInfo,
+#if XMIN_HAVE_MITSHM
+                            15
+#else
+                            14
+#endif
+                            > extension_registry{{
     big_requests_extension,
     xc_misc_extension,
     generic_event_extension,
@@ -79,6 +90,9 @@ inline constexpr std::array<ExtensionInfo, 14> extension_registry{{
     present_extension,
     xkb_extension,
     xinput_extension,
+#if XMIN_HAVE_MITSHM
+    shm_extension,
+#endif
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

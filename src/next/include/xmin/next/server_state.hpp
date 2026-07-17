@@ -7,6 +7,7 @@
 #include "xmin/next/generated/core_keymap.hpp"
 #include "xmin/next/render.hpp"
 #include "xmin/next/resource_registry.hpp"
+#include "xmin/next/shared_memory.hpp"
 #include "xmin/next/surface.hpp"
 
 #include <array>
@@ -53,6 +54,7 @@ constexpr std::size_t maximum_present_notifies = 256;
 constexpr std::size_t maximum_xi2_selections = 4096;
 constexpr std::size_t maximum_xi2_masks_per_selection = 4;
 constexpr std::size_t maximum_xi2_properties_per_device = 256;
+constexpr std::size_t maximum_shared_memory_segments = 256;
 constexpr std::uint32_t randr_crtc_id = 0x00000200;
 constexpr std::uint32_t randr_output_id = 0x00000201;
 constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
@@ -775,6 +777,11 @@ public:
     [[nodiscard]] bool add_graphics_context(GraphicsContextRecord context,
                                             std::uint32_t owner);
     [[nodiscard]] bool erase_graphics_context(std::uint32_t id);
+    [[nodiscard]] SharedMemory *shared_memory(std::uint32_t id);
+    [[nodiscard]] const SharedMemory *shared_memory(std::uint32_t id) const;
+    [[nodiscard]] bool add_shared_memory(
+        std::uint32_t id, SharedMemory memory, std::uint32_t owner);
+    [[nodiscard]] bool erase_shared_memory(std::uint32_t id);
     [[nodiscard]] bool colormap_exists(std::uint32_t id) const;
     [[nodiscard]] bool add_colormap(std::uint32_t id, std::uint32_t owner);
     [[nodiscard]] bool erase_colormap(std::uint32_t id);
@@ -1017,6 +1024,7 @@ private:
     std::unordered_map<std::uint32_t, std::uint32_t> xkb_client_flags_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
+    std::unordered_map<std::uint32_t, SharedMemory> shared_memory_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
     std::unordered_map<std::uint32_t, SyncFenceRecord> sync_fences_;

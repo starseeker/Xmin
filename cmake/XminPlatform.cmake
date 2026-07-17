@@ -53,6 +53,7 @@ function(xmin_configure_platform)
   check_symbol_exists(getpeerucred "ucred.h" HAVE_GETPEERUCRED)
   check_symbol_exists(SO_PEERCRED "sys/types.h;sys/socket.h" HAVE_SO_PEERCRED)
   check_symbol_exists(SCM_RIGHTS "sys/types.h;sys/socket.h" HAVE_SCM_RIGHTS)
+  set(XMIN_HAVE_SCM_RIGHTS ${HAVE_SCM_RIGHTS})
   check_symbol_exists(getaddrinfo "sys/types.h;sys/socket.h;netdb.h"
     HAVE_GETADDRINFO)
   check_symbol_exists(inet_ntop "arpa/inet.h" HAVE_INET_NTOP)
@@ -160,6 +161,7 @@ function(xmin_configure_platform)
       XMIN_HAVE_ARC4RANDOM_BUF
       XMIN_HAVE_ACCEPT4
       XMIN_HAVE_PIPE2
+      XMIN_HAVE_SCM_RIGHTS
       XMIN_IS_BIG_ENDIAN
       HAVE_SYS_UN_H
       HAVE_POLL

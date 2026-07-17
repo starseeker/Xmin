@@ -143,7 +143,8 @@
       "name": "MIT-SHM",
       "xml": "shm.xml",
       "version": "1.2",
-      "contract": "platform_conditional"
+      "contract": "platform_conditional",
+      "next_status": "implemented"
     },
     {
       "name": "DOUBLE-BUFFER",
