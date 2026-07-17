@@ -51,6 +51,26 @@ WireReader::u32() noexcept
     return result;
 }
 
+std::optional<std::uint64_t>
+WireReader::u64() noexcept
+{
+    if (remaining() < 8)
+        return std::nullopt;
+    std::uint64_t result = 0;
+    if (order_ == ByteOrder::little) {
+        for (unsigned shift = 0; shift < 64; shift += 8)
+            result |= static_cast<std::uint64_t>(data_[offset_++]) << shift;
+    }
+    else {
+        for (unsigned shift = 56;; shift -= 8) {
+            result |= static_cast<std::uint64_t>(data_[offset_++]) << shift;
+            if (shift == 0)
+                break;
+        }
+    }
+    return result;
+}
+
 bool
 WireReader::skip(std::size_t count) noexcept
 {
@@ -94,6 +114,22 @@ WireWriter::u32(std::uint32_t value)
     }
     else {
         for (unsigned shift = 24;; shift -= 8) {
+            u8(static_cast<std::uint8_t>(value >> shift));
+            if (shift == 0)
+                break;
+        }
+    }
+}
+
+void
+WireWriter::u64(std::uint64_t value)
+{
+    if (order_ == ByteOrder::little) {
+        for (unsigned shift = 0; shift < 64; shift += 8)
+            u8(static_cast<std::uint8_t>(value >> shift));
+    }
+    else {
+        for (unsigned shift = 56;; shift -= 8) {
             u8(static_cast<std::uint8_t>(value >> shift));
             if (shift == 0)
                 break;

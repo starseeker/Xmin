@@ -47,6 +47,9 @@ constexpr std::size_t maximum_randr_output_properties = 256;
 constexpr std::size_t maximum_randr_filter_parameters = 64;
 constexpr std::size_t maximum_damage_objects = 4096;
 constexpr std::size_t maximum_composite_redirects = 4096;
+constexpr std::size_t maximum_present_operations = 4096;
+constexpr std::size_t maximum_present_subscriptions = 4096;
+constexpr std::size_t maximum_present_notifies = 256;
 constexpr std::uint32_t randr_crtc_id = 0x00000200;
 constexpr std::uint32_t randr_output_id = 0x00000201;
 constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
@@ -54,6 +57,8 @@ constexpr std::uint16_t any_modifier = 0x8000;
 constexpr std::uint16_t all_modifiers_mask = 0x00ff;
 inline constexpr auto default_repeat_delay = std::chrono::milliseconds{660};
 inline constexpr auto default_repeat_interval = std::chrono::milliseconds{40};
+inline constexpr auto present_refresh_interval =
+    std::chrono::microseconds{16667};
 
 enum class WindowClass : std::uint16_t {
     input_output = 1,
@@ -183,6 +188,50 @@ enum class CompositeUpdate {
     invalid,
     access_denied,
     resource_exhausted,
+};
+
+struct PresentSubscription {
+    std::uint32_t id = 0;
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::uint32_t mask = 0;
+};
+
+struct PresentNotify {
+    std::uint32_t window = 0;
+    std::uint32_t serial = 0;
+};
+
+enum class PresentKind : std::uint8_t {
+    pixmap,
+    notify_msc,
+};
+
+struct PresentOperation {
+    PresentKind kind = PresentKind::pixmap;
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::uint32_t pixmap = 0;
+    std::uint32_t serial = 0;
+    std::shared_ptr<Surface> pixmap_surface;
+    std::optional<Region> update;
+    std::int16_t x_off = 0;
+    std::int16_t y_off = 0;
+    std::uint32_t wait_fence = 0;
+    std::uint32_t idle_fence = 0;
+    std::uint32_t options = 0;
+    std::uint64_t target_msc = 0;
+    std::uint64_t divisor = 0;
+    std::uint64_t remainder = 0;
+    std::vector<PresentNotify> notifies;
+};
+
+enum class PresentUpdate {
+    updated,
+    invalid,
+    match,
+    resource_exhausted,
+    queue_full,
 };
 
 struct CursorImage {
@@ -570,6 +619,12 @@ public:
     [[nodiscard]] bool resize_window_surface(WindowRecord &window,
                                              std::uint16_t width,
                                              std::uint16_t height);
+    [[nodiscard]] EventDelivery configure_window(
+        WindowRecord &window, std::int16_t x, std::int16_t y,
+        std::uint16_t width, std::uint16_t height,
+        std::uint16_t border_width,
+        std::optional<std::uint32_t> sibling,
+        std::optional<std::uint8_t> stack_mode);
     [[nodiscard]] PixmapRecord *pixmap(std::uint32_t id);
     [[nodiscard]] const PixmapRecord *pixmap(std::uint32_t id) const;
     [[nodiscard]] bool add_pixmap(PixmapRecord pixmap, std::uint32_t owner);
@@ -596,6 +651,14 @@ public:
         std::uint32_t window) const noexcept;
     [[nodiscard]] CompositeUpdate name_window_pixmap(
         std::uint32_t window, std::uint32_t pixmap, std::uint32_t owner);
+    [[nodiscard]] PresentUpdate select_present_input(
+        std::uint32_t owner, std::uint32_t id, std::uint32_t window,
+        std::uint32_t mask);
+    [[nodiscard]] PresentUpdate submit_present(PresentOperation operation);
+    [[nodiscard]] EventDelivery present_window_configured(
+        std::uint32_t window);
+    [[nodiscard]] std::uint64_t present_msc() const noexcept;
+    [[nodiscard]] std::uint64_t present_ust() const noexcept;
     [[nodiscard]] GraphicsContextRecord *graphics_context(std::uint32_t id);
     [[nodiscard]] const GraphicsContextRecord *
     graphics_context(std::uint32_t id) const;
@@ -808,6 +871,8 @@ private:
     std::unordered_map<std::uint32_t, PixmapRecord> pixmaps_;
     std::unordered_map<std::uint32_t, DamageRecord> damages_;
     std::vector<CompositeRedirect> composite_redirects_;
+    std::vector<PresentSubscription> present_subscriptions_;
+    std::deque<PresentOperation> present_operations_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
@@ -842,6 +907,7 @@ private:
     std::uint32_t installed_colormap_ = default_colormap_id;
     std::uint32_t server_grab_owner_ = 0;
     Clock &clock_;
+    Clock::time_point present_epoch_;
     InputState input_;
     std::optional<KeyRepeat> key_repeat_;
     std::vector<PassiveGrab> passive_grabs_;
@@ -858,6 +924,22 @@ private:
         bool full_area, std::vector<PlannedEvent> &events) const;
     [[nodiscard]] bool apply_damage(
         DamageRecord &damage, const Region &added,
+        std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] std::optional<std::uint64_t> present_target_msc(
+        std::uint64_t requested, std::uint64_t divisor,
+        std::uint64_t remainder, std::uint32_t options) const noexcept;
+    [[nodiscard]] bool present_wait_ready(
+        const PresentOperation &operation) const noexcept;
+    [[nodiscard]] PresentUpdate execute_present(
+        PresentOperation &operation, std::uint64_t msc,
+        std::uint64_t ust);
+    [[nodiscard]] bool append_present_complete_events(
+        std::uint32_t window, std::uint32_t serial,
+        std::uint8_t kind, std::uint64_t msc, std::uint64_t ust,
+        std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] bool append_present_configure_events(
+        std::uint32_t window, std::int16_t x, std::int16_t y,
+        std::uint16_t width, std::uint16_t height,
         std::vector<PlannedEvent> &events) const;
     void replace_window_surface(
         WindowRecord &window, std::shared_ptr<Surface> replacement) noexcept;

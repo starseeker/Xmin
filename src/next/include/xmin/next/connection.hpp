@@ -187,6 +187,7 @@ private:
     Result<void> handle_randr(const RequestContext &context);
     Result<void> handle_damage(const RequestContext &context);
     Result<void> handle_composite(const RequestContext &context);
+    Result<void> handle_present(const RequestContext &context);
     Result<void> finish_draw(const RequestContext &context,
                              std::uint32_t drawable);
     Result<void> update_shape(
@@ -219,6 +220,8 @@ private:
     std::uint32_t damage_major_version_ = 0;
     bool composite_version_negotiated_ = false;
     std::uint16_t composite_minor_version_ = 0;
+    bool present_version_negotiated_ = false;
+    std::uint16_t present_minor_version_ = 0;
     std::uint32_t xfixes_disconnect_mode_ = 0;
     bool resume_sync_input_ = false;
     bool prepared_ = false;

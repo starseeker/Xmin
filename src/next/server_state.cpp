@@ -306,7 +306,8 @@ passive_grab_modifiers(std::uint16_t modifiers) noexcept
 ServerState::ServerState(std::uint16_t width, std::uint16_t height,
                          Clock &clock)
     : width_(width), height_(height),
-      surface_budget_(std::make_shared<SurfaceBudget>()), clock_(clock)
+      surface_budget_(std::make_shared<SurfaceBudget>()), clock_(clock),
+      present_epoch_(clock.now())
 {
     input_.pointer_x = width / 2;
     input_.pointer_y = height / 2;
@@ -578,6 +579,90 @@ ServerState::resize_window_surface(WindowRecord &candidate,
     replace_window_surface(candidate, std::move(managed));
     invalidate_scene();
     return true;
+}
+
+EventDelivery
+ServerState::configure_window(
+    WindowRecord &candidate, std::int16_t x, std::int16_t y,
+    std::uint16_t width, std::uint16_t height,
+    std::uint16_t border_width,
+    std::optional<std::uint32_t> sibling,
+    std::optional<std::uint8_t> stack_mode)
+{
+    auto *parent = window(candidate.parent);
+    if (candidate.parent == 0 || parent == nullptr)
+        return EventDelivery::no_recipient;
+
+    std::optional<std::vector<std::uint32_t>> children;
+    std::vector<PlannedEvent> events;
+    try {
+        if (stack_mode) {
+            children = parent->children;
+            children->erase(
+                std::remove(children->begin(), children->end(), candidate.id),
+                children->end());
+            auto position = children->end();
+            if (sibling) {
+                position = std::find(
+                    children->begin(), children->end(), *sibling);
+                if (*stack_mode == 0 || *stack_mode == 2 ||
+                    *stack_mode == 4) {
+                    ++position;
+                }
+            }
+            else if (*stack_mode == 1 || *stack_mode == 3) {
+                position = children->begin();
+            }
+            children->insert(position, candidate.id);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    if (!append_present_configure_events(
+            candidate.id, x, y, width, height, events)) {
+        return EventDelivery::queue_full;
+    }
+
+    std::shared_ptr<Surface> replacement;
+    if (candidate.surface &&
+        (candidate.width != width || candidate.height != height)) {
+        auto surface = Surface::create(width, height,
+                                       candidate.surface->depth());
+        if (!surface)
+            return EventDelivery::queue_full;
+        surface->copy_from(*candidate.surface, 0, 0, 0, 0,
+                           width, height, 3, 0xffffffffU);
+        const bool retained = std::any_of(
+            pixmaps_.begin(), pixmaps_.end(),
+            [&candidate](const auto &entry) {
+                return entry.second.surface == candidate.surface;
+            });
+        replacement = adopt_replacement_surface(
+            std::move(*surface), retained
+                ? 0
+                : candidate.surface->storage_bytes());
+        if (!replacement)
+            return EventDelivery::queue_full;
+    }
+
+    const bool has_recipient = !events.empty();
+    if (!queue_events_atomically(events))
+        return EventDelivery::queue_full;
+
+    if (replacement)
+        replace_window_surface(candidate, std::move(replacement));
+    if (children)
+        parent->children = std::move(*children);
+    candidate.x = x;
+    candidate.y = y;
+    candidate.width = width;
+    candidate.height = height;
+    candidate.border_width = border_width;
+    invalidate_scene();
+    return has_recipient
+        ? EventDelivery::delivered
+        : EventDelivery::no_recipient;
 }
 
 void
@@ -1122,6 +1207,299 @@ ServerState::name_window_pixmap(
     return add_pixmap({pixmap_id, candidate->surface}, owner)
         ? CompositeUpdate::updated
         : CompositeUpdate::resource_exhausted;
+}
+
+std::uint64_t
+ServerState::present_msc() const noexcept
+{
+    const auto elapsed = clock_.now() - present_epoch_;
+    if (elapsed <= Clock::time_point::duration::zero())
+        return 0;
+    const auto microseconds = std::chrono::duration_cast<
+        std::chrono::microseconds>(elapsed).count();
+    if (microseconds <= 0)
+        return 0;
+    return static_cast<std::uint64_t>(microseconds) /
+        static_cast<std::uint64_t>(present_refresh_interval.count());
+}
+
+std::uint64_t
+ServerState::present_ust() const noexcept
+{
+    const auto elapsed = clock_.now() - present_epoch_;
+    if (elapsed <= Clock::time_point::duration::zero())
+        return 1;
+    const auto microseconds = std::chrono::duration_cast<
+        std::chrono::microseconds>(elapsed).count();
+    if (microseconds < 0)
+        return 1;
+    const auto value = static_cast<std::uint64_t>(microseconds);
+    return value == std::numeric_limits<std::uint64_t>::max()
+        ? value
+        : value + 1;
+}
+
+std::optional<std::uint64_t>
+ServerState::present_target_msc(
+    std::uint64_t requested, std::uint64_t divisor,
+    std::uint64_t remainder, std::uint32_t options) const noexcept
+{
+    const std::uint64_t current = present_msc();
+    if (requested > current)
+        return requested;
+
+    const bool asynchronous = (options & 1U) != 0;
+    if (divisor == 0) {
+        if (asynchronous)
+            return current;
+        if (current == std::numeric_limits<std::uint64_t>::max())
+            return std::nullopt;
+        return current + 1;
+    }
+
+    std::uint64_t target = current - current % divisor;
+    if (remainder > std::numeric_limits<std::uint64_t>::max() - target)
+        return std::nullopt;
+    target += remainder;
+    if (target > current)
+        return target;
+    if (asynchronous && target == current)
+        return target;
+    if (divisor > std::numeric_limits<std::uint64_t>::max() - target)
+        return std::nullopt;
+    return target + divisor;
+}
+
+PresentUpdate
+ServerState::select_present_input(
+    std::uint32_t owner, std::uint32_t id, std::uint32_t window_id,
+    std::uint32_t mask)
+{
+    if ((mask & ~std::uint32_t{0x7}) != 0)
+        return PresentUpdate::invalid;
+    const auto found = std::find_if(
+        present_subscriptions_.begin(), present_subscriptions_.end(),
+        [id](const PresentSubscription &entry) { return entry.id == id; });
+    if (found != present_subscriptions_.end()) {
+        if (found->owner != owner || found->window != window_id)
+            return PresentUpdate::match;
+        if (mask != 0) {
+            found->mask = mask;
+        }
+        else {
+            present_subscriptions_.erase(found);
+            static_cast<void>(resources_.erase(id));
+        }
+        return PresentUpdate::updated;
+    }
+    if (mask == 0)
+        return PresentUpdate::updated;
+    if (window(window_id) == nullptr ||
+        !valid_client_resource(id, owner))
+        return PresentUpdate::invalid;
+    if (resource_limit_reached(owner))
+        return PresentUpdate::resource_exhausted;
+    if (present_subscriptions_.size() >= maximum_present_subscriptions)
+        return PresentUpdate::resource_exhausted;
+    if (!resources_.insert(id, ResourceKind::present_event, owner))
+        return PresentUpdate::invalid;
+    try {
+        present_subscriptions_.push_back(
+            PresentSubscription{id, owner, window_id, mask});
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return PresentUpdate::resource_exhausted;
+    }
+    return PresentUpdate::updated;
+}
+
+bool
+ServerState::present_wait_ready(
+    const PresentOperation &operation) const noexcept
+{
+    if (operation.wait_fence == 0)
+        return true;
+    const auto *fence = sync_fence(operation.wait_fence);
+    return fence == nullptr || fence->triggered;
+}
+
+bool
+ServerState::append_present_complete_events(
+    std::uint32_t window_id, std::uint32_t serial,
+    std::uint8_t kind, std::uint64_t msc, std::uint64_t ust,
+    std::vector<PlannedEvent> &events) const
+{
+    try {
+        for (const auto &subscription : present_subscriptions_) {
+            if (subscription.window != window_id ||
+                (subscription.mask & (1U << 1)) == 0) {
+                continue;
+            }
+            if (events.size() == maximum_pending_events)
+                return false;
+            events.emplace_back(
+                subscription.owner,
+                PresentCompleteNotifyEvent{
+                    kind, 0, subscription.id, window_id, serial,
+                    ust, msc});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+PresentUpdate
+ServerState::execute_present(
+    PresentOperation &operation, std::uint64_t msc, std::uint64_t ust)
+{
+    auto *target = window(operation.window);
+    if (target == nullptr ||
+        (operation.kind == PresentKind::pixmap &&
+         (!target->surface || !operation.pixmap_surface))) {
+        if (operation.idle_fence != 0)
+            static_cast<void>(trigger_sync_fence(operation.idle_fence));
+        return PresentUpdate::updated;
+    }
+
+    std::vector<PlannedEvent> events;
+    const auto kind = operation.kind == PresentKind::pixmap ? 0U : 1U;
+    if (!append_present_complete_events(
+            operation.window, operation.serial,
+            static_cast<std::uint8_t>(kind), msc, ust, events)) {
+        return PresentUpdate::resource_exhausted;
+    }
+    for (const auto &notify : operation.notifies) {
+        if (window(notify.window) != nullptr &&
+            !append_present_complete_events(
+                notify.window, notify.serial,
+                static_cast<std::uint8_t>(kind), msc, ust, events)) {
+            return PresentUpdate::resource_exhausted;
+        }
+    }
+    if (operation.kind == PresentKind::pixmap) {
+        try {
+            for (const auto &subscription : present_subscriptions_) {
+                if (subscription.window != operation.window ||
+                    (subscription.mask & (1U << 2)) == 0) {
+                    continue;
+                }
+                if (events.size() == maximum_pending_events)
+                    return PresentUpdate::queue_full;
+                events.emplace_back(
+                    subscription.owner,
+                    PresentIdleNotifyEvent{
+                        subscription.id, operation.window,
+                        operation.serial, operation.pixmap,
+                        operation.idle_fence});
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return PresentUpdate::resource_exhausted;
+        }
+    }
+    if (!queue_events_atomically(events))
+        return PresentUpdate::queue_full;
+
+    if (operation.kind == PresentKind::pixmap) {
+        const auto width = operation.pixmap_surface->width();
+        const auto height = operation.pixmap_surface->height();
+        target->surface->copy_from(
+            *operation.pixmap_surface, 0, 0,
+            operation.x_off, operation.y_off, width, height,
+            3, 0xffffffffU,
+            ClipView{operation.update ? &*operation.update : nullptr,
+                     operation.x_off, operation.y_off});
+        if (operation.update) {
+            Region changed = *operation.update;
+            if (changed.translate(operation.x_off, operation.y_off))
+                static_cast<void>(damage_drawable(operation.window, &changed));
+            else
+                static_cast<void>(damage_drawable(operation.window));
+        }
+        else {
+            static_cast<void>(damage_drawable(operation.window));
+        }
+        if (operation.idle_fence != 0)
+            static_cast<void>(trigger_sync_fence(operation.idle_fence));
+    }
+    return PresentUpdate::updated;
+}
+
+PresentUpdate
+ServerState::submit_present(PresentOperation operation)
+{
+    if (present_operations_.size() >= maximum_present_operations ||
+        operation.notifies.size() > maximum_present_notifies) {
+        return PresentUpdate::resource_exhausted;
+    }
+    if ((operation.divisor == 0 && operation.remainder != 0) ||
+        (operation.divisor != 0 &&
+         operation.remainder >= operation.divisor)) {
+        return PresentUpdate::invalid;
+    }
+    const auto target = present_target_msc(
+        operation.target_msc, operation.divisor,
+        operation.remainder, operation.options);
+    if (!target)
+        return PresentUpdate::invalid;
+    operation.target_msc = *target;
+    const std::uint64_t current = present_msc();
+    if (operation.target_msc <= current && present_wait_ready(operation))
+        return execute_present(operation, current, present_ust());
+    try {
+        present_operations_.push_back(std::move(operation));
+    }
+    catch (const std::bad_alloc &) {
+        return PresentUpdate::resource_exhausted;
+    }
+    return PresentUpdate::updated;
+}
+
+EventDelivery
+ServerState::present_window_configured(std::uint32_t window_id)
+{
+    const auto *candidate = window(window_id);
+    if (candidate == nullptr)
+        return EventDelivery::no_recipient;
+    std::vector<PlannedEvent> events;
+    if (!append_present_configure_events(
+            window_id, candidate->x, candidate->y,
+            candidate->width, candidate->height, events)) {
+        return EventDelivery::queue_full;
+    }
+    if (events.empty())
+        return EventDelivery::no_recipient;
+    return queue_events_atomically(events)
+        ? EventDelivery::delivered
+        : EventDelivery::queue_full;
+}
+
+bool
+ServerState::append_present_configure_events(
+    std::uint32_t window_id, std::int16_t x, std::int16_t y,
+    std::uint16_t width, std::uint16_t height,
+    std::vector<PlannedEvent> &events) const
+{
+    try {
+        for (const auto &subscription : present_subscriptions_) {
+            if (subscription.window != window_id ||
+                (subscription.mask & 1U) == 0) {
+                continue;
+            }
+            events.emplace_back(
+                subscription.owner,
+                PresentConfigureNotifyEvent{
+                    subscription.id, window_id, x, y, width, height,
+                    0, 0, width, height, 0});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
 }
 
 GraphicsContextRecord *
@@ -2052,8 +2430,14 @@ ServerState::resize_randr_screen(RandrState candidate,
     std::vector<PlannedEvent> events;
     constexpr std::uint16_t resize_notifications = 1U | 2U | 4U | 64U;
     if (!append_randr_events(candidate, width, height,
-                             resize_notifications, 0, 0, events) ||
-        !queue_events_atomically(events)) {
+                             resize_notifications, 0, 0, events)) {
+        return RandrUpdate::resource_exhausted;
+    }
+    if (!append_present_configure_events(
+            root_window_id, 0, 0, width, height, events)) {
+        return RandrUpdate::resource_exhausted;
+    }
+    if (!queue_events_atomically(events)) {
         return RandrUpdate::queue_full;
     }
 
@@ -3972,26 +4356,68 @@ ServerState::update_repeat_controls() noexcept
 int
 ServerState::timer_timeout_milliseconds() const noexcept
 {
-    if (!key_repeat_)
-        return -1;
-    const auto remaining = key_repeat_->deadline - clock_.now();
-    if (remaining <= Clock::time_point::duration::zero())
-        return 0;
-    auto milliseconds = std::chrono::duration_cast<
-        std::chrono::milliseconds>(remaining);
-    if (milliseconds < remaining)
-        milliseconds += std::chrono::milliseconds{1};
-    if (milliseconds.count() > std::numeric_limits<int>::max())
-        return std::numeric_limits<int>::max();
-    return static_cast<int>(milliseconds.count());
+    const auto now = clock_.now();
+    int timeout = -1;
+    const auto consider = [&timeout](Clock::time_point::duration remaining) {
+        if (remaining <= Clock::time_point::duration::zero()) {
+            timeout = 0;
+            return;
+        }
+        auto milliseconds = std::chrono::duration_cast<
+            std::chrono::milliseconds>(remaining);
+        if (milliseconds < remaining)
+            milliseconds += std::chrono::milliseconds{1};
+        const int candidate = milliseconds.count() >
+                std::numeric_limits<int>::max()
+            ? std::numeric_limits<int>::max()
+            : static_cast<int>(milliseconds.count());
+        timeout = timeout < 0 ? candidate : std::min(timeout, candidate);
+    };
+    if (key_repeat_)
+        consider(key_repeat_->deadline - now);
+
+    const std::uint64_t current = present_msc();
+    const auto elapsed = now - present_epoch_;
+    const auto elapsed_microseconds = elapsed <=
+            Clock::time_point::duration::zero()
+        ? std::uint64_t{0}
+        : static_cast<std::uint64_t>(
+              std::chrono::duration_cast<std::chrono::microseconds>(
+                  elapsed).count());
+    const auto interval = static_cast<std::uint64_t>(
+        present_refresh_interval.count());
+    const std::uint64_t phase = elapsed_microseconds % interval;
+    constexpr std::uint64_t maximum_timeout_microseconds =
+        static_cast<std::uint64_t>(std::numeric_limits<int>::max()) * 1000U;
+    for (const auto &operation : present_operations_) {
+        if (!present_wait_ready(operation))
+            continue;
+        if (operation.target_msc <= current) {
+            timeout = 0;
+            break;
+        }
+        const std::uint64_t frames = operation.target_msc - current;
+        if (frames >
+            (maximum_timeout_microseconds + phase) / interval) {
+            timeout = timeout < 0
+                ? std::numeric_limits<int>::max()
+                : timeout;
+            continue;
+        }
+        const std::uint64_t remaining_microseconds =
+            frames * interval - phase;
+        const auto remaining = std::chrono::microseconds{
+            static_cast<std::chrono::microseconds::rep>(
+                remaining_microseconds)};
+        consider(remaining);
+    }
+    return timeout;
 }
 
 EventDelivery
 ServerState::process_timers()
 {
     update_repeat_controls();
-    if (!key_repeat_)
-        return EventDelivery::no_recipient;
     const auto now = clock_.now();
     bool delivered = false;
     constexpr std::size_t maximum_repeat_burst = 32;
@@ -4011,6 +4437,31 @@ ServerState::process_timers()
     }
     if (key_repeat_ && key_repeat_->deadline <= now)
         key_repeat_->deadline = now + default_repeat_interval;
+
+    const std::uint64_t msc = present_msc();
+    const std::uint64_t ust = present_ust();
+    constexpr std::size_t maximum_present_burst = 64;
+    std::size_t completed = 0;
+    for (auto operation = present_operations_.begin();
+         operation != present_operations_.end() &&
+         completed < maximum_present_burst;) {
+        if (operation->target_msc > msc || !present_wait_ready(*operation)) {
+            ++operation;
+            continue;
+        }
+        const PresentUpdate result = execute_present(*operation, msc, ust);
+        if (result == PresentUpdate::queue_full ||
+            result == PresentUpdate::resource_exhausted) {
+            operation->target_msc = msc ==
+                    std::numeric_limits<std::uint64_t>::max()
+                ? msc
+                : msc + 1;
+            return EventDelivery::queue_full;
+        }
+        operation = present_operations_.erase(operation);
+        delivered = true;
+        ++completed;
+    }
     return delivered ? EventDelivery::delivered
                      : EventDelivery::no_recipient;
 }
@@ -4400,6 +4851,33 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
                 return entry.window == id;
             }),
         randr_.subscriptions.end());
+    for (auto subscription = present_subscriptions_.begin();
+         subscription != present_subscriptions_.end();) {
+        if (subscription->window != id) {
+            ++subscription;
+            continue;
+        }
+        static_cast<void>(resources_.erase(subscription->id));
+        subscription = present_subscriptions_.erase(subscription);
+    }
+    for (auto operation = present_operations_.begin();
+         operation != present_operations_.end();) {
+        if (operation->window == id) {
+            if (operation->idle_fence != 0)
+                static_cast<void>(trigger_sync_fence(
+                    operation->idle_fence));
+            operation = present_operations_.erase(operation);
+            continue;
+        }
+        operation->notifies.erase(
+            std::remove_if(
+                operation->notifies.begin(), operation->notifies.end(),
+                [id](const PresentNotify &notify) {
+                    return notify.window == id;
+                }),
+            operation->notifies.end());
+        ++operation;
+    }
     composite_redirects_.erase(
         std::remove_if(
             composite_redirects_.begin(), composite_redirects_.end(),
@@ -4963,6 +5441,22 @@ ServerState::disconnect_client(std::uint32_t owner)
                 return entry.client == owner;
             }),
         randr_.subscriptions.end());
+    for (auto subscription = present_subscriptions_.begin();
+         subscription != present_subscriptions_.end();) {
+        if (subscription->owner != owner) {
+            ++subscription;
+            continue;
+        }
+        static_cast<void>(resources_.erase(subscription->id));
+        subscription = present_subscriptions_.erase(subscription);
+    }
+    present_operations_.erase(
+        std::remove_if(
+            present_operations_.begin(), present_operations_.end(),
+            [owner](const PresentOperation &operation) {
+                return operation.owner == owner;
+            }),
+        present_operations_.end());
     cursor_hide_counts_.erase(owner);
     sync_counter_waits_.erase(owner);
     sync_fence_waits_.erase(owner);

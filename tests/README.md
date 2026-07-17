@@ -97,6 +97,12 @@ against both servers, including automatic/manual window and subwindow redirects,
 manual exclusion from the root scene, border-clip regions, named-pixmap lifetime,
 resize/unredirect copy-on-write, RENDER rebinding, disconnect cleanup, exact errors,
 raw native/opposite-endian framing, and explicit overlay `BadMatch` behavior,
+Present 1.4 software-vblank scheduling through fake-clock state tests, typed
+Configure/Complete/Idle Generic Events, region-offset pixmap copies, additional notify
+windows, future-MSC completion, SYNC idle fences, exact capability/error behavior,
+raw native/opposite-endian CARD64 framing, and a generated-libxcb oracle against both
+servers, with deliberate `BadMatch` rejection of DRI3-backed PixmapSynced,
+and `BadValue` rejection of compositor RedirectNotify selection,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

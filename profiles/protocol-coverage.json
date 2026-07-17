@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "generated_from": {
-    "policy_sha256": "1225465a1683e0a5d9c9743691ab5002c14e35ee9e326bc8b7f6c552ef57c012",
+    "policy_sha256": "02ec9e172cb0659e5ae84243b43c1fb87ba3d3913c3a6dfbc029a013a2688d5c",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -2876,42 +2876,42 @@
           "name": "QueryVersion",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 1,
           "name": "Pixmap",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 2,
           "name": "NotifyMSC",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 3,
           "name": "SelectInput",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 4,
           "name": "QueryCapabilities",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         },
         {
           "opcode": 5,
           "name": "PixmapSynced",
           "contract": "required",
           "legacy_status": "implemented",
-          "next_status": "not_yet_implemented"
+          "next_status": "implemented"
         }
       ]
     },

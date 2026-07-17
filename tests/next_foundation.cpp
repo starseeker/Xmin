@@ -100,15 +100,19 @@ test_wire_order(xmin::next::ByteOrder order)
     writer.u8(0x12);
     writer.u16(0x3456);
     writer.u32(0x789abcde);
+    writer.u64(0x0123456789abcdefULL);
     writer.pad_to_four();
 
     xmin::next::WireReader reader(writer.data(), order);
     const auto byte = reader.u8();
     const auto word = reader.u16();
     const auto dword = reader.u32();
+    const auto qword = reader.u64();
     return expect(byte == 0x12, "wire u8 round trip failed") &&
         expect(word == 0x3456, "wire u16 round trip failed") &&
         expect(dword == 0x789abcde, "wire u32 round trip failed") &&
+        expect(qword == 0x0123456789abcdefULL,
+               "wire u64 round trip failed") &&
         expect(reader.skip(reader.remaining()), "wire padding skip failed") &&
         expect(!reader.u8(), "wire reader crossed its bound");
 }
@@ -4010,6 +4014,280 @@ test_composite_state()
 }
 
 bool
+test_present_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t window_id = owner + 1;
+    constexpr std::uint32_t pixmap_id = owner + 2;
+    constexpr std::uint32_t event_id = owner + 3;
+    constexpr std::uint32_t wait_fence = owner + 4;
+    constexpr std::uint32_t idle_fence = owner + 5;
+    constexpr std::uint32_t root_event_id = owner + 6;
+    ManualClock clock;
+    xmin::next::ServerState server(16, 12, clock);
+    if (!expect(server.register_client(owner),
+                "Present client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 73);
+
+    auto window_surface = xmin::next::Surface::create(4, 3, 24);
+    auto pixmap_surface = xmin::next::Surface::create(4, 3, 24);
+    if (!expect(window_surface.has_value() && pixmap_surface.has_value(),
+                "Present surface allocation failed")) {
+        return false;
+    }
+    window_surface->fill({0, 0, 4, 3}, 0x000000ffU, 3, 0xffffffffU);
+    pixmap_surface->fill({0, 0, 4, 3}, 0x0000ff00U, 3, 0xffffffffU);
+    xmin::next::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::next::root_window_id;
+    window.width = 4;
+    window.height = 3;
+    window.mapped = true;
+    window.surface = server.adopt_surface(std::move(*window_surface));
+    auto managed_pixmap = server.adopt_surface(std::move(*pixmap_surface));
+    if (!expect(window.surface != nullptr && managed_pixmap != nullptr &&
+                    server.add_window(std::move(window), owner) &&
+                    server.add_pixmap({pixmap_id, managed_pixmap}, owner),
+                "Present drawable insertion failed") ||
+        !expect(server.select_present_input(
+                    owner, event_id, window_id, 0x7) ==
+                    xmin::next::PresentUpdate::updated,
+                "Present event selection failed")) {
+        return false;
+    }
+
+    xmin::next::Region update;
+    if (!expect(xmin::next::Region::canonicalize(
+                    {{0, 0, 1, 1}}, update),
+                "Present update region creation failed")) {
+        return false;
+    }
+    xmin::next::PresentOperation operation;
+    operation.kind = xmin::next::PresentKind::pixmap;
+    operation.owner = owner;
+    operation.window = window_id;
+    operation.pixmap = pixmap_id;
+    operation.serial = 0x584d494eU;
+    operation.pixmap_surface = managed_pixmap;
+    operation.update = update;
+    operation.x_off = 1;
+    if (!expect(server.submit_present(std::move(operation)) ==
+                    xmin::next::PresentUpdate::updated &&
+                    server.timer_timeout_milliseconds() == 17 &&
+                    server.window(window_id)->surface->pixel(1, 0) ==
+                        0x000000ffU,
+                "Present did not arm its first software vblank")) {
+        return false;
+    }
+    clock.advance(std::chrono::milliseconds{16});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::no_recipient &&
+                    server.timer_timeout_milliseconds() == 1,
+                "Present fired before its software vblank")) {
+        return false;
+    }
+    clock.advance(std::chrono::milliseconds{1});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::delivered &&
+                    server.window(window_id)->surface->pixel(1, 0) ==
+                        0x0000ff00U &&
+                    server.window(window_id)->surface->pixel(0, 0) ==
+                        0x000000ffU,
+                "Present region copy did not execute at vblank")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *complete = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::PresentCompleteNotifyEvent>(queued);
+    if (!expect(complete != nullptr && complete->event == event_id &&
+                    complete->window == window_id && complete->kind == 0 &&
+                    complete->mode == 0 &&
+                    complete->serial == 0x584d494eU && complete->msc == 1 &&
+                    complete->ust > 0 && complete->sequence == 73,
+                "Present CompleteNotify state is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    queued = server.next_event(owner);
+    const auto *idle = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::PresentIdleNotifyEvent>(queued);
+    if (!expect(idle != nullptr && idle->event == event_id &&
+                    idle->serial == 0x584d494eU &&
+                    idle->pixmap == pixmap_id && idle->idle_fence == 0,
+                "Present IdleNotify state is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    auto *configured_window = server.window(window_id);
+    if (!expect(configured_window != nullptr &&
+                    server.configure_window(
+                        *configured_window, 2, 1, 5, 4, 1,
+                        std::nullopt, std::nullopt) ==
+                    xmin::next::EventDelivery::delivered,
+                "transactional ConfigureWindow failed")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    const auto *configure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::PresentConfigureNotifyEvent>(queued);
+    if (!expect(configure != nullptr && configure->event == event_id &&
+                    configure->window == window_id &&
+                    configure->x == 2 && configure->y == 1 &&
+                    configure->width == 5 && configure->height == 4 &&
+                    configure->pixmap_width == 5 &&
+                    configure->pixmap_height == 4 &&
+                    configured_window->surface->pixel(1, 0) ==
+                        0x0000ff00U,
+                "Present ConfigureNotify state is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    const auto *preserved_surface = configured_window->surface.get();
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.present_window_configured(window_id) ==
+                        xmin::next::EventDelivery::delivered,
+                    "Present queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.configure_window(
+                    *configured_window, 7, 8, 6, 5, 2,
+                    std::nullopt, std::nullopt) ==
+                    xmin::next::EventDelivery::queue_full &&
+                    configured_window->x == 2 &&
+                    configured_window->y == 1 &&
+                    configured_window->width == 5 &&
+                    configured_window->height == 4 &&
+                    configured_window->border_width == 1 &&
+                    configured_window->surface.get() == preserved_surface,
+                "failed ConfigureWindow partially mutated state")) {
+        return false;
+    }
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        server.pop_event(owner);
+    }
+
+    if (!expect(server.add_sync_fence({wait_fence, false}, owner) &&
+                    server.add_sync_fence({idle_fence, false}, owner),
+                "Present fence setup failed")) {
+        return false;
+    }
+    xmin::next::PresentOperation fenced;
+    fenced.kind = xmin::next::PresentKind::pixmap;
+    fenced.owner = owner;
+    fenced.window = window_id;
+    fenced.pixmap = pixmap_id;
+    fenced.serial = 2;
+    fenced.pixmap_surface = managed_pixmap;
+    fenced.wait_fence = wait_fence;
+    fenced.idle_fence = idle_fence;
+    fenced.options = 1; // asynchronous: current MSC once the fence opens
+    if (!expect(server.submit_present(std::move(fenced)) ==
+                    xmin::next::PresentUpdate::updated &&
+                    server.timer_timeout_milliseconds() == -1,
+                "Present wait fence created a busy deadline") ||
+        !expect(server.trigger_sync_fence(wait_fence) ==
+                    xmin::next::SyncUpdate::updated &&
+                    server.timer_timeout_milliseconds() == 0 &&
+                    server.process_timers() ==
+                        xmin::next::EventDelivery::delivered &&
+                    server.sync_fence(idle_fence)->triggered,
+                "Present fences did not gate and release the pixmap")) {
+        return false;
+    }
+    server.pop_event(owner);
+    server.pop_event(owner);
+
+    xmin::next::PresentOperation msc;
+    msc.kind = xmin::next::PresentKind::notify_msc;
+    msc.owner = owner;
+    msc.window = window_id;
+    msc.serial = 3;
+    msc.target_msc = server.present_msc() + 1;
+    if (!expect(server.submit_present(std::move(msc)) ==
+                    xmin::next::PresentUpdate::updated,
+                "Present NotifyMSC submission failed")) {
+        return false;
+    }
+    clock.advance(std::chrono::milliseconds{17});
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::delivered,
+                "Present NotifyMSC deadline did not fire")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    complete = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::PresentCompleteNotifyEvent>(queued);
+    if (!expect(complete != nullptr && complete->kind == 1 &&
+                    complete->serial == 3,
+                "Present NotifyMSC completion is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    if (!expect(server.select_present_input(
+                    owner, root_event_id, xmin::next::root_window_id, 1) ==
+                    xmin::next::PresentUpdate::updated,
+                "Present root event selection failed")) {
+        return false;
+    }
+    auto randr = server.randr();
+    if (!expect(server.resize_randr_screen(std::move(randr), 18, 14) ==
+                    xmin::next::RandrUpdate::updated,
+                "RANDR resize with Present selection failed")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    configure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::PresentConfigureNotifyEvent>(queued);
+    if (!expect(configure != nullptr && configure->event == root_event_id &&
+                    configure->window == xmin::next::root_window_id &&
+                    configure->width == 18 && configure->height == 14,
+                "RANDR resize omitted Present ConfigureNotify")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    if (!expect(server.reset_sync_fence(idle_fence),
+                "Present idle fence reset failed")) {
+        return false;
+    }
+    xmin::next::PresentOperation canceled;
+    canceled.kind = xmin::next::PresentKind::pixmap;
+    canceled.owner = owner;
+    canceled.window = window_id;
+    canceled.pixmap = pixmap_id;
+    canceled.serial = 4;
+    canceled.pixmap_surface = managed_pixmap;
+    canceled.idle_fence = idle_fence;
+    canceled.target_msc = server.present_msc() + 10;
+    if (!expect(server.submit_present(std::move(canceled)) ==
+                    xmin::next::PresentUpdate::updated &&
+                    !server.sync_fence(idle_fence)->triggered &&
+                    server.destroy_window(window_id) !=
+                        xmin::next::EventDelivery::queue_full &&
+                    server.sync_fence(idle_fence)->triggered,
+                "destroying a Present window did not release its pixmap")) {
+        return false;
+    }
+    server.disconnect_client(owner);
+    return expect(server.window(window_id) == nullptr &&
+                      !server.has_pending_event(owner),
+                  "Present state survived client disconnect");
+}
+
+bool
 test_colormap_state()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -4076,6 +4354,7 @@ main()
             test_xfixes_state() && test_randr_state() &&
             test_damage_state() &&
             test_composite_state() &&
+            test_present_state() &&
             test_colormap_state() &&
             test_result()
         ? 0

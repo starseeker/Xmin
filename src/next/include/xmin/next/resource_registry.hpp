@@ -22,6 +22,7 @@ enum class ResourceKind {
     xfixes_region,
     xfixes_barrier,
     damage,
+    present_event,
 };
 
 struct ResourceRecord {

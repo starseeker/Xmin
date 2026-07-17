@@ -69,6 +69,16 @@ put_i64(std::vector<std::uint8_t> &bytes, std::size_t offset,
     put32(bytes, offset + 4, static_cast<std::uint32_t>(bits), little);
 }
 
+void
+put_u64(std::vector<std::uint8_t> &bytes, std::size_t offset,
+        std::uint64_t value, bool little)
+{
+    for (unsigned index = 0; index < 8; ++index) {
+        const unsigned shift = little ? index * 8 : (7 - index) * 8;
+        bytes[offset + index] = static_cast<std::uint8_t>(value >> shift);
+    }
+}
+
 std::uint16_t
 get16(const std::vector<std::uint8_t> &bytes, std::size_t offset, bool little)
 {
@@ -87,6 +97,17 @@ get32(const std::vector<std::uint8_t> &bytes, std::size_t offset, bool little)
     for (unsigned index = 0; index < 4; ++index) {
         const unsigned shift = little ? index * 8 : (3 - index) * 8;
         value |= static_cast<std::uint32_t>(bytes[offset + index]) << shift;
+    }
+    return value;
+}
+
+std::uint64_t
+get64(const std::vector<std::uint8_t> &bytes, std::size_t offset, bool little)
+{
+    std::uint64_t value = 0;
+    for (unsigned index = 0; index < 8; ++index) {
+        const unsigned shift = little ? index * 8 : (7 - index) * 8;
+        value |= static_cast<std::uint64_t>(bytes[offset + index]) << shift;
     }
     return value;
 }
@@ -272,7 +293,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 11> extensions{{
+    constexpr std::array<std::string_view, 12> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -284,6 +305,7 @@ extension_list_payload()
         "RANDR",
         "DAMAGE",
         "Composite",
+        "Present",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -301,7 +323,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 11 && get16(reply, 2, little) == sequence &&
+        reply[1] == 12 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3717,6 +3739,143 @@ check_composite(int descriptor, bool little)
 }
 
 bool
+check_present(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t present_opcode = 139;
+    const std::uint32_t pixmap = resource_base + 1;
+    const std::uint32_t event = resource_base + 2;
+    constexpr std::uint32_t serial = 0x584d494eU;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "Present", 1,
+                         present_opcode, reply)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = present_opcode;
+    request[1] = 4; // only QueryVersion is legal initially
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 4 || reply[10] != present_opcode) {
+        return false;
+    }
+
+    request.assign(12, 0);
+    request[0] = present_opcode;
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little);
+    put32(request, 8, 4, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get32(reply, 8, little) != 1 || get32(reply, 12, little) != 4) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = present_opcode;
+    request[1] = 4; // QueryCapabilities
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 4 ||
+        get32(reply, 8, little) != 0) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 53; // CreatePixmap
+    request[1] = 24;
+    put16(request, 2, 4, little);
+    put32(request, 4, pixmap, little);
+    put32(request, 8, root_window, little);
+    put16(request, 12, 2, little);
+    put16(request, 14, 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = present_opcode;
+    request[1] = 3; // SelectInput
+    put16(request, 2, 4, little);
+    put32(request, 4, event, little);
+    put32(request, 8, root_window, little);
+    put32(request, 12, 6, little); // CompleteNotify | IdleNotify
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(72, 0);
+    request[0] = present_opcode;
+    request[1] = 1; // Pixmap
+    put16(request, 2, 18, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, pixmap, little);
+    put32(request, 12, serial, little);
+    put32(request, 40, 1, little); // asynchronous current-MSC copy
+    put_u64(request, 48, 0, little);
+    put_u64(request, 56, 0, little);
+    put_u64(request, 64, 0, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 40 || reply[0] != 35 ||
+        reply[1] != present_opcode || get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != 2 || get16(reply, 8, little) != 1 ||
+        reply[10] != 0 || reply[11] != 0 ||
+        get32(reply, 12, little) != event ||
+        get32(reply, 16, little) != root_window ||
+        get32(reply, 20, little) != serial ||
+        get64(reply, 24, little) == 0) {
+        return false;
+    }
+    if (!read_reply(descriptor, reply) || reply[0] != 35 ||
+        reply[1] != present_opcode || get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != 0 || get16(reply, 8, little) != 2 ||
+        get32(reply, 12, little) != event ||
+        get32(reply, 16, little) != root_window ||
+        get32(reply, 20, little) != serial ||
+        get32(reply, 24, little) != pixmap) {
+        return false;
+    }
+
+    request.assign(88, 0);
+    request[0] = present_opcode;
+    request[1] = 5; // recognized 1.4 request, no DRI3 syncobj backend
+    put16(request, 2, 22, little);
+    put32(request, 4, root_window, little);
+    put32(request, 8, pixmap, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 8 ||
+        get16(reply, 2, little) != 8 ||
+        get16(reply, 8, little) != 5 || reply[10] != present_opcode) {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = present_opcode;
+    request[1] = 3; // remove the event selection
+    put16(request, 2, 4, little);
+    put32(request, 4, event, little);
+    put32(request, 8, root_window, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(8, 0);
+    request[0] = 54; // FreePixmap
+    put16(request, 2, 2, little);
+    put32(request, 4, pixmap, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 43; // synchronize the no-reply cleanup requests
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 11;
+}
+
+bool
 run_randr_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3758,6 +3917,22 @@ run_composite_case(const char *server, bool little)
     const bool passed = send_setup(child.socket, little, true, 11) &&
         check_setup_success(child.socket, little, resource_base) &&
         check_composite(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
+run_present_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_present(child.socket, little, resource_base);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);
@@ -3971,6 +4146,11 @@ main(int argc, char **argv)
     if (!run_composite_case(argv[1], native) ||
         !run_composite_case(argv[1], !native)) {
         std::cerr << "Composite extension case failed\n";
+        return 1;
+    }
+    if (!run_present_case(argv[1], native) ||
+        !run_present_case(argv[1], !native)) {
+        std::cerr << "Present extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

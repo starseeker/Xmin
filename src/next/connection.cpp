@@ -557,6 +557,60 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *configure =
+            std::get_if<PresentConfigureNotifyEvent>(&event)) {
+        writer.u8(35); // GenericEvent
+        writer.u8(present_extension.major_opcode);
+        writer.u16(configure->sequence);
+        writer.u32(2); // two words beyond the generic 32-byte event
+        writer.u16(0); // ConfigureNotify
+        writer.pad(2);
+        writer.u32(configure->event);
+        writer.u32(configure->window);
+        writer.i16(configure->x);
+        writer.i16(configure->y);
+        writer.u16(configure->width);
+        writer.u16(configure->height);
+        writer.i16(configure->off_x);
+        writer.i16(configure->off_y);
+        writer.u16(configure->pixmap_width);
+        writer.u16(configure->pixmap_height);
+        writer.u32(configure->pixmap_flags);
+        return writer.data();
+    }
+
+    if (const auto *complete =
+            std::get_if<PresentCompleteNotifyEvent>(&event)) {
+        writer.u8(35); // GenericEvent
+        writer.u8(present_extension.major_opcode);
+        writer.u16(complete->sequence);
+        writer.u32(2); // two words beyond the generic 32-byte event
+        writer.u16(1); // CompleteNotify
+        writer.u8(complete->kind);
+        writer.u8(complete->mode);
+        writer.u32(complete->event);
+        writer.u32(complete->window);
+        writer.u32(complete->serial);
+        writer.u64(complete->ust);
+        writer.u64(complete->msc);
+        return writer.data();
+    }
+
+    if (const auto *idle = std::get_if<PresentIdleNotifyEvent>(&event)) {
+        writer.u8(35); // GenericEvent
+        writer.u8(present_extension.major_opcode);
+        writer.u16(idle->sequence);
+        writer.u32(0);
+        writer.u16(2); // IdleNotify
+        writer.pad(2);
+        writer.u32(idle->event);
+        writer.u32(idle->window);
+        writer.u32(idle->serial);
+        writer.u32(idle->pixmap);
+        writer.u32(idle->idle_fence);
+        return writer.data();
+    }
+
     if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
         writer.u8(input->type);
         writer.u8(input->detail);
@@ -609,7 +663,7 @@ Connection::drain_pending_events()
 {
     while (const auto *event = server_.next_event(config_.resource_base)) {
         const auto encoded = encode_event(*event);
-        if (encoded.size() != 32)
+        if (encoded.size() < 32 || (encoded.size() & 3U) != 0)
             return malformed("invalid queued client event");
         auto queued = queue(encoded);
         if (!queued)
@@ -1590,34 +1644,13 @@ Connection::handle_configure_window(const RequestContext &context)
     if (window->parent == 0)
         return Result<void>::success();
 
-    if ((window->width != width || window->height != height) &&
-        !server_.resize_window_surface(*window, width, height)) {
+    if (server_.configure_window(
+            *window, x, y, width, height, border_width,
+            sibling, stack_mode) == EventDelivery::queue_full) {
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     }
-    window->x = x;
-    window->y = y;
-    window->width = width;
-    window->height = height;
-    window->border_width = border_width;
-    if (stack_mode) {
-        auto *parent = server_.window(window->parent);
-        auto &children = parent->children;
-        children.erase(std::remove(children.begin(), children.end(), *id),
-                       children.end());
-        auto position = children.end();
-        if (sibling) {
-            position = std::find(children.begin(), children.end(), *sibling);
-            if (*stack_mode == 0 || *stack_mode == 2 || *stack_mode == 4)
-                ++position;
-        }
-        else if (*stack_mode == 1 || *stack_mode == 3) {
-            position = children.begin();
-        }
-        children.insert(position, *id);
-    }
-    server_.invalidate_scene();
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -6353,6 +6386,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_damage(context);
         case ExtensionKind::composite:
             return handle_composite(context);
+        case ExtensionKind::present:
+            return handle_present(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

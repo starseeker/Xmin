@@ -36,6 +36,7 @@ public:
     std::optional<std::uint8_t> u8() noexcept;
     std::optional<std::uint16_t> u16() noexcept;
     std::optional<std::uint32_t> u32() noexcept;
+    std::optional<std::uint64_t> u64() noexcept;
     bool skip(std::size_t count) noexcept;
 
 private:
@@ -53,6 +54,7 @@ public:
     void u16(std::uint16_t value);
     void i16(std::int16_t value);
     void u32(std::uint32_t value);
+    void u64(std::uint64_t value);
     void bytes(const std::vector<std::uint8_t> &value);
     void bytes(std::string_view value);
     void pad(std::size_t count);

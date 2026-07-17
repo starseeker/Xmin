@@ -19,6 +19,7 @@ enum class ExtensionKind : std::uint8_t {
     randr,
     damage,
     composite,
+    present,
 };
 
 struct ExtensionInfo {
@@ -54,8 +55,10 @@ inline constexpr ExtensionInfo damage_extension{
     "DAMAGE", 137, 71, 142, 1, 1, ExtensionKind::damage};
 inline constexpr ExtensionInfo composite_extension{
     "Composite", 138, 0, 0, 0, 4, ExtensionKind::composite};
+inline constexpr ExtensionInfo present_extension{
+    "Present", 139, 0, 0, 1, 4, ExtensionKind::present};
 
-inline constexpr std::array<ExtensionInfo, 11> extension_registry{{
+inline constexpr std::array<ExtensionInfo, 12> extension_registry{{
     big_requests_extension,
     xc_misc_extension,
     generic_event_extension,
@@ -67,6 +70,7 @@ inline constexpr std::array<ExtensionInfo, 11> extension_registry{{
     randr_extension,
     damage_extension,
     composite_extension,
+    present_extension,
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

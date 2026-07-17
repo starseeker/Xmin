@@ -7,6 +7,7 @@ add_library(xmin_next_core STATIC
   cursor_protocol.cpp
   damage_protocol.cpp
   display_socket.cpp
+  present_protocol.cpp
   property_data.cpp
   randr_protocol.cpp
   render.cpp

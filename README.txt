@@ -133,7 +133,7 @@ The constexpr extension registry is the single source of stable opcodes, version
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
 SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, RANDR 1.6, DAMAGE 1.1,
-and Composite 0.4.
+Composite 0.4, and Present 1.4.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -183,6 +183,16 @@ destruction, and client teardown; live window RENDER pictures are rebound when t
 window receives copy-on-write storage.  The root scene omits manually redirected
 hierarchies.  Overlay-window requests return `BadMatch` because the product profile
 deliberately has no overlay plane or hidden overlay window.
+Present implements a deterministic 60 Hz software MSC over the same monotonic
+clock and bounded deadline loop as key repeat.  PresentPixmap performs region-clipped
+copies into window surfaces, integrates with DAMAGE and scene invalidation, retains
+queued pixmap storage safely, and emits typed Generic Event configure, complete, and
+idle notifications.  NotifyMSC, additional notify windows, wait/idle SYNC fences,
+selection-resource cleanup, both byte orders, and zero hardware capabilities are
+covered against generated libxcb and the retained Xorg oracle.  PresentPixmapSynced
+returns `BadMatch`: the 1.4 framing is recognized without inventing the DRI3 syncobj,
+DRM flip, or GPU-fence machinery deliberately excluded from this server.  RedirectNotify
+selection is rejected with `BadValue` because there is no compositor interception path.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate
