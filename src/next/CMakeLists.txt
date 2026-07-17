@@ -18,6 +18,7 @@ add_library(xmin_next_core STATIC
   surface.cpp
   wire.cpp
   xauthority.cpp
+  xkb_protocol.cpp
   xfixes_protocol.cpp
 )
 add_library(Xmin::next_core ALIAS xmin_next_core)

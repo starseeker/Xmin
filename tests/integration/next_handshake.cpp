@@ -293,7 +293,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 12> extensions{{
+    constexpr std::array<std::string_view, 13> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -306,6 +306,7 @@ extension_list_payload()
         "DAMAGE",
         "Composite",
         "Present",
+        "XKEYBOARD",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -323,7 +324,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 12 && get16(reply, 2, little) == sequence &&
+        reply[1] == 13 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3876,6 +3877,186 @@ check_present(int descriptor, bool little, std::uint32_t resource_base)
 }
 
 bool
+check_xkb(int descriptor, bool little)
+{
+    constexpr std::uint8_t xkb_opcode = 140;
+    constexpr std::uint8_t xkb_event = 72;
+    constexpr std::uint8_t xkb_error = 143;
+    constexpr std::uint8_t lock_mask = 1U << 1;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+
+    if (!query_extension(descriptor, little, "XKEYBOARD", 1,
+                         xkb_opcode, reply, xkb_event, xkb_error)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xkb_opcode;
+    request[1] = 4; // requests other than UseExtension require negotiation
+    put16(request, 2, 2, little);
+    put16(request, 4, 3, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 4 || reply[10] != xkb_opcode) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xkb_opcode;
+    request[1] = 0; // UseExtension 1.0
+    put16(request, 2, 2, little);
+    put16(request, 4, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 1 ||
+        get16(reply, 2, little) != 3 ||
+        get16(reply, 8, little) != 1 ||
+        get16(reply, 10, little) != 0) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xkb_opcode;
+    request[1] = 4; // GetState
+    put16(request, 2, 2, little);
+    put16(request, 4, 3, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[1] != 3 ||
+        get16(reply, 2, little) != 4 ||
+        (reply[11] & lock_mask) != 0) {
+        return false;
+    }
+    const std::uint8_t initial_locks = reply[11];
+
+    request.assign(20, 0);
+    request[0] = xkb_opcode;
+    request[1] = 1; // SelectEvents(StateNotify)
+    put16(request, 2, 5, little);
+    put16(request, 4, 3, little);
+    put16(request, 6, (1U << 1) | (1U << 2), little);
+    put16(request, 12, (1U << 0) | (1U << 1), little);
+    put16(request, 14, (1U << 0) | (1U << 1), little);
+    put16(request, 16, 0x3fff, little);
+    put16(request, 18, 0x3fff, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = xkb_opcode;
+    request[1] = 5; // LatchLockState(Caps Lock)
+    put16(request, 2, 4, little);
+    put16(request, 4, 3, little);
+    request[6] = lock_mask;
+    request[7] = static_cast<std::uint8_t>(initial_locks ^ lock_mask);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != xkb_event || reply[1] != 2 ||
+        get16(reply, 2, little) != 6 || reply[8] != 3 ||
+        (reply[12] & lock_mask) == 0 ||
+        (get16(reply, 26, little) & (1U << 3)) == 0 ||
+        reply[30] != xkb_opcode || reply[31] != 5) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = xkb_opcode;
+    request[1] = 4;
+    put16(request, 2, 2, little);
+    put16(request, 4, 3, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        get16(reply, 2, little) != 7 ||
+        (reply[8] & lock_mask) == 0 ||
+        (reply[11] & lock_mask) == 0) {
+        return false;
+    }
+
+    request.assign(28, 0);
+    request[0] = xkb_opcode;
+    request[1] = 8; // GetMap(all types and keycode 38 symbols)
+    put16(request, 2, 7, little);
+    put16(request, 4, 3, little);
+    put16(request, 6, 1U << 0, little);
+    put16(request, 8, 1U << 1, little);
+    request[12] = 38;
+    request[13] = 1;
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 104 || reply[0] != 1 || reply[1] != 3 ||
+        get16(reply, 2, little) != 8 ||
+        get16(reply, 12, little) != 3 ||
+        reply[14] != 0 || reply[15] != 3 || reply[16] != 3 ||
+        reply[17] != 38 || get16(reply, 18, little) != 2 ||
+        reply[20] != 1 || reply[88] != 2 || reply[92] != 1 ||
+        reply[93] != 2 || get16(reply, 94, little) != 2 ||
+        get32(reply, 96, little) != 'a' ||
+        get32(reply, 100, little) != 'A') {
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = 100; // ChangeKeyboardMapping; preserve the existing row
+    request[1] = 1;
+    put16(request, 2, 4, little);
+    request[4] = 38;
+    request[5] = 2;
+    put32(request, 8, 'a', little);
+    put32(request, 12, 'A', little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply))
+        return false;
+    if (reply[0] != 34 || get16(reply, 2, little) != 9 ||
+        reply[4] != 1 || reply[5] != 38 || reply[6] != 1) {
+        std::cerr << "XKB core mapping event mismatch: type="
+                  << static_cast<unsigned>(reply[0]) << " detail="
+                  << static_cast<unsigned>(reply[1]) << " sequence="
+                  << get16(reply, 2, little) << "\n";
+        return false;
+    }
+    if (!read_reply(descriptor, reply))
+        return false;
+    if (reply[0] != xkb_event || reply[1] != 1 ||
+        get16(reply, 2, little) != 9 || reply[8] != 3 ||
+        get16(reply, 10, little) != 3 || reply[14] != 0 ||
+        reply[15] != 3 || reply[16] != 38 || reply[17] != 1) {
+        std::cerr << "XKB map event mismatch: type="
+                  << static_cast<unsigned>(reply[0]) << " subtype="
+                  << static_cast<unsigned>(reply[1]) << " sequence="
+                  << get16(reply, 2, little) << " changed="
+                  << get16(reply, 10, little) << "\n";
+        return false;
+    }
+
+    request.assign(16, 0);
+    request[0] = xkb_opcode;
+    request[1] = 1; // clear the StateNotify selection before restoring
+    put16(request, 2, 4, little);
+    put16(request, 4, 3, little);
+    put16(request, 6, 1U << 2, little);
+    put16(request, 8, 1U << 2, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = xkb_opcode;
+    request[1] = 5;
+    put16(request, 2, 4, little);
+    put16(request, 4, 3, little);
+    request[6] = lock_mask;
+    request[7] = initial_locks;
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(4, 0);
+    request[0] = xkb_opcode; // malformed UseExtension
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 16 ||
+        get16(reply, 2, little) != 12 ||
+        get16(reply, 8, little) != 0 || reply[10] != xkb_opcode) {
+        return false;
+    }
+    return true;
+}
+
+bool
 run_randr_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -3933,6 +4114,22 @@ run_present_case(const char *server, bool little)
     const bool passed = send_setup(child.socket, little, true, 11) &&
         check_setup_success(child.socket, little, resource_base) &&
         check_present(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
+run_xkb_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_xkb(child.socket, little);
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);
@@ -4151,6 +4348,11 @@ main(int argc, char **argv)
     if (!run_present_case(argv[1], native) ||
         !run_present_case(argv[1], !native)) {
         std::cerr << "Present extension case failed\n";
+        return 1;
+    }
+    if (!run_xkb_case(argv[1], native) ||
+        !run_xkb_case(argv[1], !native)) {
+        std::cerr << "XKB extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

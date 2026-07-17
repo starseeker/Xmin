@@ -870,6 +870,146 @@ test_key_repeat_timers()
 }
 
 bool
+test_xkb_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint8_t lock_mask = 1U << 1;
+    ManualClock clock;
+    xmin::next::ServerState server(100, 80, clock);
+    if (!expect(server.register_client(owner),
+                "XKB client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 73);
+    xmin::next::XkbEventSelection selection;
+    selection.owner = owner;
+    selection.events = (1U << 2) | (1U << 3);
+    selection.state = 0x3fff;
+    selection.controls = 0xffffffffU;
+    if (!expect(server.select_xkb_events(selection) ==
+                    xmin::next::XkbUpdate::updated,
+                "XKB event selection failed") ||
+        !expect(server.latch_lock_xkb(
+                    lock_mask, lock_mask, false, 0, 0, false, 0,
+                    140, 5) == xmin::next::XkbUpdate::updated,
+                "XKB lock update failed")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *state = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XkbStateNotifyEvent>(queued);
+    if (!expect(state != nullptr && state->locked_mods == lock_mask &&
+                    state->mods == lock_mask &&
+                    (state->changed & (1U << 3)) != 0 &&
+                    state->request_major == 140 &&
+                    state->request_minor == 5 && state->sequence == 73 &&
+                    server.xkb_indicator_state() == 1,
+                "XKB StateNotify or indicator state is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    auto controls = server.input().xkb.controls;
+    controls.repeat_delay = 500;
+    controls.repeat_interval = 30;
+    if (!expect(server.set_xkb_controls(
+                    controls, 1U << 30, 0, 140, 7) ==
+                    xmin::next::XkbUpdate::updated,
+                "XKB controls update failed")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    const auto *control_event = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::XkbControlsNotifyEvent>(queued);
+    if (!expect(control_event != nullptr &&
+                    control_event->changed == (1U << 30) &&
+                    control_event->enabled == controls.enabled &&
+                    control_event->request_major == 140 &&
+                    control_event->request_minor == 7 &&
+                    server.input().xkb.controls.repeat_delay == 500,
+                "XKB ControlsNotify is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    server.window(xmin::next::root_window_id)->event_masks.emplace(owner, 1);
+    xmin::next::ClientMessageEvent message;
+    message.window = xmin::next::root_window_id;
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        xmin::next::root_window_id, 1, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "XKB queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    if (!expect(server.latch_lock_xkb(
+                    lock_mask, 0, false, 0, 0, false, 0, 140, 5) ==
+                    xmin::next::XkbUpdate::queue_full &&
+                    server.xkb_state().locked_mods == lock_mask,
+                "failed XKB event delivery committed state")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    server.disconnect_client(owner);
+    return expect(server.xkb_selection(owner) == nullptr,
+                  "disconnect retained an XKB event selection");
+}
+
+bool
+test_xkb_detectable_repeat()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint8_t keycode = 96;
+    ManualClock clock;
+    xmin::next::ServerState server(100, 80, clock);
+    if (!expect(server.register_client(owner) &&
+                    server.set_input_focus(
+                        xmin::next::FocusKind::window,
+                        xmin::next::root_window_id, 0, 0) ==
+                        xmin::next::FocusUpdate::updated,
+                "detectable-repeat setup failed")) {
+        return false;
+    }
+    server.window(xmin::next::root_window_id)->event_masks.emplace(
+        owner, (1U << 0) | (1U << 1));
+    if (!expect(server.set_xkb_client_flags(owner, 1) ==
+                    xmin::next::XkbUpdate::updated &&
+                    server.xkb_client_flags(owner) == 1,
+                "detectable repeat flag was not retained") ||
+        !expect(server.inject_input(2, keycode, 50, 40) ==
+                    xmin::next::EventDelivery::delivered,
+                "detectable-repeat key press failed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    clock.advance(xmin::next::default_repeat_delay);
+    if (!expect(server.process_timers() ==
+                    xmin::next::EventDelivery::delivered,
+                "detectable repeat timer did not fire")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *press = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::next::CoreInputEvent>(queued);
+    if (!expect(press != nullptr && press->type == 2 &&
+                    press->detail == keycode,
+                "detectable repeat did not suppress its release")) {
+        return false;
+    }
+    server.pop_event(owner);
+    return expect(!server.has_pending_event(owner) &&
+                      server.inject_input(3, keycode, 50, 40) ==
+                          xmin::next::EventDelivery::delivered,
+                  "detectable repeat left a partial pair");
+}
+
+bool
 test_crossing_events()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -4337,6 +4477,7 @@ main()
             test_atoms_and_resources() && test_unique_fd() &&
             test_shared_server_state() && test_passive_grabs() &&
             test_input_routing() && test_key_repeat_timers() &&
+            test_xkb_state() && test_xkb_detectable_repeat() &&
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
             test_focus_events() &&

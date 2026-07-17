@@ -382,6 +382,70 @@ if(TARGET Xmin::run)
         set_tests_properties(xmin.xcb-present-oracle
           PROPERTIES TIMEOUT 20
         )
+
+        add_executable(xmin_xcb_xkb_state
+          integration/xcb_xkb_state.c
+        )
+        target_compile_features(xmin_xcb_xkb_state PRIVATE c_std_11)
+        target_include_directories(xmin_xcb_xkb_state PRIVATE
+          "${PROJECT_BINARY_DIR}/generated"
+        )
+        target_link_libraries(xmin_xcb_xkb_state PRIVATE
+          PkgConfig::XMIN_TEST_XCB_EXTENSIONS
+          "${XMIN_TEST_XCB_LIBRARY}"
+        )
+        xmin_enable_warnings(xmin_xcb_xkb_state)
+        add_test(NAME xmin.next-xcb-xkb-state
+          COMMAND Xmin::run
+            --server $<TARGET_FILE:xmin_next>
+            --screen 96x80x24
+            -- $<TARGET_FILE:xmin_xcb_xkb_state>
+        )
+        set_tests_properties(xmin.next-xcb-xkb-state
+          PROPERTIES TIMEOUT 20
+        )
+        add_test(NAME xmin.xcb-xkb-oracle
+          COMMAND Xmin::run
+            --server $<TARGET_FILE:xmin_server>
+            --screen 96x80x24
+            -- $<TARGET_FILE:xmin_xcb_xkb_state>
+        )
+        set_tests_properties(xmin.xcb-xkb-oracle
+          PROPERTIES TIMEOUT 20
+        )
+
+        pkg_check_modules(XMIN_TEST_XKBCOMMON_X11 QUIET IMPORTED_TARGET
+          xkbcommon-x11
+        )
+        if(TARGET PkgConfig::XMIN_TEST_XKBCOMMON_X11)
+          add_executable(xmin_xkbcommon_state
+            integration/xkbcommon_state.c
+          )
+          target_compile_features(xmin_xkbcommon_state PRIVATE c_std_11)
+          target_link_libraries(xmin_xkbcommon_state PRIVATE
+            PkgConfig::XMIN_TEST_XKBCOMMON_X11
+            PkgConfig::XMIN_TEST_XCB_EXTENSIONS
+            "${XMIN_TEST_XCB_LIBRARY}"
+          )
+          xmin_enable_warnings(xmin_xkbcommon_state)
+          add_test(NAME xmin.next-xkbcommon-state
+            COMMAND Xmin::run
+              --server $<TARGET_FILE:xmin_next>
+              --screen 96x80x24
+              -- $<TARGET_FILE:xmin_xkbcommon_state>
+          )
+          set_tests_properties(xmin.next-xkbcommon-state
+            PROPERTIES TIMEOUT 20
+          )
+          if(XMIN_ENABLE_SANITIZERS)
+            # xkbcommon correctly passes counted X11 strings to strndup().
+            # ASan's optional strict C-string mode ignores strndup's bound
+            # and diagnoses the un-terminated XCB payload instead.
+            set_property(TEST xmin.next-xkbcommon-state APPEND PROPERTY
+              ENVIRONMENT "ASAN_OPTIONS=strict_string_checks=0"
+            )
+          endif()
+        endif()
       endif()
     endif()
   endif()

@@ -440,6 +440,77 @@ struct PassiveGrab {
 [[nodiscard]] PassiveGrabDomain passive_grab_modifiers(
     std::uint16_t modifiers) noexcept;
 
+constexpr std::uint8_t xkb_keyboard_device_id = 3;
+constexpr std::uint32_t xkb_supported_boolean_controls =
+    (1U << 0) | (1U << 9);
+constexpr std::uint32_t xkb_supported_client_flags = 0x1f;
+
+struct XkbControls {
+    std::uint8_t mouse_keys_default_button = 1;
+    std::uint8_t groups_wrap = 1;
+    std::uint8_t internal_mods = 0;
+    std::uint8_t ignore_lock_mods = 0;
+    std::uint16_t internal_virtual_mods = 0;
+    std::uint16_t ignore_lock_virtual_mods = 0;
+    std::uint16_t repeat_delay = static_cast<std::uint16_t>(
+        default_repeat_delay.count());
+    std::uint16_t repeat_interval = static_cast<std::uint16_t>(
+        default_repeat_interval.count());
+    std::uint16_t slow_keys_delay = 300;
+    std::uint16_t debounce_delay = 300;
+    std::uint16_t mouse_keys_delay = 160;
+    std::uint16_t mouse_keys_interval = 40;
+    std::uint16_t mouse_keys_time_to_max = 30;
+    std::uint16_t mouse_keys_max_speed = 500;
+    std::int16_t mouse_keys_curve = 0;
+    std::uint16_t access_x_options = 0;
+    std::uint16_t access_x_timeout = 0;
+    std::uint16_t access_x_timeout_options_mask = 0;
+    std::uint16_t access_x_timeout_options_values = 0;
+    std::uint32_t access_x_timeout_mask = 0;
+    std::uint32_t access_x_timeout_values = 0;
+    std::uint32_t enabled = xkb_supported_boolean_controls;
+    std::array<std::uint8_t, 32> per_key_repeat = default_auto_repeats;
+};
+
+struct XkbKeyboardState {
+    std::uint8_t latched_mods = 0;
+    std::uint8_t locked_mods = 0;
+    std::int16_t base_group = 0;
+    std::int16_t latched_group = 0;
+    std::uint8_t locked_group = 0;
+    XkbControls controls;
+};
+
+struct XkbStateSnapshot {
+    std::uint8_t mods = 0;
+    std::uint8_t base_mods = 0;
+    std::uint8_t latched_mods = 0;
+    std::uint8_t locked_mods = 0;
+    std::uint8_t group = 0;
+    std::int16_t base_group = 0;
+    std::int16_t latched_group = 0;
+    std::uint8_t locked_group = 0;
+    std::uint16_t pointer_buttons = 0;
+};
+
+struct XkbEventSelection {
+    std::uint32_t owner = 0;
+    std::uint16_t events = 0;
+    std::uint16_t map = 0;
+    std::uint16_t new_keyboard = 0;
+    std::uint16_t state = 0;
+    std::uint32_t controls = 0;
+    std::uint32_t indicator_state = 0;
+    std::uint32_t indicator_map = 0;
+    std::uint16_t names = 0;
+    std::uint8_t compatibility = 0;
+    std::uint8_t bell = 0;
+    std::uint8_t action_message = 0;
+    std::uint16_t access_x = 0;
+    std::uint16_t extension_device = 0;
+};
+
 struct InputState {
     std::uint8_t keymap_width =
         static_cast<std::uint8_t>(keysyms_per_keycode);
@@ -486,6 +557,7 @@ struct InputState {
     std::uint32_t pointer_grab_time = 1;
     std::uint32_t keyboard_grab_time = 1;
     bool global_auto_repeat = default_global_auto_repeat;
+    XkbKeyboardState xkb;
 };
 
 enum class SelectionUpdate {
@@ -497,6 +569,13 @@ enum class SelectionUpdate {
 enum class EventDelivery {
     delivered,
     no_recipient,
+    queue_full,
+};
+
+enum class XkbUpdate {
+    updated,
+    invalid,
+    resource_exhausted,
     queue_full,
 };
 
@@ -798,6 +877,25 @@ public:
     [[nodiscard]] EventDelivery inject_input(
         std::uint8_t type, std::uint8_t detail,
         std::int32_t root_x, std::int32_t root_y);
+    [[nodiscard]] XkbStateSnapshot xkb_state() const noexcept;
+    [[nodiscard]] std::uint32_t xkb_indicator_state() const noexcept;
+    [[nodiscard]] const XkbEventSelection *xkb_selection(
+        std::uint32_t owner) const noexcept;
+    [[nodiscard]] XkbUpdate select_xkb_events(XkbEventSelection selection);
+    [[nodiscard]] XkbUpdate latch_lock_xkb(
+        std::uint8_t affect_locks, std::uint8_t locks,
+        bool lock_group, std::uint8_t group_lock,
+        std::uint8_t affect_latches, bool latch_group,
+        std::int16_t group_latch,
+        std::uint8_t request_major, std::uint8_t request_minor);
+    [[nodiscard]] XkbUpdate set_xkb_controls(
+        XkbControls controls, std::uint32_t changed,
+        std::uint32_t enabled_changes,
+        std::uint8_t request_major, std::uint8_t request_minor);
+    [[nodiscard]] std::uint32_t xkb_client_flags(
+        std::uint32_t owner) const noexcept;
+    [[nodiscard]] XkbUpdate set_xkb_client_flags(
+        std::uint32_t owner, std::uint32_t value);
     [[nodiscard]] EventDelivery process_timers();
     [[nodiscard]] int timer_timeout_milliseconds() const noexcept;
     void update_repeat_controls() noexcept;
@@ -873,6 +971,8 @@ private:
     std::vector<CompositeRedirect> composite_redirects_;
     std::vector<PresentSubscription> present_subscriptions_;
     std::deque<PresentOperation> present_operations_;
+    std::vector<XkbEventSelection> xkb_selections_;
+    std::unordered_map<std::uint32_t, std::uint32_t> xkb_client_flags_;
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
@@ -975,6 +1075,17 @@ private:
         std::uint32_t pointer_window, const ActiveGrab *grab,
         std::vector<PlannedEvent> &events) const;
     [[nodiscard]] EventDelivery repeat_key(std::uint8_t detail);
+    [[nodiscard]] std::uint8_t xkb_base_modifiers(
+        const std::array<std::uint8_t, 32> &keys) const noexcept;
+    [[nodiscard]] XkbStateSnapshot xkb_state_for(
+        const std::array<std::uint8_t, 32> &keys,
+        const XkbKeyboardState &state) const noexcept;
+    [[nodiscard]] bool append_xkb_state_events(
+        const XkbStateSnapshot &before,
+        const XkbStateSnapshot &after,
+        std::uint8_t keycode, std::uint8_t event_type,
+        std::uint8_t request_major, std::uint8_t request_minor,
+        std::vector<PlannedEvent> &events) const;
     [[nodiscard]] EventDelivery append_crossing_events(
         std::uint32_t from, std::uint32_t to,
         std::int32_t root_x, std::int32_t root_y,

@@ -2461,42 +2461,42 @@ ServerState::broadcast_mapping_notify(std::uint8_t request,
                                       std::uint8_t first_keycode,
                                       std::uint8_t count)
 {
-    if (clients_.size() > maximum_pending_events - pending_events_)
-        return false;
-    for (const auto &client : clients_) {
-        if (!can_queue_event(client.first))
-            return false;
-    }
-
-    std::vector<std::uint32_t> queued;
+    std::vector<PlannedEvent> events;
     try {
-        queued.reserve(clients_.size());
+        events.reserve(clients_.size() + xkb_selections_.size());
+        const MappingNotifyEvent core_event{
+            request, first_keycode, count};
+        for (const auto &client : clients_)
+            events.emplace_back(client.first, core_event);
+
+        if (request != 2) {
+            XkbMapNotifyEvent xkb_event;
+            xkb_event.time = current_time_;
+            if (request == 1) {
+                xkb_event.changed = (1U << 0) | (1U << 1);
+                xkb_event.first_type = 0;
+                xkb_event.type_count = 3;
+                xkb_event.first_keysym = first_keycode;
+                xkb_event.keysym_count = count;
+            }
+            else {
+                xkb_event.changed = 1U << 2;
+                xkb_event.first_modmap = minimum_keycode;
+                xkb_event.modmap_count = static_cast<std::uint8_t>(
+                    maximum_keycode - minimum_keycode + 1U);
+            }
+            for (const auto &selection : xkb_selections_) {
+                if ((selection.events & (1U << 1)) != 0 &&
+                    (selection.map & xkb_event.changed) != 0) {
+                    events.emplace_back(selection.owner, xkb_event);
+                }
+            }
+        }
     }
     catch (const std::bad_alloc &) {
         return false;
     }
-    const MappingNotifyEvent event{request, first_keycode, count};
-    for (const auto &client : clients_) {
-        if (queue_event(client.first, event)) {
-            queued.push_back(client.first);
-            continue;
-        }
-
-        const auto failed = event_queues_.find(client.first);
-        if (failed != event_queues_.end() && failed->second.empty())
-            event_queues_.erase(failed);
-        for (const auto recipient : queued) {
-            const auto found = event_queues_.find(recipient);
-            if (found == event_queues_.end() || found->second.empty())
-                continue;
-            found->second.pop_back();
-            --pending_events_;
-            if (found->second.empty())
-                event_queues_.erase(found);
-        }
-        return false;
-    }
-    return true;
+    return queue_events_atomically(events);
 }
 
 ShapeUpdate
@@ -4249,25 +4249,256 @@ ServerState::append_focus_events(
 void
 ServerState::refresh_modifier_button_mask() noexcept
 {
-    std::uint16_t state = 0;
+    std::uint16_t state = static_cast<std::uint16_t>(
+        xkb_base_modifiers(input_.pressed_keys) |
+        input_.xkb.latched_mods | input_.xkb.locked_mods);
+    state &= 0x00ffU;
+    for (std::size_t button = 1; button <= 5; ++button) {
+        if (input_.pressed_buttons.test(button))
+            state |= static_cast<std::uint16_t>(1U << (button + 7));
+    }
+    input_.modifier_button_mask = state;
+}
+
+std::uint8_t
+ServerState::xkb_base_modifiers(
+    const std::array<std::uint8_t, 32> &keys) const noexcept
+{
+    std::uint8_t state = 0;
     for (std::size_t group = 0; group < 8; ++group) {
         for (std::size_t index = 0;
              index < input_.modifier_keys_per_group; ++index) {
             const std::uint8_t keycode = input_.modifier_map[
                 group * input_.modifier_keys_per_group + index];
             if (keycode != 0 &&
-                (input_.pressed_keys[keycode >> 3] &
+                (keys[keycode >> 3] &
                  (1U << (keycode & 7U))) != 0) {
-                state |= static_cast<std::uint16_t>(1U << group);
+                state |= static_cast<std::uint8_t>(1U << group);
                 break;
             }
         }
     }
-    for (std::size_t button = 1; button <= 5; ++button) {
-        if (input_.pressed_buttons.test(button))
-            state |= static_cast<std::uint16_t>(1U << (button + 7));
+    return state;
+}
+
+XkbStateSnapshot
+ServerState::xkb_state_for(
+    const std::array<std::uint8_t, 32> &keys,
+    const XkbKeyboardState &state) const noexcept
+{
+    XkbStateSnapshot snapshot;
+    snapshot.base_mods = xkb_base_modifiers(keys);
+    snapshot.latched_mods = state.latched_mods;
+    snapshot.locked_mods = state.locked_mods;
+    snapshot.mods = static_cast<std::uint8_t>(
+        snapshot.base_mods | snapshot.latched_mods |
+        snapshot.locked_mods);
+    snapshot.base_group = state.base_group;
+    snapshot.latched_group = state.latched_group;
+    snapshot.locked_group = state.locked_group;
+    // The product has one group, so every legal base/latch/lock combination
+    // resolves to group zero while the component values remain queryable.
+    snapshot.group = 0;
+    snapshot.pointer_buttons = static_cast<std::uint16_t>(
+        input_.modifier_button_mask & 0x1f00U);
+    return snapshot;
+}
+
+XkbStateSnapshot
+ServerState::xkb_state() const noexcept
+{
+    return xkb_state_for(input_.pressed_keys, input_.xkb);
+}
+
+std::uint32_t
+ServerState::xkb_indicator_state() const noexcept
+{
+    std::uint32_t result = input_.led_mask;
+    if ((input_.xkb.locked_mods & (1U << 1)) != 0)
+        result |= 1U << 0; // Caps Lock
+    if ((input_.xkb.locked_mods & (1U << 4)) != 0)
+        result |= 1U << 1; // Num Lock
+    if ((input_.xkb.locked_mods & (1U << 5)) != 0)
+        result |= 1U << 2; // Scroll Lock
+    return result;
+}
+
+const XkbEventSelection *
+ServerState::xkb_selection(std::uint32_t owner) const noexcept
+{
+    const auto found = std::find_if(
+        xkb_selections_.begin(), xkb_selections_.end(),
+        [owner](const XkbEventSelection &selection) {
+            return selection.owner == owner;
+        });
+    return found == xkb_selections_.end() ? nullptr : &*found;
+}
+
+XkbUpdate
+ServerState::select_xkb_events(XkbEventSelection selection)
+{
+    const auto found = std::find_if(
+        xkb_selections_.begin(), xkb_selections_.end(),
+        [&selection](const XkbEventSelection &existing) {
+            return existing.owner == selection.owner;
+        });
+    if (selection.events == 0) {
+        if (found != xkb_selections_.end())
+            xkb_selections_.erase(found);
+        return XkbUpdate::updated;
     }
-    input_.modifier_button_mask = state;
+    if (found != xkb_selections_.end()) {
+        *found = selection;
+        return XkbUpdate::updated;
+    }
+    if (xkb_selections_.size() >= maximum_pending_events)
+        return XkbUpdate::resource_exhausted;
+    try {
+        xkb_selections_.push_back(selection);
+    }
+    catch (const std::bad_alloc &) {
+        return XkbUpdate::resource_exhausted;
+    }
+    return XkbUpdate::updated;
+}
+
+bool
+ServerState::append_xkb_state_events(
+    const XkbStateSnapshot &before, const XkbStateSnapshot &after,
+    std::uint8_t keycode, std::uint8_t event_type,
+    std::uint8_t request_major, std::uint8_t request_minor,
+    std::vector<PlannedEvent> &events) const
+{
+    std::uint16_t changed = 0;
+    if (before.mods != after.mods)
+        changed |= 1U << 0;
+    if (before.base_mods != after.base_mods)
+        changed |= 1U << 1;
+    if (before.latched_mods != after.latched_mods)
+        changed |= 1U << 2;
+    if (before.locked_mods != after.locked_mods)
+        changed |= 1U << 3;
+    if (before.group != after.group)
+        changed |= 1U << 4;
+    if (before.base_group != after.base_group)
+        changed |= 1U << 5;
+    if (before.latched_group != after.latched_group)
+        changed |= 1U << 6;
+    if (before.locked_group != after.locked_group)
+        changed |= 1U << 7;
+    if (before.pointer_buttons != after.pointer_buttons)
+        changed |= 1U << 13;
+    if (changed == 0)
+        return true;
+    try {
+        for (const auto &selection : xkb_selections_) {
+            if ((selection.events & (1U << 2)) == 0 ||
+                (selection.state & changed) == 0) {
+                continue;
+            }
+            events.emplace_back(
+                selection.owner,
+                XkbStateNotifyEvent{
+                    current_time_, xkb_keyboard_device_id,
+                    after.mods, after.base_mods, after.latched_mods,
+                    after.locked_mods, after.group, after.base_group,
+                    after.latched_group, after.locked_group,
+                    after.pointer_buttons, changed, keycode, event_type,
+                    request_major, request_minor});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+XkbUpdate
+ServerState::latch_lock_xkb(
+    std::uint8_t affect_locks, std::uint8_t locks,
+    bool lock_group, std::uint8_t group_lock,
+    std::uint8_t affect_latches, bool latch_group,
+    std::int16_t group_latch,
+    std::uint8_t request_major, std::uint8_t request_minor)
+{
+    XkbKeyboardState candidate = input_.xkb;
+    candidate.locked_mods = static_cast<std::uint8_t>(
+        (candidate.locked_mods & ~affect_locks) |
+        (locks & affect_locks));
+    candidate.latched_mods = static_cast<std::uint8_t>(
+        candidate.latched_mods & ~affect_latches);
+    if (lock_group)
+        candidate.locked_group = static_cast<std::uint8_t>(group_lock & 3U);
+    if (latch_group)
+        candidate.latched_group = group_latch;
+
+    const auto before = xkb_state();
+    const auto after = xkb_state_for(input_.pressed_keys, candidate);
+    std::vector<PlannedEvent> events;
+    if (!append_xkb_state_events(
+            before, after, 0, 0, request_major, request_minor, events)) {
+        return XkbUpdate::resource_exhausted;
+    }
+    if (!queue_events_atomically(events))
+        return XkbUpdate::queue_full;
+    input_.xkb = candidate;
+    refresh_modifier_button_mask();
+    return XkbUpdate::updated;
+}
+
+XkbUpdate
+ServerState::set_xkb_controls(
+    XkbControls controls, std::uint32_t changed,
+    std::uint32_t enabled_changes,
+    std::uint8_t request_major, std::uint8_t request_minor)
+{
+    std::vector<PlannedEvent> events;
+    try {
+        for (const auto &selection : xkb_selections_) {
+            if ((selection.events & (1U << 3)) == 0 ||
+                (selection.controls & changed) == 0) {
+                continue;
+            }
+            events.emplace_back(
+                selection.owner,
+                XkbControlsNotifyEvent{
+                    current_time_, xkb_keyboard_device_id, 1, changed,
+                    controls.enabled, enabled_changes, 0, 0,
+                    request_major, request_minor});
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return XkbUpdate::resource_exhausted;
+    }
+    if (!queue_events_atomically(events))
+        return XkbUpdate::queue_full;
+    input_.xkb.controls = controls;
+    input_.auto_repeats = controls.per_key_repeat;
+    input_.global_auto_repeat = (controls.enabled & 1U) != 0;
+    update_repeat_controls();
+    return XkbUpdate::updated;
+}
+
+std::uint32_t
+ServerState::xkb_client_flags(std::uint32_t owner) const noexcept
+{
+    const auto found = xkb_client_flags_.find(owner);
+    return found == xkb_client_flags_.end() ? 0 : found->second;
+}
+
+XkbUpdate
+ServerState::set_xkb_client_flags(std::uint32_t owner, std::uint32_t value)
+{
+    try {
+        if (value == 0)
+            xkb_client_flags_.erase(owner);
+        else
+            xkb_client_flags_[owner] = value;
+    }
+    catch (const std::bad_alloc &) {
+        return XkbUpdate::resource_exhausted;
+    }
+    return XkbUpdate::updated;
 }
 
 EventDelivery
@@ -4324,6 +4555,7 @@ ServerState::repeat_key(std::uint8_t detail)
         event.root_x = wire_coordinate(input_.pointer_x);
         event.root_y = wire_coordinate(input_.pointer_y);
         event.state = repeated.second;
+        const std::size_t route_start = events.size();
         const EventDelivery routed = source == 0
             ? EventDelivery::no_recipient
             : route_input_event(
@@ -4331,6 +4563,17 @@ ServerState::repeat_key(std::uint8_t detail)
                 source, propagation_stop, pointer_window, grab, events);
         if (routed == EventDelivery::queue_full)
             return routed;
+        if (repeated.first == 3) {
+            events.erase(
+                std::remove_if(
+                    events.begin() +
+                        static_cast<std::ptrdiff_t>(route_start),
+                    events.end(),
+                    [this](const PlannedEvent &planned) {
+                        return (xkb_client_flags(planned.first) & 1U) != 0;
+                    }),
+                events.end());
+        }
         delivered = delivered || routed == EventDelivery::delivered;
     }
     if (!queue_events_atomically(events))
@@ -4428,15 +4671,18 @@ ServerState::process_timers()
         advance_time();
         const EventDelivery result = repeat_key(key);
         if (result == EventDelivery::queue_full) {
-            key_repeat_->deadline = now + default_repeat_interval;
+            key_repeat_->deadline = now + std::chrono::milliseconds{
+                input_.xkb.controls.repeat_interval};
             return result;
         }
         delivered = delivered || result == EventDelivery::delivered;
-        key_repeat_->deadline += default_repeat_interval;
+        key_repeat_->deadline += std::chrono::milliseconds{
+            input_.xkb.controls.repeat_interval};
         ++repeated;
     }
     if (key_repeat_ && key_repeat_->deadline <= now)
-        key_repeat_->deadline = now + default_repeat_interval;
+        key_repeat_->deadline = now + std::chrono::milliseconds{
+            input_.xkb.controls.repeat_interval};
 
     const std::uint64_t msc = present_msc();
     const std::uint64_t ust = present_ust();
@@ -4473,6 +4719,30 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     const bool key_event = type == 2 || type == 3;
     const bool button_event = type == 4 || type == 5;
     const bool motion_event = type == 6;
+    auto prospective_keys = input_.pressed_keys;
+    auto prospective_buttons = input_.pressed_buttons;
+    XkbKeyboardState prospective_xkb = input_.xkb;
+    const XkbStateSnapshot xkb_before = xkb_state();
+    if (key_event) {
+        const std::uint8_t bit = static_cast<std::uint8_t>(
+            1U << (detail & 7U));
+        auto &keys = prospective_keys[detail >> 3];
+        if (type == 2) {
+            keys |= bit;
+            // The fixed PC105 map has two locking actions needed by normal
+            // desktop clients.  They update the same state exposed by XKB.
+            if (detail == 66)
+                prospective_xkb.locked_mods ^= 1U << 1; // Caps Lock
+            else if (detail == 77)
+                prospective_xkb.locked_mods ^= 1U << 4; // Num Lock
+        }
+        else {
+            keys &= static_cast<std::uint8_t>(~bit);
+        }
+    }
+    else if (button_event) {
+        prospective_buttons.set(detail, type == 4);
+    }
     if (motion_event) {
         constrain_pointer_by_barriers(
             input_.pointer_x, input_.pointer_y, root_x, root_y);
@@ -4666,6 +4936,20 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         prospective_cursor, events);
     if (cursor == EventDelivery::queue_full)
         return cursor;
+    XkbStateSnapshot xkb_after = xkb_state_for(
+        prospective_keys, prospective_xkb);
+    xkb_after.pointer_buttons = 0;
+    for (std::size_t button = 1; button <= 5; ++button) {
+        if (prospective_buttons.test(button)) {
+            xkb_after.pointer_buttons |= static_cast<std::uint16_t>(
+                1U << (button + 7));
+        }
+    }
+    if (!append_xkb_state_events(
+            xkb_before, xkb_after, key_event ? detail : 0, type,
+            0, 0, events)) {
+        return EventDelivery::queue_full;
+    }
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
     const EventDelivery delivered =
@@ -4677,16 +4961,11 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         : EventDelivery::no_recipient;
 
     if (key_event) {
-        const std::uint8_t bit = static_cast<std::uint8_t>(
-            1U << (detail & 7U));
-        auto &keys = input_.pressed_keys[detail >> 3];
-        if (type == 2)
-            keys |= bit;
-        else
-            keys &= static_cast<std::uint8_t>(~bit);
+        input_.pressed_keys = prospective_keys;
+        input_.xkb = prospective_xkb;
     }
     else if (button_event) {
-        input_.pressed_buttons.set(detail, type == 4);
+        input_.pressed_buttons = prospective_buttons;
     }
     else if (motion_event) {
         input_.pointer_x = event_x;
@@ -4719,7 +4998,8 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         (input_.auto_repeats[detail >> 3] &
          (1U << (detail & 7U))) != 0) {
         key_repeat_ = KeyRepeat{
-            detail, clock_.now() + default_repeat_delay};
+            detail, clock_.now() + std::chrono::milliseconds{
+                input_.xkb.controls.repeat_delay}};
     }
     else if (type == 3 && key_repeat_ && key_repeat_->key == detail) {
         key_repeat_.reset();
@@ -5457,6 +5737,14 @@ ServerState::disconnect_client(std::uint32_t owner)
                 return operation.owner == owner;
             }),
         present_operations_.end());
+    xkb_selections_.erase(
+        std::remove_if(
+            xkb_selections_.begin(), xkb_selections_.end(),
+            [owner](const XkbEventSelection &selection) {
+                return selection.owner == owner;
+            }),
+        xkb_selections_.end());
+    xkb_client_flags_.erase(owner);
     cursor_hide_counts_.erase(owner);
     sync_counter_waits_.erase(owner);
     sync_fence_waits_.erase(owner);

@@ -611,6 +611,83 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *map = std::get_if<XkbMapNotifyEvent>(&event)) {
+        writer.u8(xkb_extension.first_event);
+        writer.u8(1); // MapNotify
+        writer.u16(map->sequence);
+        writer.u32(map->time);
+        writer.u8(map->device);
+        writer.u8(0); // no pointer-button actions
+        writer.u16(map->changed);
+        writer.u8(map->min_keycode);
+        writer.u8(map->max_keycode);
+        writer.u8(map->first_type);
+        writer.u8(map->type_count);
+        writer.u8(map->first_keysym);
+        writer.u8(map->keysym_count);
+        writer.u8(0); // first action
+        writer.u8(0); // action count
+        writer.u8(0); // first behavior
+        writer.u8(0); // behavior count
+        writer.u8(0); // first explicit entry
+        writer.u8(0); // explicit count
+        writer.u8(map->first_modmap);
+        writer.u8(map->modmap_count);
+        writer.u8(0); // first virtual-modifier map
+        writer.u8(0); // virtual-modifier map count
+        writer.u16(0); // no virtual modifiers
+        writer.pad(2);
+        return writer.data();
+    }
+
+    if (const auto *state = std::get_if<XkbStateNotifyEvent>(&event)) {
+        writer.u8(xkb_extension.first_event);
+        writer.u8(2); // StateNotify
+        writer.u16(state->sequence);
+        writer.u32(state->time);
+        writer.u8(state->device);
+        writer.u8(state->mods);
+        writer.u8(state->base_mods);
+        writer.u8(state->latched_mods);
+        writer.u8(state->locked_mods);
+        writer.u8(state->group);
+        writer.i16(state->base_group);
+        writer.i16(state->latched_group);
+        writer.u8(state->locked_group);
+        writer.u8(state->mods); // compatibility state
+        writer.u8(state->mods); // grab modifiers
+        writer.u8(state->mods); // compatibility grab modifiers
+        writer.u8(state->mods); // lookup modifiers
+        writer.u8(state->mods); // compatibility lookup modifiers
+        writer.u16(state->pointer_buttons);
+        writer.u16(state->changed);
+        writer.u8(state->keycode);
+        writer.u8(state->event_type);
+        writer.u8(state->request_major);
+        writer.u8(state->request_minor);
+        return writer.data();
+    }
+
+    if (const auto *controls =
+            std::get_if<XkbControlsNotifyEvent>(&event)) {
+        writer.u8(xkb_extension.first_event);
+        writer.u8(3); // ControlsNotify
+        writer.u16(controls->sequence);
+        writer.u32(controls->time);
+        writer.u8(controls->device);
+        writer.u8(controls->groups);
+        writer.pad(2);
+        writer.u32(controls->changed);
+        writer.u32(controls->enabled);
+        writer.u32(controls->enabled_changes);
+        writer.u8(controls->keycode);
+        writer.u8(controls->event_type);
+        writer.u8(controls->request_major);
+        writer.u8(controls->request_minor);
+        writer.pad(4);
+        return writer.data();
+    }
+
     if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
         writer.u8(input->type);
         writer.u8(input->detail);
@@ -4652,6 +4729,11 @@ Connection::handle_change_keyboard_control(const RequestContext &context)
     updated.key_click_percent = key_click_percent;
     updated.bell_percent = bell_percent;
     updated.global_auto_repeat = global_auto_repeat;
+    updated.xkb.controls.per_key_repeat = auto_repeats;
+    if (global_auto_repeat)
+        updated.xkb.controls.enabled |= 1U;
+    else
+        updated.xkb.controls.enabled &= ~1U;
     server_.update_repeat_controls();
     return Result<void>::success();
 }
@@ -6388,6 +6470,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_composite(context);
         case ExtensionKind::present:
             return handle_present(context);
+        case ExtensionKind::xkb:
+            return handle_xkb(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

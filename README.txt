@@ -133,7 +133,7 @@ The constexpr extension registry is the single source of stable opcodes, version
 event bases, error bases, and typed handler identities.  Its first implemented slice
 advertises BIG-REQUESTS 0.0, XC-MISC 1.1, Generic Event 1.0, XTEST 2.2,
 SHAPE 1.1, SYNC 3.1, RENDER 0.11, XFIXES 6.0, RANDR 1.6, DAMAGE 1.1,
-Composite 0.4, and Present 1.4.
+Composite 0.4, Present 1.4, and XKEYBOARD 1.0.
 BIG-REQUESTS enables bounded one-megabyte requests as explicit per-connection state;
 the framing layer normalizes the extended header before normal typed dispatch.
 XC-MISC reports the setup XID range as exhaustive rather than issuing overlapping IDs.
@@ -193,6 +193,16 @@ covered against generated libxcb and the retained Xorg oracle.  PresentPixmapSyn
 returns `BadMatch`: the 1.4 framing is recognized without inventing the DRI3 syncobj,
 DRM flip, or GPU-fence machinery deliberately excluded from this server.  RedirectNotify
 selection is rejected with `BadValue` because there is no compositor interception path.
+XKEYBOARD exposes a compact fixed US keymap directly over the shared core input
+state.  Its three key types, per-key symbols and modifier map are sufficient for
+an unmodified xkbcommon-x11 consumer without importing the XKB compiler, XKM
+loader, rules database, or mutable server map machinery.  XKB lock, latch,
+group, indicator, repeat-control, and per-client detectable-repeat state share
+the core keyboard engine.  Typed StateNotify, ControlsNotify, and MapNotify
+events are transactional with their state changes; core keymap mutations are
+visible through both core MappingNotify and XKB MapNotify.  Raw native and
+opposite-endian tests cover negotiation, errors, maps, state, and events, while
+generated libxcb tests run against both the new server and retained oracle.
 The XTEST request path negotiates versions, validates cursor/grab-control requests, and
 feeds immediate core key, button, and absolute/relative motion injection into the shared
 input engine.  That engine hit-tests mapped windows, applies focus and do-not-propagate

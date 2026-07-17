@@ -103,6 +103,11 @@ windows, future-MSC completion, SYNC idle fences, exact capability/error behavio
 raw native/opposite-endian CARD64 framing, and a generated-libxcb oracle against both
 servers, with deliberate `BadMatch` rejection of DRI3-backed PixmapSynced,
 and `BadValue` rejection of compositor RedirectNotify selection,
+XKEYBOARD 1.0 fixed-map discovery, state, controls, indicators, names, per-client
+detectable repeat, and typed State/Controls/Map notifications, including raw
+native/opposite-endian framing, transactional fake-clock state tests, an independent
+generated-libxcb oracle against both servers, and direct xkbcommon-x11 keymap/state
+consumption with reversible Caps Lock,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

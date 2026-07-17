@@ -85,7 +85,8 @@
       "name": "XKEYBOARD",
       "xml": "xkb.xml",
       "version": "1.0",
-      "contract": "required"
+      "contract": "required",
+      "next_status": "implemented"
     },
     {
       "name": "XC-MISC",

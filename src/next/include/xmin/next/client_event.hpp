@@ -162,6 +162,55 @@ struct PresentIdleNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct XkbStateNotifyEvent {
+    std::uint32_t time = 0;
+    std::uint8_t device = 3;
+    std::uint8_t mods = 0;
+    std::uint8_t base_mods = 0;
+    std::uint8_t latched_mods = 0;
+    std::uint8_t locked_mods = 0;
+    std::uint8_t group = 0;
+    std::int16_t base_group = 0;
+    std::int16_t latched_group = 0;
+    std::uint8_t locked_group = 0;
+    std::uint16_t pointer_buttons = 0;
+    std::uint16_t changed = 0;
+    std::uint8_t keycode = 0;
+    std::uint8_t event_type = 0;
+    std::uint8_t request_major = 0;
+    std::uint8_t request_minor = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct XkbMapNotifyEvent {
+    std::uint32_t time = 0;
+    std::uint8_t device = 3;
+    std::uint16_t changed = 0;
+    std::uint8_t min_keycode = 8;
+    std::uint8_t max_keycode = 255;
+    std::uint8_t first_type = 0;
+    std::uint8_t type_count = 0;
+    std::uint8_t first_keysym = 0;
+    std::uint8_t keysym_count = 0;
+    std::uint8_t first_modmap = 0;
+    std::uint8_t modmap_count = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct XkbControlsNotifyEvent {
+    std::uint32_t time = 0;
+    std::uint8_t device = 3;
+    std::uint8_t groups = 1;
+    std::uint32_t changed = 0;
+    std::uint32_t enabled = 0;
+    std::uint32_t enabled_changes = 0;
+    std::uint8_t keycode = 0;
+    std::uint8_t event_type = 0;
+    std::uint8_t request_major = 0;
+    std::uint8_t request_minor = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -210,7 +259,9 @@ using ClientEvent = std::variant<
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,
     PresentConfigureNotifyEvent, PresentCompleteNotifyEvent,
-    PresentIdleNotifyEvent, CoreInputEvent,
+    PresentIdleNotifyEvent, XkbMapNotifyEvent, XkbStateNotifyEvent,
+    XkbControlsNotifyEvent,
+    CoreInputEvent,
     CrossingEvent, FocusEvent>;
 
 } // namespace xmin::next
