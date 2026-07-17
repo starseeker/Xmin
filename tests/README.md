@@ -108,6 +108,13 @@ detectable repeat, and typed State/Controls/Map notifications, including raw
 native/opposite-endian framing, transactional fake-clock state tests, an independent
 generated-libxcb oracle against both servers, and direct xkbcommon-x11 keymap/state
 consumption with reversible Caps Lock,
+XInput 2.4 as a fixed two-master-device view over the same core pointer, keyboard,
+focus, grab, and property state, including device/class discovery, pointer and client-
+pointer queries, event selection round trips, typed normal/raw GenericEvents, mutable
+device properties and PropertyEvents, transactional queue-pressure tests, raw native/
+opposite-endian framing, and an independent generated-libxcb oracle against both
+servers; XI1 compatibility, hierarchy mutation, touch, and gesture hardware remain
+explicitly outside the modern profile,
 stable XTEST discovery/versioning and both-endian key/button/motion state injection and
 typed event encoding, with an independent XCB oracle for pre-transition event state,
 focus/ancestor propagation, do-not-propagate masks, active/passive grab routing, and

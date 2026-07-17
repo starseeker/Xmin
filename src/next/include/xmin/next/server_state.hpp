@@ -50,6 +50,9 @@ constexpr std::size_t maximum_composite_redirects = 4096;
 constexpr std::size_t maximum_present_operations = 4096;
 constexpr std::size_t maximum_present_subscriptions = 4096;
 constexpr std::size_t maximum_present_notifies = 256;
+constexpr std::size_t maximum_xi2_selections = 4096;
+constexpr std::size_t maximum_xi2_masks_per_selection = 4;
+constexpr std::size_t maximum_xi2_properties_per_device = 256;
 constexpr std::uint32_t randr_crtc_id = 0x00000200;
 constexpr std::uint32_t randr_output_id = 0x00000201;
 constexpr std::uint32_t randr_initial_mode_id = 0x00000202;
@@ -392,12 +395,14 @@ struct ActiveGrab {
                std::uint8_t keyboard, bool owner_receives,
                bool from_passive = false, std::uint8_t detail = 0,
                bool is_automatic = false,
-               std::shared_ptr<CursorImage> grab_cursor = {}) noexcept
+               std::shared_ptr<CursorImage> grab_cursor = {},
+               bool xi_grab = false, std::uint32_t xi_mask = 0) noexcept
         : owner(grab_owner), window(grab_window), confine_to(confinement),
           activated_at(time), event_mask(mask), pointer_mode(pointer),
           keyboard_mode(keyboard), owner_events(owner_receives),
           passive(from_passive), passive_detail(detail),
-          automatic(is_automatic), cursor(std::move(grab_cursor))
+          automatic(is_automatic), cursor(std::move(grab_cursor)),
+          xi2(xi_grab), xi2_event_mask(xi_mask)
     {}
 
     std::uint32_t owner = 0;
@@ -412,6 +417,8 @@ struct ActiveGrab {
     std::uint8_t passive_detail = 0;
     bool automatic = false;
     std::shared_ptr<CursorImage> cursor;
+    bool xi2 = false;
+    std::uint32_t xi2_event_mask = 0;
 };
 
 enum class PassiveGrabKind : std::uint8_t {
@@ -433,6 +440,8 @@ struct PassiveGrab {
     std::uint8_t keyboard_mode = 1;
     bool owner_events = false;
     std::shared_ptr<CursorImage> cursor;
+    bool xi2 = false;
+    std::uint32_t xi2_event_mask = 0;
 };
 
 [[nodiscard]] PassiveGrabDomain passive_grab_details(
@@ -509,6 +518,28 @@ struct XkbEventSelection {
     std::uint8_t action_message = 0;
     std::uint16_t access_x = 0;
     std::uint16_t extension_device = 0;
+};
+
+constexpr std::uint16_t xi2_all_devices = 0;
+constexpr std::uint16_t xi2_all_master_devices = 1;
+constexpr std::uint16_t xi2_pointer_device_id = 2;
+constexpr std::uint16_t xi2_keyboard_device_id = 3;
+
+struct Xi2EventMask {
+    std::uint16_t device = 0;
+    std::vector<std::uint32_t> words;
+};
+
+struct Xi2EventSelection {
+    std::uint32_t owner = 0;
+    std::uint32_t window = 0;
+    std::vector<Xi2EventMask> masks;
+};
+
+enum class Xi2Update {
+    updated,
+    resource_exhausted,
+    queue_full,
 };
 
 struct InputState {
@@ -840,6 +871,8 @@ public:
     }
     [[nodiscard]] bool add_xfixes_barrier(
         XFixesBarrierRecord barrier, std::uint32_t owner);
+    [[nodiscard]] const XFixesBarrierRecord *xfixes_barrier(
+        std::uint32_t id) const noexcept;
     [[nodiscard]] bool erase_xfixes_barrier(std::uint32_t id,
                                             std::uint32_t owner);
     [[nodiscard]] XFixesUpdate alter_save_set(
@@ -896,6 +929,15 @@ public:
         std::uint32_t owner) const noexcept;
     [[nodiscard]] XkbUpdate set_xkb_client_flags(
         std::uint32_t owner, std::uint32_t value);
+    [[nodiscard]] const Xi2EventSelection *xi2_selection(
+        std::uint32_t owner, std::uint32_t window) const noexcept;
+    [[nodiscard]] Xi2Update select_xi2_events(Xi2EventSelection selection);
+    [[nodiscard]] const std::unordered_map<AtomId, PropertyValue> &
+    xi2_properties(std::uint16_t device) const noexcept;
+    [[nodiscard]] Xi2Update set_xi2_property(
+        std::uint16_t device, AtomId property, PropertyValue value);
+    [[nodiscard]] Xi2Update delete_xi2_property(
+        std::uint16_t device, AtomId property);
     [[nodiscard]] EventDelivery process_timers();
     [[nodiscard]] int timer_timeout_milliseconds() const noexcept;
     void update_repeat_controls() noexcept;
@@ -1011,6 +1053,9 @@ private:
     InputState input_;
     std::optional<KeyRepeat> key_repeat_;
     std::vector<PassiveGrab> passive_grabs_;
+    std::vector<Xi2EventSelection> xi2_selections_;
+    std::array<std::unordered_map<AtomId, PropertyValue>, 2>
+        xi2_properties_;
     std::shared_ptr<CursorImage> displayed_cursor_;
     std::uint32_t next_cursor_serial_ = 1;
     bool scene_dirty_ = true;
@@ -1086,6 +1131,16 @@ private:
         std::uint8_t keycode, std::uint8_t event_type,
         std::uint8_t request_major, std::uint8_t request_minor,
         std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] bool append_xi2_input_events(
+        std::uint8_t type, std::uint8_t detail, std::uint8_t raw_detail,
+        std::uint32_t source_window, std::int32_t root_x,
+        std::int32_t root_y, std::uint16_t state,
+        const XkbStateSnapshot &xkb,
+        std::uint32_t flags, const ActiveGrab *grab,
+        std::vector<PlannedEvent> &events) const;
+    [[nodiscard]] bool xi2_mask_selected(
+        const Xi2EventSelection &selection, std::uint16_t device,
+        std::uint16_t event_type) const noexcept;
     [[nodiscard]] EventDelivery append_crossing_events(
         std::uint32_t from, std::uint32_t to,
         std::int32_t root_x, std::int32_t root_y,

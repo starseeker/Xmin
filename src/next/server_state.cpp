@@ -3080,6 +3080,13 @@ ServerState::add_xfixes_barrier(XFixesBarrierRecord barrier,
     return true;
 }
 
+const XFixesBarrierRecord *
+ServerState::xfixes_barrier(std::uint32_t id) const noexcept
+{
+    const auto found = xfixes_barriers_.find(id);
+    return found == xfixes_barriers_.end() ? nullptr : &found->second;
+}
+
 bool
 ServerState::erase_xfixes_barrier(std::uint32_t id, std::uint32_t owner)
 {
@@ -3764,7 +3771,8 @@ ServerState::route_input_event(CoreInputEvent event, std::uint32_t mask,
     };
 
     const auto forced = [&]() {
-        if (grab == nullptr || (grab->event_mask & mask) == 0)
+        if (grab == nullptr || grab->xi2 ||
+            (grab->event_mask & mask) == 0)
             return EventDelivery::no_recipient;
         return deliver(grab->window,
                        std::array<std::uint32_t, 1>{grab->owner}, event);
@@ -3855,6 +3863,44 @@ ServerState::append_crossing_events(
                     if ((selection.second & mask) != 0)
                         events.emplace_back(selection.first, event);
                 }
+            }
+            const auto xkb = xkb_state();
+            std::uint32_t buttons = 0;
+            for (std::uint32_t button = 1; button <= 5; ++button) {
+                if ((state & (1U << (button + 7))) != 0)
+                    buttons |= 1U << button;
+            }
+            for (const auto &selection : xi2_selections_) {
+                bool selected = selection.window == destination &&
+                    xi2_mask_selected(
+                        selection, xi2_pointer_device_id, type);
+                if (grab != nullptr) {
+                    if (selection.owner != grab->owner)
+                        continue;
+                    if (grab->xi2) {
+                        selected = (grab->owner_events && selected) ||
+                            (destination == grab->window &&
+                             (grab->xi2_event_mask & (1U << type)) != 0);
+                    }
+                    else {
+                        selected = grab->owner_events && selected;
+                    }
+                }
+                if (!selected) {
+                    continue;
+                }
+                events.emplace_back(
+                    selection.owner,
+                    Xi2CrossingEvent{
+                        type, xi2_pointer_device_id,
+                        xi2_pointer_device_id, current_time_, mode, detail,
+                        root_window_id, destination, child,
+                        root_x, root_y, root_x - origin.first,
+                        root_y - origin.second, buttons,
+                        xkb.base_mods, xkb.latched_mods, xkb.locked_mods,
+                        xkb.mods, static_cast<std::uint8_t>(xkb.base_group),
+                        static_cast<std::uint8_t>(xkb.latched_group),
+                        xkb.locked_group, xkb.group, true, event.focus});
             }
         }
         catch (const std::bad_alloc &) {
@@ -3989,6 +4035,44 @@ ServerState::append_focus_events(
             for (const auto &selection : target->event_masks) {
                 if ((selection.second & (1U << 21)) != 0)
                     events.emplace_back(selection.first, event);
+            }
+            const auto origin = absolute_position(destination);
+            std::uint32_t child = pointer_window;
+            while (child != 0 && child != destination) {
+                const auto *candidate = window(child);
+                if (candidate == nullptr)
+                    break;
+                if (candidate->parent == destination)
+                    break;
+                child = candidate->parent;
+            }
+            if (child == destination)
+                child = 0;
+            const auto xkb = xkb_state();
+            std::uint32_t buttons = 0;
+            for (std::uint32_t button = 1; button <= 5; ++button) {
+                if (input_.pressed_buttons.test(button))
+                    buttons |= 1U << button;
+            }
+            for (const auto &selection : xi2_selections_) {
+                if (selection.window != destination ||
+                    !xi2_mask_selected(
+                        selection, xi2_keyboard_device_id, type)) {
+                    continue;
+                }
+                events.emplace_back(
+                    selection.owner,
+                    Xi2CrossingEvent{
+                        type, xi2_keyboard_device_id,
+                        xi2_keyboard_device_id, current_time_, mode, detail,
+                        root_window_id, destination, child,
+                        input_.pointer_x, input_.pointer_y,
+                        input_.pointer_x - origin.first,
+                        input_.pointer_y - origin.second, buttons,
+                        xkb.base_mods, xkb.latched_mods, xkb.locked_mods,
+                        xkb.mods, static_cast<std::uint8_t>(xkb.base_group),
+                        static_cast<std::uint8_t>(xkb.latched_group),
+                        xkb.locked_group, xkb.group, true, false});
             }
         }
         catch (const std::bad_alloc &) {
@@ -4501,6 +4585,296 @@ ServerState::set_xkb_client_flags(std::uint32_t owner, std::uint32_t value)
     return XkbUpdate::updated;
 }
 
+const Xi2EventSelection *
+ServerState::xi2_selection(std::uint32_t owner,
+                           std::uint32_t window_id) const noexcept
+{
+    const auto found = std::find_if(
+        xi2_selections_.begin(), xi2_selections_.end(),
+        [owner, window_id](const Xi2EventSelection &selection) {
+            return selection.owner == owner &&
+                selection.window == window_id;
+        });
+    return found == xi2_selections_.end() ? nullptr : &*found;
+}
+
+Xi2Update
+ServerState::select_xi2_events(Xi2EventSelection selection)
+{
+    const auto found = std::find_if(
+        xi2_selections_.begin(), xi2_selections_.end(),
+        [&selection](const Xi2EventSelection &existing) {
+            return existing.owner == selection.owner &&
+                existing.window == selection.window;
+        });
+    selection.masks.erase(
+        std::remove_if(
+            selection.masks.begin(), selection.masks.end(),
+            [](const Xi2EventMask &mask) {
+                return std::none_of(
+                    mask.words.begin(), mask.words.end(),
+                    [](std::uint32_t word) { return word != 0; });
+            }),
+        selection.masks.end());
+    if (selection.masks.empty()) {
+        if (found != xi2_selections_.end())
+            xi2_selections_.erase(found);
+        return Xi2Update::updated;
+    }
+    if (found != xi2_selections_.end()) {
+        *found = std::move(selection);
+        return Xi2Update::updated;
+    }
+    if (xi2_selections_.size() >= maximum_xi2_selections)
+        return Xi2Update::resource_exhausted;
+    try {
+        xi2_selections_.push_back(std::move(selection));
+    }
+    catch (const std::bad_alloc &) {
+        return Xi2Update::resource_exhausted;
+    }
+    return Xi2Update::updated;
+}
+
+const std::unordered_map<AtomId, PropertyValue> &
+ServerState::xi2_properties(std::uint16_t device) const noexcept
+{
+    static const std::unordered_map<AtomId, PropertyValue> empty;
+    if (device < xi2_pointer_device_id ||
+        device > xi2_keyboard_device_id) {
+        return empty;
+    }
+    return xi2_properties_[device - xi2_pointer_device_id];
+}
+
+bool
+ServerState::xi2_mask_selected(const Xi2EventSelection &selection,
+                               std::uint16_t device,
+                               std::uint16_t event_type) const noexcept
+{
+    const std::size_t word = event_type / 32;
+    const std::uint32_t bit = 1U << (event_type % 32);
+    return std::any_of(
+        selection.masks.begin(), selection.masks.end(),
+        [device, word, bit](const Xi2EventMask &mask) {
+            const bool matches = mask.device == xi2_all_devices ||
+                mask.device == xi2_all_master_devices ||
+                mask.device == device;
+            return matches && word < mask.words.size() &&
+                (mask.words[word] & bit) != 0;
+        });
+}
+
+Xi2Update
+ServerState::set_xi2_property(std::uint16_t device, AtomId property,
+                              PropertyValue value)
+{
+    auto &properties = xi2_properties_[device - xi2_pointer_device_id];
+    const auto found = properties.find(property);
+    if (found == properties.end() &&
+        properties.size() >= maximum_xi2_properties_per_device) {
+        return Xi2Update::resource_exhausted;
+    }
+    const std::size_t old_size = found == properties.end()
+        ? 0
+        : found->second.data.size();
+    if (value.data.size() > maximum_property_bytes ||
+        property_bytes_ - old_size >
+            maximum_server_property_bytes - value.data.size()) {
+        return Xi2Update::resource_exhausted;
+    }
+    std::unordered_map<AtomId, PropertyValue> candidate;
+    const std::size_t new_size = value.data.size();
+    try {
+        candidate = properties;
+        candidate.insert_or_assign(property, std::move(value));
+    }
+    catch (const std::bad_alloc &) {
+        return Xi2Update::resource_exhausted;
+    }
+    std::vector<PlannedEvent> events;
+    try {
+        for (const auto &selection : xi2_selections_) {
+            if (!xi2_mask_selected(selection, device, 12))
+                continue;
+            const bool already = std::any_of(
+                events.begin(), events.end(),
+                [&selection](const PlannedEvent &planned) {
+                    return planned.first == selection.owner;
+                });
+            if (!already) {
+                events.emplace_back(
+                    selection.owner,
+                    Xi2PropertyEvent{device, current_time_, property,
+                        found == properties.end() ? std::uint8_t{1}
+                                                  : std::uint8_t{2}});
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return Xi2Update::resource_exhausted;
+    }
+    if (!queue_events_atomically(events))
+        return Xi2Update::queue_full;
+    properties.swap(candidate);
+    property_bytes_ = property_bytes_ - old_size + new_size;
+    return Xi2Update::updated;
+}
+
+Xi2Update
+ServerState::delete_xi2_property(std::uint16_t device, AtomId property)
+{
+    auto &properties = xi2_properties_[device - xi2_pointer_device_id];
+    const auto found = properties.find(property);
+    if (found == properties.end())
+        return Xi2Update::updated;
+    std::vector<PlannedEvent> events;
+    try {
+        for (const auto &selection : xi2_selections_) {
+            if (!xi2_mask_selected(selection, device, 12))
+                continue;
+            const bool already = std::any_of(
+                events.begin(), events.end(),
+                [&selection](const PlannedEvent &planned) {
+                    return planned.first == selection.owner;
+                });
+            if (!already) {
+                events.emplace_back(
+                    selection.owner,
+                    Xi2PropertyEvent{device, current_time_, property, 0});
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return Xi2Update::resource_exhausted;
+    }
+    if (!queue_events_atomically(events))
+        return Xi2Update::queue_full;
+    property_bytes_ -= found->second.data.size();
+    properties.erase(found);
+    return Xi2Update::updated;
+}
+
+bool
+ServerState::append_xi2_input_events(
+    std::uint8_t type, std::uint8_t detail, std::uint8_t raw_detail,
+    std::uint32_t source_window,
+    std::int32_t root_x, std::int32_t root_y, std::uint16_t state,
+    const XkbStateSnapshot &xkb, std::uint32_t flags,
+    const ActiveGrab *grab,
+    std::vector<PlannedEvent> &events) const
+{
+    const std::uint16_t device = type == 2 || type == 3
+        ? xi2_keyboard_device_id
+        : xi2_pointer_device_id;
+    const std::uint16_t raw_type = static_cast<std::uint16_t>(type + 11);
+    const std::size_t initial_size = events.size();
+    try {
+        for (const auto &selection : xi2_selections_) {
+            if (selection.window != root_window_id ||
+                !xi2_mask_selected(selection, device, raw_type)) {
+                continue;
+            }
+            const bool already = std::any_of(
+                events.begin() + static_cast<std::ptrdiff_t>(initial_size),
+                events.end(), [&selection](const PlannedEvent &planned) {
+                    return planned.first == selection.owner &&
+                        std::holds_alternative<Xi2RawEvent>(planned.second);
+                });
+            if (!already) {
+                events.emplace_back(
+                    selection.owner,
+                    Xi2RawEvent{raw_type, device, device, current_time_,
+                                raw_detail, root_x, root_y, flags});
+            }
+        }
+        if (source_window == 0)
+            return true;
+        const auto selected_on_path = [this, source_window, device, type](
+            const Xi2EventSelection &selection) {
+            return xi2_mask_selected(selection, device, type) &&
+                (selection.window == source_window ||
+                 is_descendant(source_window, selection.window));
+        };
+        const auto closer_selection = [&](
+            const Xi2EventSelection &selection) {
+            return std::any_of(
+                xi2_selections_.begin(), xi2_selections_.end(),
+                [this, &selection, source_window, device, type](
+                    const Xi2EventSelection &candidate) {
+                    return candidate.owner == selection.owner &&
+                        candidate.window != selection.window &&
+                        xi2_mask_selected(candidate, device, type) &&
+                        (candidate.window == source_window ||
+                         is_descendant(source_window, candidate.window)) &&
+                        is_descendant(candidate.window, selection.window);
+                });
+        };
+        const auto append_normal = [&](std::uint32_t owner,
+                                       std::uint32_t destination) {
+            const auto origin = absolute_position(destination);
+            std::uint32_t child = source_window;
+            while (child != 0 && child != destination) {
+                const auto *candidate = window(child);
+                if (candidate == nullptr)
+                    break;
+                if (candidate->parent == destination)
+                    break;
+                child = candidate->parent;
+            }
+            if (child == destination)
+                child = 0;
+            std::uint32_t buttons = 0;
+            for (std::uint32_t button = 1; button <= 5; ++button) {
+                if ((state & (1U << (button + 7))) != 0)
+                    buttons |= 1U << button;
+            }
+            events.emplace_back(
+                owner,
+                Xi2DeviceEvent{
+                    type, device, device, current_time_, detail,
+                    root_window_id, destination, child,
+                    root_x, root_y, root_x - origin.first,
+                    root_y - origin.second, buttons,
+                    xkb.base_mods, xkb.latched_mods, xkb.locked_mods,
+                    xkb.mods, static_cast<std::uint8_t>(xkb.base_group),
+                    static_cast<std::uint8_t>(xkb.latched_group),
+                    xkb.locked_group, xkb.group, flags});
+        };
+        if (grab != nullptr) {
+            bool normally_delivered = false;
+            if (grab->owner_events) {
+                for (const auto &selection : xi2_selections_) {
+                    if (selection.owner != grab->owner ||
+                        !selected_on_path(selection) ||
+                        closer_selection(selection)) {
+                        continue;
+                    }
+                    append_normal(selection.owner, selection.window);
+                    normally_delivered = true;
+                }
+            }
+            if (grab->xi2 && !normally_delivered &&
+                (grab->xi2_event_mask & (1U << type)) != 0) {
+                append_normal(grab->owner, grab->window);
+            }
+            return true;
+        }
+        for (const auto &selection : xi2_selections_) {
+            if (!selected_on_path(selection) ||
+                closer_selection(selection)) {
+                continue;
+            }
+            append_normal(selection.owner, selection.window);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        events.resize(initial_size);
+        return false;
+    }
+    return true;
+}
+
 EventDelivery
 ServerState::repeat_key(std::uint8_t detail)
 {
@@ -4575,6 +4949,16 @@ ServerState::repeat_key(std::uint8_t detail)
                 events.end());
         }
         delivered = delivered || routed == EventDelivery::delivered;
+        const std::size_t xi2_start = events.size();
+        if (!append_xi2_input_events(
+                repeated.first, detail, detail, source,
+                input_.pointer_x, input_.pointer_y, repeated.second,
+                xkb_state(), repeated.first == 2 ? (1U << 16) : 0,
+                grab,
+                events)) {
+            return EventDelivery::queue_full;
+        }
+        delivered = delivered || events.size() != xi2_start;
     }
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
@@ -4809,7 +5193,8 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
                 passive.owner, passive.window, passive.confine_to,
                 current_time_, passive.event_mask, passive.pointer_mode,
                 passive.keyboard_mode, passive.owner_events, true,
-                grab_detail, false, passive.cursor};
+                grab_detail, false, passive.cursor,
+                passive.xi2, passive.xi2_event_mask};
             grab = &*activated;
             break;
         }
@@ -4950,13 +5335,20 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
             0, 0, events)) {
         return EventDelivery::queue_full;
     }
+    const std::size_t xi2_start = events.size();
+    if (!append_xi2_input_events(
+            type, event.detail, detail, source, event_x, event_y,
+            state_before, xkb_before, 0, grab, events)) {
+        return EventDelivery::queue_full;
+    }
+    const bool xi2_delivered = events.size() != xi2_start;
     if (!queue_events_atomically(events))
         return EventDelivery::queue_full;
     const EventDelivery delivered =
         crossing == EventDelivery::delivered ||
         grab_crossing == EventDelivery::delivered ||
         grab_focus == EventDelivery::delivered ||
-        routed == EventDelivery::delivered
+        routed == EventDelivery::delivered || xi2_delivered
         ? EventDelivery::delivered
         : EventDelivery::no_recipient;
 
@@ -5110,6 +5502,13 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
         passive_grabs_.end());
     const std::uint32_t parent_id = found->second.parent;
     clear_selections_for_window(id);
+    xi2_selections_.erase(
+        std::remove_if(
+            xi2_selections_.begin(), xi2_selections_.end(),
+            [id](const Xi2EventSelection &selection) {
+                return selection.window == id;
+            }),
+        xi2_selections_.end());
     xfixes_selection_inputs_.erase(
         std::remove_if(
             xfixes_selection_inputs_.begin(), xfixes_selection_inputs_.end(),
@@ -5745,6 +6144,13 @@ ServerState::disconnect_client(std::uint32_t owner)
             }),
         xkb_selections_.end());
     xkb_client_flags_.erase(owner);
+    xi2_selections_.erase(
+        std::remove_if(
+            xi2_selections_.begin(), xi2_selections_.end(),
+            [owner](const Xi2EventSelection &selection) {
+                return selection.owner == owner;
+            }),
+        xi2_selections_.end());
     cursor_hide_counts_.erase(owner);
     sync_counter_waits_.erase(owner);
     sync_fence_waits_.erase(owner);

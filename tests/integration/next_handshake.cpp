@@ -293,7 +293,7 @@ read_variable_reply(int descriptor, bool little,
 std::vector<std::uint8_t>
 extension_list_payload()
 {
-    constexpr std::array<std::string_view, 13> extensions{{
+    constexpr std::array<std::string_view, 14> extensions{{
         "BIG-REQUESTS",
         "XC-MISC",
         "Generic Event Extension",
@@ -307,6 +307,7 @@ extension_list_payload()
         "Composite",
         "Present",
         "XKEYBOARD",
+        "XInputExtension",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -324,7 +325,7 @@ check_extension_list(const std::vector<std::uint8_t> &reply, bool little,
 {
     const auto expected = extension_list_payload();
     return reply.size() == 32 + expected.size() && reply[0] == 1 &&
-        reply[1] == 13 && get16(reply, 2, little) == sequence &&
+        reply[1] == 14 && get16(reply, 2, little) == sequence &&
         get32(reply, 4, little) == expected.size() / 4 &&
         std::equal(expected.begin(), expected.end(), reply.begin() + 32);
 }
@@ -3877,6 +3878,155 @@ check_present(int descriptor, bool little, std::uint32_t resource_base)
 }
 
 bool
+check_xinput(int descriptor, bool little)
+{
+    constexpr std::uint8_t opcode = 141;
+    constexpr std::uint8_t first_error = 144;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+    if (!query_extension(descriptor, little, "XInputExtension", 1,
+                         opcode, reply, 0, first_error)) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = opcode;
+    request[1] = 48; // QueryDevice requires QueryVersion first
+    put16(request, 2, 2, little);
+    put16(request, 4, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 1 ||
+        get16(reply, 2, little) != 2 ||
+        get16(reply, 8, little) != 48 || reply[10] != opcode) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = opcode;
+    request[1] = 47; // QueryVersion 2.4
+    put16(request, 2, 2, little);
+    put16(request, 4, 2, little);
+    put16(request, 6, 4, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 3 ||
+        get16(reply, 8, little) != 2 ||
+        get16(reply, 10, little) != 4) {
+        return false;
+    }
+
+    request.assign(8, 0);
+    request[0] = opcode;
+    request[1] = 48; // QueryDevice(AllMasterDevices)
+    put16(request, 2, 2, little);
+    put16(request, 4, 1, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 4 ||
+        get16(reply, 8, little) != 2 || reply.size() < 44 ||
+        get16(reply, 32, little) != 2 ||
+        get16(reply, 34, little) != 1 ||
+        get16(reply, 36, little) != 3 ||
+        get16(reply, 38, little) != 3 || reply[42] != 1) {
+        return false;
+    }
+
+    constexpr std::uint32_t selection =
+        (1U << 6) | (1U << 17); // Motion | RawMotion
+    request.assign(20, 0);
+    request[0] = opcode;
+    request[1] = 46; // SelectEvents
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1, little);
+    put16(request, 12, 1, little); // AllMasterDevices
+    put16(request, 14, 1, little);
+    put32(request, 16, selection, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(8, 0);
+    request[0] = opcode;
+    request[1] = 60; // GetSelectedEvents
+    put16(request, 2, 2, little);
+    put32(request, 4, root_window, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 6 ||
+        get16(reply, 8, little) != 1 || reply.size() != 40 ||
+        get16(reply, 32, little) != 1 ||
+        get16(reply, 34, little) != 1 ||
+        get32(reply, 36, little) != selection) {
+        return false;
+    }
+
+    request.assign(36, 0);
+    request[0] = opcode;
+    request[1] = 41; // WarpPointer through shared input state
+    put16(request, 2, 9, little);
+    put32(request, 8, root_window, little);
+    put32(request, 24, 15U << 16, little);
+    put32(request, 28, 17U << 16, little);
+    put16(request, 32, 2, little);
+    if (!write_all(descriptor, request) ||
+        !read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 68 || reply[0] != 35 || reply[1] != opcode ||
+        get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != 9 ||
+        get16(reply, 8, little) != 17 ||
+        get16(reply, 10, little) != 2 ||
+        get16(reply, 20, little) != 2 ||
+        get16(reply, 22, little) != 1 ||
+        get32(reply, 32, little) != 3) {
+        return false;
+    }
+    if (!read_variable_reply(descriptor, little, reply) ||
+        reply.size() != 104 || reply[0] != 35 || reply[1] != opcode ||
+        get16(reply, 2, little) != 7 ||
+        get32(reply, 4, little) != 18 ||
+        get16(reply, 8, little) != 6 ||
+        get16(reply, 10, little) != 2 ||
+        get32(reply, 20, little) != root_window ||
+        get32(reply, 32, little) != (15U << 16) ||
+        get32(reply, 36, little) != (17U << 16) ||
+        get16(reply, 52, little) != 2 ||
+        get32(reply, 84, little) != 3) {
+        return false;
+    }
+
+    request.assign(20, 0);
+    request[0] = opcode;
+    request[1] = 46; // touch is outside the fixed hardware profile
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    put32(request, 16, 1U << 18, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 ||
+        get16(reply, 2, little) != 8 ||
+        get16(reply, 8, little) != 46 || reply[10] != opcode) {
+        return false;
+    }
+
+    request.assign(20, 0);
+    request[0] = opcode;
+    request[1] = 46; // remove selection
+    put16(request, 2, 5, little);
+    put32(request, 4, root_window, little);
+    put16(request, 8, 1, little);
+    put16(request, 12, 1, little);
+    put16(request, 14, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+    request.assign(4, 0);
+    request[0] = 43; // synchronize no-reply cleanup
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 10;
+}
+
+bool
 check_xkb(int descriptor, bool little)
 {
     constexpr std::uint8_t xkb_opcode = 140;
@@ -4121,6 +4271,22 @@ run_present_case(const char *server, bool little)
 }
 
 bool
+run_xinput_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_xinput(child.socket, little);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_xkb_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -4353,6 +4519,11 @@ main(int argc, char **argv)
     if (!run_xkb_case(argv[1], native) ||
         !run_xkb_case(argv[1], !native)) {
         std::cerr << "XKB extension case failed\n";
+        return 1;
+    }
+    if (!run_xinput_case(argv[1], native) ||
+        !run_xinput_case(argv[1], !native)) {
+        std::cerr << "XI2 extension case failed\n";
         return 1;
     }
     if (!run_xtest_case(argv[1], native) ||

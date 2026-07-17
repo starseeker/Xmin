@@ -189,6 +189,7 @@ private:
     Result<void> handle_composite(const RequestContext &context);
     Result<void> handle_present(const RequestContext &context);
     Result<void> handle_xkb(const RequestContext &context);
+    Result<void> handle_xinput(const RequestContext &context);
     Result<void> finish_draw(const RequestContext &context,
                              std::uint32_t drawable);
     Result<void> update_shape(
@@ -224,6 +225,9 @@ private:
     bool present_version_negotiated_ = false;
     std::uint16_t present_minor_version_ = 0;
     bool xkb_version_negotiated_ = false;
+    bool xi2_version_negotiated_ = false;
+    std::uint16_t xi2_minor_version_ = 0;
+    std::uint16_t xi2_client_pointer_ = xi2_pointer_device_id;
     std::uint32_t xfixes_disconnect_mode_ = 0;
     bool resume_sync_input_ = false;
     bool prepared_ = false;

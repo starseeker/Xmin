@@ -17,6 +17,8 @@ The generated header is a normal committed C++17 input; Python is not needed by
 configure or build.
 Extension policy entries may set an extension-wide `next_status` and may list
 `next_partial_opcodes`; explicit partial request slices override the extension default.
+Compatibility subsets may use `next_compatibility_status` when their migration state
+differs from the extension's required request set.
 
 `capture-next-core-keymap.c` converts the legacy oracle's core view of the pinned
 `xmin-us.xkb` map and input defaults into the committed C++17 keymap header.  It is

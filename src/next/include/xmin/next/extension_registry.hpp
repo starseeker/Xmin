@@ -21,6 +21,7 @@ enum class ExtensionKind : std::uint8_t {
     composite,
     present,
     xkb,
+    xinput,
 };
 
 struct ExtensionInfo {
@@ -60,8 +61,10 @@ inline constexpr ExtensionInfo present_extension{
     "Present", 139, 0, 0, 1, 4, ExtensionKind::present};
 inline constexpr ExtensionInfo xkb_extension{
     "XKEYBOARD", 140, 72, 143, 1, 0, ExtensionKind::xkb};
+inline constexpr ExtensionInfo xinput_extension{
+    "XInputExtension", 141, 0, 144, 2, 4, ExtensionKind::xinput};
 
-inline constexpr std::array<ExtensionInfo, 13> extension_registry{{
+inline constexpr std::array<ExtensionInfo, 14> extension_registry{{
     big_requests_extension,
     xc_misc_extension,
     generic_event_extension,
@@ -75,6 +78,7 @@ inline constexpr std::array<ExtensionInfo, 13> extension_registry{{
     composite_extension,
     present_extension,
     xkb_extension,
+    xinput_extension,
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

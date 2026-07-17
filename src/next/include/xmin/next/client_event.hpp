@@ -211,6 +211,80 @@ struct XkbControlsNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct Xi2DeviceEvent {
+    std::uint16_t event_type = 0;
+    std::uint16_t device = 0;
+    std::uint16_t source = 0;
+    std::uint32_t time = 0;
+    std::uint32_t detail = 0;
+    std::uint32_t root = 0;
+    std::uint32_t event = 0;
+    std::uint32_t child = 0;
+    std::int32_t root_x = 0;
+    std::int32_t root_y = 0;
+    std::int32_t event_x = 0;
+    std::int32_t event_y = 0;
+    std::uint32_t buttons = 0;
+    std::uint8_t base_mods = 0;
+    std::uint8_t latched_mods = 0;
+    std::uint8_t locked_mods = 0;
+    std::uint8_t effective_mods = 0;
+    std::uint8_t base_group = 0;
+    std::uint8_t latched_group = 0;
+    std::uint8_t locked_group = 0;
+    std::uint8_t effective_group = 0;
+    std::uint32_t flags = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct Xi2RawEvent {
+    std::uint16_t event_type = 0;
+    std::uint16_t device = 0;
+    std::uint16_t source = 0;
+    std::uint32_t time = 0;
+    std::uint32_t detail = 0;
+    std::int32_t root_x = 0;
+    std::int32_t root_y = 0;
+    std::uint32_t flags = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct Xi2PropertyEvent {
+    std::uint16_t device = 0;
+    std::uint32_t time = 0;
+    std::uint32_t property = 0;
+    std::uint8_t what = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct Xi2CrossingEvent {
+    std::uint16_t event_type = 0;
+    std::uint16_t device = 0;
+    std::uint16_t source = 0;
+    std::uint32_t time = 0;
+    std::uint8_t mode = 0;
+    std::uint8_t detail = 0;
+    std::uint32_t root = 0;
+    std::uint32_t event = 0;
+    std::uint32_t child = 0;
+    std::int32_t root_x = 0;
+    std::int32_t root_y = 0;
+    std::int32_t event_x = 0;
+    std::int32_t event_y = 0;
+    std::uint32_t buttons = 0;
+    std::uint8_t base_mods = 0;
+    std::uint8_t latched_mods = 0;
+    std::uint8_t locked_mods = 0;
+    std::uint8_t effective_mods = 0;
+    std::uint8_t base_group = 0;
+    std::uint8_t latched_group = 0;
+    std::uint8_t locked_group = 0;
+    std::uint8_t effective_group = 0;
+    bool same_screen = true;
+    bool focus = false;
+    std::uint16_t sequence = 0;
+};
+
 struct CoreInputEvent {
     std::uint8_t type = 0;
     std::uint8_t detail = 0;
@@ -260,7 +334,8 @@ using ClientEvent = std::variant<
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,
     PresentConfigureNotifyEvent, PresentCompleteNotifyEvent,
     PresentIdleNotifyEvent, XkbMapNotifyEvent, XkbStateNotifyEvent,
-    XkbControlsNotifyEvent,
+    XkbControlsNotifyEvent, Xi2DeviceEvent, Xi2RawEvent, Xi2PropertyEvent,
+    Xi2CrossingEvent,
     CoreInputEvent,
     CrossingEvent, FocusEvent>;
 

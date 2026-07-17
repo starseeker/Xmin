@@ -688,6 +688,140 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *input = std::get_if<Xi2DeviceEvent>(&event)) {
+        const bool pointer = input->device == xi2_pointer_device_id;
+        const bool valuators = pointer && input->event_type == 6;
+        const std::uint16_t buttons_len = 1;
+        const std::uint16_t valuators_len = valuators ? 1 : 0;
+        const std::uint32_t extra_words = valuators ? 18 : 13;
+        const auto fixed = [](std::int32_t value) {
+            const auto bounded = std::clamp<std::int32_t>(
+                value, std::numeric_limits<std::int16_t>::min(),
+                std::numeric_limits<std::int16_t>::max());
+            return static_cast<std::uint32_t>(bounded) << 16;
+        };
+        const auto long_fixed = [](std::int32_t value) {
+            return static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(value) * (std::int64_t{1} << 32));
+        };
+        writer.u8(35); // GenericEvent
+        writer.u8(xinput_extension.major_opcode);
+        writer.u16(input->sequence);
+        writer.u32(extra_words);
+        writer.u16(input->event_type);
+        writer.u16(input->device);
+        writer.u32(input->time);
+        writer.u32(input->detail);
+        writer.u32(input->root);
+        writer.u32(input->event);
+        writer.u32(input->child);
+        writer.u32(fixed(input->root_x));
+        writer.u32(fixed(input->root_y));
+        writer.u32(fixed(input->event_x));
+        writer.u32(fixed(input->event_y));
+        writer.u16(buttons_len);
+        writer.u16(valuators_len);
+        writer.u16(input->source);
+        writer.pad(2);
+        writer.u32(input->flags);
+        writer.u32(input->base_mods);
+        writer.u32(input->latched_mods);
+        writer.u32(input->locked_mods);
+        writer.u32(input->effective_mods);
+        writer.u8(input->base_group);
+        writer.u8(input->latched_group);
+        writer.u8(input->locked_group);
+        writer.u8(input->effective_group);
+        writer.u32(input->buttons);
+        if (valuators) {
+            writer.u32(3); // X and Y valuators
+            writer.u64(long_fixed(input->root_x));
+            writer.u64(long_fixed(input->root_y));
+        }
+        return writer.data();
+    }
+
+    if (const auto *raw = std::get_if<Xi2RawEvent>(&event)) {
+        const bool valuators = raw->event_type == 17;
+        const auto long_fixed = [](std::int32_t value) {
+            return static_cast<std::uint64_t>(
+                static_cast<std::int64_t>(value) * (std::int64_t{1} << 32));
+        };
+        writer.u8(35); // GenericEvent
+        writer.u8(xinput_extension.major_opcode);
+        writer.u16(raw->sequence);
+        writer.u32(valuators ? 9 : 0);
+        writer.u16(raw->event_type);
+        writer.u16(raw->device);
+        writer.u32(raw->time);
+        writer.u32(raw->detail);
+        writer.u16(raw->source);
+        writer.u16(valuators ? 1 : 0);
+        writer.u32(raw->flags);
+        writer.pad(4);
+        if (valuators) {
+            writer.u32(3); // X and Y valuators
+            writer.u64(long_fixed(raw->root_x));
+            writer.u64(long_fixed(raw->root_y));
+            writer.u64(long_fixed(raw->root_x));
+            writer.u64(long_fixed(raw->root_y));
+        }
+        return writer.data();
+    }
+
+    if (const auto *property = std::get_if<Xi2PropertyEvent>(&event)) {
+        writer.u8(35); // GenericEvent
+        writer.u8(xinput_extension.major_opcode);
+        writer.u16(property->sequence);
+        writer.u32(0);
+        writer.u16(12); // PropertyEvent
+        writer.u16(property->device);
+        writer.u32(property->time);
+        writer.u32(property->property);
+        writer.u8(property->what);
+        writer.pad(11);
+        return writer.data();
+    }
+
+    if (const auto *crossing = std::get_if<Xi2CrossingEvent>(&event)) {
+        const auto fixed = [](std::int32_t value) {
+            const auto bounded = std::clamp<std::int32_t>(
+                value, std::numeric_limits<std::int16_t>::min(),
+                std::numeric_limits<std::int16_t>::max());
+            return static_cast<std::uint32_t>(bounded) << 16;
+        };
+        writer.u8(35); // GenericEvent
+        writer.u8(xinput_extension.major_opcode);
+        writer.u16(crossing->sequence);
+        writer.u32(11); // 44 bytes beyond the generic event header
+        writer.u16(crossing->event_type);
+        writer.u16(crossing->device);
+        writer.u32(crossing->time);
+        writer.u16(crossing->source);
+        writer.u8(crossing->mode);
+        writer.u8(crossing->detail);
+        writer.u32(crossing->root);
+        writer.u32(crossing->event);
+        writer.u32(crossing->child);
+        writer.u32(fixed(crossing->root_x));
+        writer.u32(fixed(crossing->root_y));
+        writer.u32(fixed(crossing->event_x));
+        writer.u32(fixed(crossing->event_y));
+        writer.u8(crossing->same_screen ? 1 : 0);
+        writer.u8(crossing->focus ? 1 : 0);
+        writer.u16(1);
+        writer.u32(crossing->base_mods);
+        writer.u32(crossing->latched_mods);
+        writer.u32(crossing->locked_mods);
+        writer.u32(crossing->effective_mods);
+        writer.u8(crossing->base_group);
+        writer.u8(crossing->latched_group);
+        writer.u8(crossing->locked_group);
+        writer.u8(crossing->effective_group);
+        writer.u32(crossing->buttons);
+        return writer.data();
+    }
+
     if (const auto *input = std::get_if<CoreInputEvent>(&event)) {
         writer.u8(input->type);
         writer.u8(input->detail);
@@ -6472,6 +6606,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_present(context);
         case ExtensionKind::xkb:
             return handle_xkb(context);
+        case ExtensionKind::xinput:
+            return handle_xinput(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

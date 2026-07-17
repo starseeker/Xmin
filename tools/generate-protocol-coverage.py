@@ -139,6 +139,9 @@ def main() -> None:
         compatibility = set(extension.get("compatibility_opcodes", []))
         next_partial = set(extension.get("next_partial_opcodes", []))
         next_status = extension.get("next_status", "not_yet_implemented")
+        next_compatibility_status = extension.get(
+            "next_compatibility_status", next_status
+        )
         requests = requests_from_xml(xml_path)
         if not requests:
             raise SystemExit(f"{extension['name']} defines no requests")
@@ -151,7 +154,9 @@ def main() -> None:
             request["next_status"] = (
                 "partial_vertical_slice"
                 if request["opcode"] in next_partial
-                else next_status
+                else (next_compatibility_status
+                      if request["opcode"] in compatibility
+                      else next_status)
             )
         extensions.append({
             "name": extension["name"],

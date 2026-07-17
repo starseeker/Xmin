@@ -1010,6 +1010,187 @@ test_xkb_detectable_repeat()
 }
 
 bool
+test_xi2_state()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t property = 69;
+    xmin::next::ServerState server(100, 80);
+    if (!expect(server.register_client(owner),
+                "XI2 client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 91);
+    xmin::next::Xi2EventSelection selection;
+    selection.owner = owner;
+    selection.window = xmin::next::root_window_id;
+    selection.masks.push_back({
+        xmin::next::xi2_all_master_devices,
+        {(1U << 2) | (1U << 6) | (1U << 9) | (1U << 10) | (1U << 12) |
+         (1U << 13) | (1U << 17)}});
+    if (!expect(server.select_xi2_events(std::move(selection)) ==
+                    xmin::next::Xi2Update::updated,
+                "XI2 event selection failed") ||
+        !expect(server.inject_input(6, 0, 37, 29) ==
+                    xmin::next::EventDelivery::delivered,
+                "XI2 motion did not share core pointer state")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *raw = queued == nullptr
+        ? nullptr : std::get_if<xmin::next::Xi2RawEvent>(queued);
+    if (!expect(raw != nullptr && raw->event_type == 17 &&
+                    raw->device == xmin::next::xi2_pointer_device_id &&
+                    raw->source == xmin::next::xi2_pointer_device_id &&
+                    raw->root_x == 37 && raw->root_y == 29 &&
+                    raw->sequence == 91,
+                "XI2 RawMotion metadata is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    queued = server.next_event(owner);
+    const auto *motion = queued == nullptr
+        ? nullptr : std::get_if<xmin::next::Xi2DeviceEvent>(queued);
+    if (!expect(motion != nullptr && motion->event_type == 6 &&
+                    motion->device == xmin::next::xi2_pointer_device_id &&
+                    motion->source == xmin::next::xi2_pointer_device_id &&
+                    motion->root == xmin::next::root_window_id &&
+                    motion->event == xmin::next::root_window_id &&
+                    motion->root_x == 37 && motion->root_y == 29 &&
+                    server.input().pointer_x == 37 &&
+                    server.input().pointer_y == 29,
+                "XI2 Motion is not a view of core pointer state")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    if (!expect(server.set_input_focus(
+                    xmin::next::FocusKind::window,
+                    xmin::next::root_window_id, 0, 0) ==
+                    xmin::next::FocusUpdate::updated,
+                "XI2 keyboard focus setup failed")) {
+        return false;
+    }
+    bool saw_focus_out = false;
+    bool saw_focus_in = false;
+    while (server.has_pending_event(owner)) {
+        const auto *focus = std::get_if<xmin::next::Xi2CrossingEvent>(
+            server.next_event(owner));
+        if (!expect(focus != nullptr &&
+                        focus->device ==
+                            xmin::next::xi2_keyboard_device_id &&
+                        focus->event == xmin::next::root_window_id,
+                    "XI2 focus metadata is malformed")) {
+            return false;
+        }
+        saw_focus_out = saw_focus_out || focus->event_type == 10;
+        saw_focus_in = saw_focus_in || focus->event_type == 9;
+        server.pop_event(owner);
+    }
+    if (!expect(saw_focus_out && saw_focus_in,
+                "XI2 focus transition omitted an endpoint")) {
+        return false;
+    }
+    if (!expect(server.inject_input(2, 38, 37, 29) ==
+                    xmin::next::EventDelivery::delivered,
+                "XI2 key press was not delivered")) {
+        return false;
+    }
+    raw = std::get_if<xmin::next::Xi2RawEvent>(server.next_event(owner));
+    if (!expect(raw != nullptr && raw->event_type == 13 &&
+                    raw->device == xmin::next::xi2_keyboard_device_id,
+                "XI2 RawKeyPress used the wrong device")) {
+        return false;
+    }
+    server.pop_event(owner);
+    const auto *key = std::get_if<xmin::next::Xi2DeviceEvent>(
+        server.next_event(owner));
+    if (!expect(key != nullptr && key->event_type == 2 &&
+                    key->detail == 38 &&
+                    key->device == xmin::next::xi2_keyboard_device_id,
+                "XI2 KeyPress did not share keyboard routing")) {
+        return false;
+    }
+    server.pop_event(owner);
+    static_cast<void>(server.inject_input(3, 38, 37, 29));
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+
+    xmin::next::PropertyValue value;
+    value.type = 6;
+    value.format = 32;
+    value.data = {1, 0, 0, 0};
+    if (!expect(server.set_xi2_property(
+                    xmin::next::xi2_keyboard_device_id, property, value) ==
+                    xmin::next::Xi2Update::updated,
+                "XI2 property creation failed")) {
+        return false;
+    }
+    const auto *property_event =
+        std::get_if<xmin::next::Xi2PropertyEvent>(server.next_event(owner));
+    if (!expect(property_event != nullptr &&
+                    property_event->device ==
+                        xmin::next::xi2_keyboard_device_id &&
+                    property_event->property == property &&
+                    property_event->what == 1,
+                "XI2 PropertyEvent is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    server.window(xmin::next::root_window_id)->event_masks.emplace(owner, 1);
+    xmin::next::ClientMessageEvent message;
+    message.window = xmin::next::root_window_id;
+    for (std::size_t count = 0;
+         count < xmin::next::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        xmin::next::root_window_id, 1, false, message) ==
+                        xmin::next::EventDelivery::delivered,
+                    "XI2 queue-pressure setup failed")) {
+            return false;
+        }
+    }
+    value.data = {2, 0, 0, 0};
+    if (!expect(server.set_xi2_property(
+                    xmin::next::xi2_keyboard_device_id, property, value) ==
+                    xmin::next::Xi2Update::queue_full &&
+                    server.xi2_properties(
+                        xmin::next::xi2_keyboard_device_id).at(property)
+                        .data.front() == 1,
+                "failed XI2 event delivery committed property state")) {
+        return false;
+    }
+    if (!expect(server.delete_xi2_property(
+                    xmin::next::xi2_keyboard_device_id, property) ==
+                    xmin::next::Xi2Update::queue_full &&
+                    server.xi2_properties(
+                        xmin::next::xi2_keyboard_device_id).count(property) == 1,
+                "failed XI2 delete event removed property state")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+    if (!expect(server.delete_xi2_property(
+                    xmin::next::xi2_keyboard_device_id, property) ==
+                    xmin::next::Xi2Update::updated &&
+                    server.xi2_properties(
+                        xmin::next::xi2_keyboard_device_id).count(property) == 0,
+                "XI2 property deletion failed")) {
+        return false;
+    }
+    property_event = std::get_if<xmin::next::Xi2PropertyEvent>(
+        server.next_event(owner));
+    if (!expect(property_event != nullptr && property_event->what == 0,
+                "XI2 property deletion event is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+    server.disconnect_client(owner);
+    return expect(server.xi2_selection(
+                      owner, xmin::next::root_window_id) == nullptr,
+                  "disconnect retained an XI2 event selection");
+}
+
+bool
 test_crossing_events()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -4478,6 +4659,7 @@ main()
             test_shared_server_state() && test_passive_grabs() &&
             test_input_routing() && test_key_repeat_timers() &&
             test_xkb_state() && test_xkb_detectable_repeat() &&
+            test_xi2_state() &&
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
             test_focus_events() &&
