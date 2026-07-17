@@ -19,6 +19,7 @@
 #include <optional>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -314,6 +315,13 @@ struct PixmapRecord {
     std::shared_ptr<Surface> surface;
 };
 
+struct DbeBufferRecord {
+    std::uint32_t id = 0;
+    std::uint32_t window = 0;
+    std::uint8_t swap_action = 0;
+    std::shared_ptr<Surface> surface;
+};
+
 struct FontRecord {
     std::uint32_t id = 0;
     const EmbeddedFont *font = nullptr;
@@ -335,8 +343,14 @@ struct GraphicsContextRecord {
     std::uint8_t fill_style = 0;
     std::uint8_t fill_rule = 0;
     std::uint8_t arc_mode = 1;
-    std::array<std::uint8_t, 256> dashes = [] {
-        std::array<std::uint8_t, 256> result{};
+    std::shared_ptr<Surface> tile;
+    std::shared_ptr<Surface> stipple;
+    std::int32_t tile_x_origin = 0;
+    std::int32_t tile_y_origin = 0;
+    std::uint8_t subwindow_mode = 0;
+    bool graphics_exposures = true;
+    std::array<std::uint8_t, 512> dashes = [] {
+        std::array<std::uint8_t, 512> result{};
         result[0] = 4;
         result[1] = 4;
         return result;
@@ -357,6 +371,14 @@ struct SelectionRecord {
     std::uint32_t window = 0;
     std::uint32_t client = 0;
     std::uint32_t changed_at = 0;
+};
+
+struct ScreenSaverState {
+    std::int16_t timeout = 0;
+    std::int16_t interval = 0;
+    std::uint8_t prefer_blanking = 2;
+    std::uint8_t allow_exposures = 2;
+    bool active = false;
 };
 
 struct XFixesSelectionSubscription {
@@ -759,10 +781,19 @@ public:
         std::uint16_t border_width,
         std::optional<std::uint32_t> sibling,
         std::optional<std::uint8_t> stack_mode);
+    [[nodiscard]] bool circulate_window(std::uint32_t parent,
+                                        bool raise_lowest);
     [[nodiscard]] PixmapRecord *pixmap(std::uint32_t id);
     [[nodiscard]] const PixmapRecord *pixmap(std::uint32_t id) const;
     [[nodiscard]] bool add_pixmap(PixmapRecord pixmap, std::uint32_t owner);
     [[nodiscard]] bool erase_pixmap(std::uint32_t id);
+    [[nodiscard]] DbeBufferRecord *dbe_buffer(std::uint32_t id);
+    [[nodiscard]] const DbeBufferRecord *dbe_buffer(std::uint32_t id) const;
+    [[nodiscard]] bool add_dbe_buffer(DbeBufferRecord buffer,
+                                      std::uint32_t owner);
+    [[nodiscard]] bool erase_dbe_buffer(std::uint32_t id);
+    [[nodiscard]] bool swap_dbe_buffer(std::uint32_t window,
+                                       std::uint8_t action);
     [[nodiscard]] DamageRecord *damage(std::uint32_t id);
     [[nodiscard]] const DamageRecord *damage(std::uint32_t id) const;
     [[nodiscard]] DamageUpdate add_damage(DamageRecord damage,
@@ -839,10 +870,16 @@ public:
     [[nodiscard]] SelectionUpdate set_selection_owner(
         AtomId selection, std::uint32_t window, std::uint32_t client,
         std::uint32_t time);
+    [[nodiscard]] EventDelivery convert_selection(
+        std::uint32_t client, std::uint32_t requestor, AtomId selection,
+        AtomId target, AtomId property, std::uint32_t time);
     [[nodiscard]] EventDelivery deliver_client_message(
         std::uint32_t destination, std::uint32_t event_mask, bool propagate,
         const ClientMessageEvent &event);
     [[nodiscard]] bool register_client(std::uint32_t client);
+    [[nodiscard]] bool request_client_termination(std::uint32_t resource);
+    [[nodiscard]] bool client_termination_requested(
+        std::uint32_t client) const noexcept;
     void note_client_sequence(std::uint32_t client,
                               std::uint16_t sequence) noexcept;
     [[nodiscard]] bool broadcast_mapping_notify(
@@ -1001,6 +1038,22 @@ public:
     {
         return server_grab_owner_;
     }
+    [[nodiscard]] const ScreenSaverState &screen_saver() const noexcept
+    {
+        return screen_saver_;
+    }
+    void set_screen_saver(ScreenSaverState state) noexcept
+    {
+        screen_saver_ = state;
+    }
+    [[nodiscard]] bool access_control_enabled() const noexcept
+    {
+        return access_control_enabled_;
+    }
+    void set_access_control(bool enabled) noexcept
+    {
+        access_control_enabled_ = enabled;
+    }
     [[nodiscard]] InputState &input() noexcept { return input_; }
     [[nodiscard]] const InputState &input() const noexcept { return input_; }
     [[nodiscard]] const std::vector<PassiveGrab> &passive_grabs() const noexcept
@@ -1051,6 +1104,7 @@ private:
     std::unordered_map<std::uint32_t, GraphicsContextRecord>
         graphics_contexts_;
     std::unordered_map<std::uint32_t, FontRecord> fonts_;
+    std::unordered_map<std::uint32_t, DbeBufferRecord> dbe_buffers_;
     std::unordered_map<std::uint32_t, SharedMemory> shared_memory_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
@@ -1073,6 +1127,7 @@ private:
     RandrState randr_;
     std::unordered_map<AtomId, SelectionRecord> selections_;
     std::unordered_map<std::uint32_t, std::deque<ClientEvent>> event_queues_;
+    std::unordered_set<std::uint32_t> clients_to_terminate_;
     std::vector<std::pair<std::uint32_t, std::uint16_t>> clients_;
     std::uint16_t width_;
     std::uint16_t height_;
@@ -1083,6 +1138,8 @@ private:
     std::uint32_t current_time_ = 1;
     std::uint32_t installed_colormap_ = default_colormap_id;
     std::uint32_t server_grab_owner_ = 0;
+    ScreenSaverState screen_saver_;
+    bool access_control_enabled_ = true;
     Clock &clock_;
     Clock::time_point present_epoch_;
     InputState input_;

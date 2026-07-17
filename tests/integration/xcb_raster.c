@@ -312,6 +312,85 @@ cleanup:
     return result;
 }
 
+static int
+test_completed_core_raster(xcb_connection_t *connection, xcb_window_t window,
+                           xcb_gcontext_t graphics)
+{
+    static const uint8_t dashes[] = { 3, 2 };
+    const uint32_t values[] = {
+        0x0000ff00U,
+        2,
+        XCB_LINE_STYLE_ON_OFF_DASH,
+        XCB_FILL_STYLE_SOLID
+    };
+    const xcb_arc_t outline = { 2, 2, 18, 14, 0, 360 * 64 };
+    const xcb_arc_t filled = { 44, 3, 14, 14, 0, 270 * 64 };
+    const xcb_point_t polygon[] = { { 25, 3 }, { 40, 16 }, { 22, 18 } };
+    xcb_generic_error_t *error = NULL;
+    xcb_get_image_reply_t *image = NULL;
+    uint32_t green = 0;
+    uint32_t black = 0;
+    int result = 0;
+    int i;
+
+    if (!checked(connection,
+                 xcb_clear_area_checked(connection, 0, window, 0, 0, 64, 48),
+                 "ClearArea before completed raster") ||
+        !checked(connection,
+                 xcb_change_gc_checked(
+                     connection, graphics,
+                     XCB_GC_FOREGROUND | XCB_GC_LINE_WIDTH |
+                         XCB_GC_LINE_STYLE | XCB_GC_FILL_STYLE,
+                     values),
+                 "ChangeGC completed raster fields") ||
+        !checked(connection,
+                 xcb_set_dashes_checked(connection, graphics, 1,
+                                        sizeof(dashes), dashes),
+                 "SetDashes") ||
+        !checked(connection,
+                 xcb_poly_arc_checked(connection, window, graphics, 1,
+                                      &outline),
+                 "PolyArc") ||
+        !checked(connection,
+                 xcb_fill_poly_checked(
+                     connection, window, graphics, XCB_POLY_SHAPE_COMPLEX,
+                     XCB_COORD_MODE_ORIGIN,
+                     sizeof(polygon) / sizeof(polygon[0]), polygon),
+                 "FillPoly") ||
+        !checked(connection,
+                 xcb_poly_fill_arc_checked(connection, window, graphics, 1,
+                                           &filled),
+                 "PolyFillArc"))
+        goto cleanup;
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, window,
+                      0, 0, 64, 24, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 64 * 24 * 4)
+        goto cleanup;
+    for (i = 0; i < 64 * 24; ++i) {
+        uint32_t pixel;
+
+        memcpy(&pixel, xcb_get_image_data(image) + (size_t) i * 4,
+               sizeof(pixel));
+        pixel &= 0x00ffffffU;
+        if (pixel == 0x0000ff00U)
+            ++green;
+        else if (pixel == 0)
+            ++black;
+    }
+    result = green > 100 && black > 100;
+
+cleanup:
+    if (!result)
+        fprintf(stderr, "completed core raster acceptance failed\n");
+    free(error);
+    free(image);
+    return result;
+}
+
 int
 main(void)
 {
@@ -408,7 +487,8 @@ main(void)
         goto cleanup;
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x0000ff00U ||
-        !test_builtin_fonts(connection, window, graphics))
+        !test_builtin_fonts(connection, window, graphics) ||
+        !test_completed_core_raster(connection, window, graphics))
         goto cleanup;
     result = 0;
 

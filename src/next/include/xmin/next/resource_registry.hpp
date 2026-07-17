@@ -25,6 +25,7 @@ enum class ResourceKind {
     present_event,
     shared_memory,
     font,
+    dbe_buffer,
 };
 
 struct ResourceRecord {

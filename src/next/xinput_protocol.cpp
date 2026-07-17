@@ -191,7 +191,7 @@ Connection::handle_xinput(const RequestContext &context)
         return error(bad_alloc);
     };
     if (context.data < 40)
-        return error(bad_request);
+        return handle_xinput_legacy(context);
     if (context.data != 47 && !xi2_version_negotiated_)
         return error(bad_request);
 

@@ -336,6 +336,10 @@ Server::run()
             else if (clients[index].connection->finished()) {
                 remove[index] = true;
             }
+            if (state_.client_termination_requested(
+                    clients[index].connection->client_id())) {
+                remove[index] = true;
+            }
         }
 
         for (std::size_t index = clients.size(); index > 0; --index) {

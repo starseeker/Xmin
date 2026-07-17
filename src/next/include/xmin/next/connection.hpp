@@ -141,6 +141,10 @@ private:
     Result<void> handle_poly_segments(const RequestContext &context);
     Result<void> handle_poly_rectangles(const RequestContext &context);
     Result<void> handle_fill_rectangles(const RequestContext &context);
+    Result<void> handle_set_dashes(const RequestContext &context);
+    Result<void> handle_poly_arcs(const RequestContext &context);
+    Result<void> handle_fill_polygon(const RequestContext &context);
+    Result<void> handle_fill_arcs(const RequestContext &context);
     Result<void> handle_put_image(const RequestContext &context);
     Result<void> handle_get_image(const RequestContext &context);
     Result<void> handle_create_cursor(const RequestContext &context);
@@ -180,6 +184,16 @@ private:
     Result<void> handle_get_modifier_mapping(const RequestContext &context);
     Result<void> handle_get_input_focus(const RequestContext &context);
     Result<void> handle_query_keymap(const RequestContext &context);
+    Result<void> handle_circulate_window(const RequestContext &context);
+    Result<void> handle_convert_selection(const RequestContext &context);
+    Result<void> handle_set_screen_saver(const RequestContext &context);
+    Result<void> handle_get_screen_saver(const RequestContext &context);
+    Result<void> handle_change_hosts(const RequestContext &context);
+    Result<void> handle_list_hosts(const RequestContext &context);
+    Result<void> handle_set_access_control(const RequestContext &context);
+    Result<void> handle_set_close_down_mode(const RequestContext &context);
+    Result<void> handle_kill_client(const RequestContext &context);
+    Result<void> handle_force_screen_saver(const RequestContext &context);
     Result<void> handle_open_font(const RequestContext &context);
     Result<void> handle_close_font(const RequestContext &context);
     Result<void> handle_query_font(const RequestContext &context);
@@ -206,7 +220,11 @@ private:
     Result<void> handle_present(const RequestContext &context);
     Result<void> handle_xkb(const RequestContext &context);
     Result<void> handle_xinput(const RequestContext &context);
+    Result<void> handle_xinput_legacy(const RequestContext &context);
     Result<void> handle_shm(const RequestContext &context);
+    Result<void> handle_xinerama(const RequestContext &context);
+    Result<void> handle_screensaver(const RequestContext &context);
+    Result<void> handle_dbe(const RequestContext &context);
     Result<void> draw_zpixmap(
         const RequestContext &context, std::uint32_t drawable,
         std::uint32_t graphics, std::uint16_t total_width,
@@ -264,6 +282,8 @@ private:
     bool xi2_version_negotiated_ = false;
     std::uint16_t xi2_minor_version_ = 0;
     std::uint16_t xi2_client_pointer_ = xi2_pointer_device_id;
+    std::uint32_t screensaver_drawable_ = 0;
+    std::uint32_t screensaver_event_mask_ = 0;
     std::uint32_t xfixes_disconnect_mode_ = 0;
     bool resume_sync_input_ = false;
     bool prepared_ = false;

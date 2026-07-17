@@ -25,9 +25,9 @@ constexpr std::uint32_t pointer_root = 1;
 constexpr std::uint32_t root_window = 0x00000100;
 constexpr std::uint8_t extension_count =
 #if XMIN_HAVE_MITSHM
-    15;
+    18;
 #else
-    14;
+    17;
 #endif
 
 struct Child {
@@ -303,9 +303,9 @@ extension_list_payload()
 {
     constexpr std::array<std::string_view,
 #if XMIN_HAVE_MITSHM
-                         15
+                         18
 #else
-                         14
+                         17
 #endif
                          > extensions{{
         "BIG-REQUESTS",
@@ -325,6 +325,9 @@ extension_list_payload()
 #if XMIN_HAVE_MITSHM
         "MIT-SHM",
 #endif
+        "XINERAMA",
+        "MIT-SCREEN-SAVER",
+        "DOUBLE-BUFFER",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {

@@ -3,7 +3,10 @@ add_library(xmin_next_core STATIC
   clock.cpp
   color.cpp
   connection.cpp
+  core_protocol.cpp
+  core_raster.cpp
   composite_protocol.cpp
+  compatibility_protocol.cpp
   cursor_protocol.cpp
   damage_protocol.cpp
   display_socket.cpp
@@ -12,6 +15,7 @@ add_library(xmin_next_core STATIC
   present_protocol.cpp
   property_data.cpp
   randr_protocol.cpp
+  raster_protocol.cpp
   render.cpp
   render_protocol.cpp
   region.cpp
@@ -24,6 +28,7 @@ add_library(xmin_next_core STATIC
   xauthority.cpp
   xkb_protocol.cpp
   xinput_protocol.cpp
+  xinput_legacy_protocol.cpp
   xfixes_protocol.cpp
 )
 add_library(Xmin::next_core ALIAS xmin_next_core)

@@ -207,6 +207,26 @@ if(TARGET Xmin::run)
     )
     set_tests_properties(xmin.xcb-core PROPERTIES TIMEOUT 20)
 
+    if(TARGET Xmin::next_server)
+      add_executable(xmin_next_xcb_core integration/xcb_core.c)
+      target_compile_features(xmin_next_xcb_core PRIVATE c_std_11)
+      target_include_directories(xmin_next_xcb_core
+        PRIVATE "${PROJECT_BINARY_DIR}/generated"
+        SYSTEM PRIVATE "${XMIN_TEST_XCB_INCLUDE_DIR}"
+      )
+      target_link_libraries(xmin_next_xcb_core PRIVATE
+        "${XMIN_TEST_XCB_LIBRARY}"
+      )
+      xmin_enable_warnings(xmin_next_xcb_core)
+      add_test(NAME xmin.next-xcb-core
+        COMMAND Xmin::run
+          --server $<TARGET_FILE:xmin_next>
+          --screen 96x80x24
+          -- $<TARGET_FILE:xmin_next_xcb_core>
+      )
+      set_tests_properties(xmin.next-xcb-core PROPERTIES TIMEOUT 20)
+    endif()
+
     find_package(PkgConfig QUIET)
     if(PkgConfig_FOUND)
       pkg_check_modules(XMIN_TEST_XCB_EXTENSIONS QUIET IMPORTED_TARGET
@@ -244,6 +264,16 @@ if(TARGET Xmin::run)
             -- $<TARGET_FILE:xmin_xcb_extensions>
         )
         set_tests_properties(xmin.xcb-extensions PROPERTIES TIMEOUT 20)
+
+        if(TARGET Xmin::next_server)
+          add_test(NAME xmin.next-xcb-extensions
+            COMMAND Xmin::run
+              --server $<TARGET_FILE:xmin_next>
+              --screen 96x80x24
+              -- $<TARGET_FILE:xmin_xcb_extensions>
+          )
+          set_tests_properties(xmin.next-xcb-extensions PROPERTIES TIMEOUT 30)
+        endif()
 
         add_executable(xmin_xcb_xtest_state integration/xcb_xtest_state.c)
         target_compile_features(xmin_xcb_xtest_state PRIVATE c_std_11)

@@ -2,6 +2,7 @@
 
 #include "xmin/next/checked.hpp"
 #include "xmin/next/color.hpp"
+#include "xmin/next/core_raster.hpp"
 #include "xmin/next/extension_registry.hpp"
 #include "xmin/next/generated/core_protocol.hpp"
 #include "xmin/next/property_data.hpp"
@@ -61,10 +62,7 @@ constexpr std::uint32_t exclusive_event_masks =
     (1U << 2) | (1U << 18) | (1U << 20); // ButtonPress/redirect masks
 constexpr std::uint32_t input_only_attribute_masks =
     (1U << 5) | (1U << 9) | (1U << 11) | (1U << 12) | (1U << 14);
-constexpr std::uint32_t basic_graphics_context_mask = 0x0000000fU;
-constexpr std::uint32_t graphics_context_font = 1U << 14;
-constexpr std::uint32_t graphics_context_clip_origins =
-    (1U << 17) | (1U << 18);
+constexpr std::uint32_t all_graphics_context_values = 0x007fffffU;
 constexpr std::uint16_t pointer_grab_mask = 0x7ffcU;
 
 bool
@@ -116,6 +114,38 @@ signed_byte(std::uint8_t value) noexcept
     return widened <= std::numeric_limits<std::int8_t>::max()
         ? widened
         : static_cast<std::int16_t>(widened - 256);
+}
+
+std::optional<Region>
+bitmap_clip_region(const Surface &surface)
+{
+    std::vector<Rectangle> rectangles;
+    try {
+        for (std::uint16_t y = 0; y < surface.height(); ++y) {
+            std::uint16_t x = 0;
+            while (x < surface.width()) {
+                while (x < surface.width() && surface.pixel(x, y) == 0)
+                    ++x;
+                const std::uint16_t start = x;
+                while (x < surface.width() && surface.pixel(x, y) != 0)
+                    ++x;
+                if (x == start)
+                    continue;
+                if (rectangles.size() == maximum_shape_rectangles)
+                    return std::nullopt;
+                rectangles.push_back(
+                    Rectangle{start, y, static_cast<std::uint32_t>(x - start),
+                              1});
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return std::nullopt;
+    }
+    Region result;
+    if (!Region::canonicalize(rectangles, result))
+        return std::nullopt;
+    return result;
 }
 
 bool
@@ -456,6 +486,32 @@ Connection::encode_event(const ClientEvent &event) const
         writer.u32(clear->window);
         writer.u32(clear->selection);
         writer.pad(16);
+        return writer.data();
+    }
+
+    if (const auto *request = std::get_if<SelectionRequestEvent>(&event)) {
+        writer.u8(30); // SelectionRequest
+        writer.u8(0);
+        writer.u16(request->sequence);
+        writer.u32(request->time);
+        writer.u32(request->owner);
+        writer.u32(request->requestor);
+        writer.u32(request->selection);
+        writer.u32(request->target);
+        writer.u32(request->property);
+        return writer.data();
+    }
+
+    if (const auto *notify = std::get_if<SelectionNotifyEvent>(&event)) {
+        writer.u8(31); // SelectionNotify
+        writer.u8(0);
+        writer.u16(notify->sequence);
+        writer.u32(notify->time);
+        writer.u32(notify->requestor);
+        writer.u32(notify->selection);
+        writer.u32(notify->target);
+        writer.u32(notify->property);
+        writer.pad(4);
         return writer.data();
     }
 
@@ -3303,8 +3359,7 @@ Connection::handle_create_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!id || !drawable || !value_mask)
         return malformed("truncated CreateGC request");
-    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_font | graphics_context_clip_origins;
+    constexpr std::uint32_t supported_mask = all_graphics_context_values;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3332,7 +3387,7 @@ Connection::handle_create_graphics_context(const RequestContext &context)
     graphics.depth = depth;
     WireReader values(context.request.data() + 16,
                       context.request.size() - 16, context.order);
-    for (unsigned bit = 0; bit <= 18; ++bit) {
+    for (unsigned bit = 0; bit <= 22; ++bit) {
         if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
             continue;
         const auto value = values.u32();
@@ -3354,6 +3409,70 @@ Connection::handle_create_graphics_context(const RequestContext &context)
         case 3:
             graphics.background = *value;
             break;
+        case 4:
+            if (*value > std::numeric_limits<std::uint16_t>::max())
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.line_width = static_cast<std::uint16_t>(*value);
+            break;
+        case 5:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.line_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 6:
+            if (*value > 3)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.cap_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 7:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.join_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 8:
+            if (*value > 3)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.fill_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 9:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.fill_rule = static_cast<std::uint8_t>(*value);
+            break;
+        case 10: {
+            const auto *tile = server_.pixmap(*value);
+            if (tile == nullptr)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            if (tile->surface->depth() != depth)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, *value);
+            graphics.tile = tile->surface;
+            break;
+        }
+        case 11: {
+            const auto *stipple = server_.pixmap(*value);
+            if (stipple == nullptr)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            if (stipple->surface->depth() != 1)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, *value);
+            graphics.stipple = stipple->surface;
+            break;
+        }
+        case 12:
+            graphics.tile_x_origin = signed_dword(*value);
+            break;
+        case 13:
+            graphics.tile_y_origin = signed_dword(*value);
+            break;
         case 14: {
             const auto *font = server_.font(*value);
             if (font == nullptr)
@@ -3362,11 +3481,64 @@ Connection::handle_create_graphics_context(const RequestContext &context)
             graphics.font = font->font;
             break;
         }
+        case 15:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.subwindow_mode = static_cast<std::uint8_t>(*value);
+            break;
+        case 16:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.graphics_exposures = *value != 0;
+            break;
         case 17:
             graphics.clip_x_origin = signed_dword(*value);
             break;
         case 18:
             graphics.clip_y_origin = signed_dword(*value);
+            break;
+        case 19:
+            if (*value == 0) {
+                graphics.clip_region.reset();
+                break;
+            }
+            if (const auto *mask = server_.pixmap(*value)) {
+                if (mask->surface->depth() != 1)
+                    return send_error(context.order, bad_match,
+                                      context.opcode, context.sequence,
+                                      *value);
+                auto region = bitmap_clip_region(*mask->surface);
+                if (!region)
+                    return send_error(context.order, bad_alloc,
+                                      context.opcode, context.sequence);
+                graphics.clip_region = std::move(*region);
+            }
+            else {
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            }
+            break;
+        case 20:
+            if (*value > std::numeric_limits<std::uint16_t>::max())
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.dash_offset = static_cast<std::uint16_t>(*value);
+            break;
+        case 21:
+            if (*value == 0 || *value > 255)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.dashes[0] = static_cast<std::uint8_t>(*value);
+            graphics.dashes[1] = static_cast<std::uint8_t>(*value);
+            graphics.dash_count = 2;
+            break;
+        case 22:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            graphics.arc_mode = static_cast<std::uint8_t>(*value);
             break;
         }
     }
@@ -3390,8 +3562,7 @@ Connection::handle_change_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!id || !value_mask)
         return malformed("truncated ChangeGC request");
-    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_font | graphics_context_clip_origins;
+    constexpr std::uint32_t supported_mask = all_graphics_context_values;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3416,7 +3587,7 @@ Connection::handle_change_graphics_context(const RequestContext &context)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     }
-    for (unsigned bit = 0; bit <= 18; ++bit) {
+    for (unsigned bit = 0; bit <= 22; ++bit) {
         if ((*value_mask & (std::uint32_t{1} << bit)) == 0)
             continue;
         const auto value = reader.u32();
@@ -3438,6 +3609,70 @@ Connection::handle_change_graphics_context(const RequestContext &context)
         case 3:
             updated->background = *value;
             break;
+        case 4:
+            if (*value > std::numeric_limits<std::uint16_t>::max())
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->line_width = static_cast<std::uint16_t>(*value);
+            break;
+        case 5:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->line_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 6:
+            if (*value > 3)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->cap_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 7:
+            if (*value > 2)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->join_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 8:
+            if (*value > 3)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->fill_style = static_cast<std::uint8_t>(*value);
+            break;
+        case 9:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->fill_rule = static_cast<std::uint8_t>(*value);
+            break;
+        case 10: {
+            const auto *tile = server_.pixmap(*value);
+            if (tile == nullptr)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            if (tile->surface->depth() != updated->depth)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, *value);
+            updated->tile = tile->surface;
+            break;
+        }
+        case 11: {
+            const auto *stipple = server_.pixmap(*value);
+            if (stipple == nullptr)
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            if (stipple->surface->depth() != 1)
+                return send_error(context.order, bad_match, context.opcode,
+                                  context.sequence, *value);
+            updated->stipple = stipple->surface;
+            break;
+        }
+        case 12:
+            updated->tile_x_origin = signed_dword(*value);
+            break;
+        case 13:
+            updated->tile_y_origin = signed_dword(*value);
+            break;
         case 14: {
             const auto *font = server_.font(*value);
             if (font == nullptr)
@@ -3446,11 +3681,64 @@ Connection::handle_change_graphics_context(const RequestContext &context)
             updated->font = font->font;
             break;
         }
+        case 15:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->subwindow_mode = static_cast<std::uint8_t>(*value);
+            break;
+        case 16:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->graphics_exposures = *value != 0;
+            break;
         case 17:
             updated->clip_x_origin = signed_dword(*value);
             break;
         case 18:
             updated->clip_y_origin = signed_dword(*value);
+            break;
+        case 19:
+            if (*value == 0) {
+                updated->clip_region.reset();
+                break;
+            }
+            if (const auto *mask = server_.pixmap(*value)) {
+                if (mask->surface->depth() != 1)
+                    return send_error(context.order, bad_match,
+                                      context.opcode, context.sequence,
+                                      *value);
+                auto region = bitmap_clip_region(*mask->surface);
+                if (!region)
+                    return send_error(context.order, bad_alloc,
+                                      context.opcode, context.sequence);
+                updated->clip_region = std::move(*region);
+            }
+            else {
+                return send_error(context.order, bad_pixmap, context.opcode,
+                                  context.sequence, *value);
+            }
+            break;
+        case 20:
+            if (*value > std::numeric_limits<std::uint16_t>::max())
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->dash_offset = static_cast<std::uint16_t>(*value);
+            break;
+        case 21:
+            if (*value == 0 || *value > 255)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->dashes[0] = static_cast<std::uint8_t>(*value);
+            updated->dashes[1] = static_cast<std::uint8_t>(*value);
+            updated->dash_count = 2;
+            break;
+        case 22:
+            if (*value > 1)
+                return send_error(context.order, bad_value, context.opcode,
+                                  context.sequence, *value);
+            updated->arc_mode = static_cast<std::uint8_t>(*value);
             break;
         }
     }
@@ -3470,8 +3758,7 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
     const auto value_mask = reader.u32();
     if (!source_id || !destination_id || !value_mask)
         return malformed("truncated CopyGC request");
-    constexpr std::uint32_t supported_mask = basic_graphics_context_mask |
-        graphics_context_font | graphics_context_clip_origins | (1U << 19);
+    constexpr std::uint32_t supported_mask = all_graphics_context_values;
     if ((*value_mask & ~supported_mask) != 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, *value_mask);
@@ -3494,14 +3781,46 @@ Connection::handle_copy_graphics_context(const RequestContext &context)
             updated->foreground = source->foreground;
         if ((*value_mask & (1U << 3)) != 0)
             updated->background = source->background;
+        if ((*value_mask & (1U << 4)) != 0)
+            updated->line_width = source->line_width;
+        if ((*value_mask & (1U << 5)) != 0)
+            updated->line_style = source->line_style;
+        if ((*value_mask & (1U << 6)) != 0)
+            updated->cap_style = source->cap_style;
+        if ((*value_mask & (1U << 7)) != 0)
+            updated->join_style = source->join_style;
+        if ((*value_mask & (1U << 8)) != 0)
+            updated->fill_style = source->fill_style;
+        if ((*value_mask & (1U << 9)) != 0)
+            updated->fill_rule = source->fill_rule;
+        if ((*value_mask & (1U << 10)) != 0)
+            updated->tile = source->tile;
+        if ((*value_mask & (1U << 11)) != 0)
+            updated->stipple = source->stipple;
+        if ((*value_mask & (1U << 12)) != 0)
+            updated->tile_x_origin = source->tile_x_origin;
+        if ((*value_mask & (1U << 13)) != 0)
+            updated->tile_y_origin = source->tile_y_origin;
         if ((*value_mask & (1U << 14)) != 0)
             updated->font = source->font;
+        if ((*value_mask & (1U << 15)) != 0)
+            updated->subwindow_mode = source->subwindow_mode;
+        if ((*value_mask & (1U << 16)) != 0)
+            updated->graphics_exposures = source->graphics_exposures;
         if ((*value_mask & (1U << 17)) != 0)
             updated->clip_x_origin = source->clip_x_origin;
         if ((*value_mask & (1U << 18)) != 0)
             updated->clip_y_origin = source->clip_y_origin;
         if ((*value_mask & (1U << 19)) != 0)
             updated->clip_region = source->clip_region;
+        if ((*value_mask & (1U << 20)) != 0)
+            updated->dash_offset = source->dash_offset;
+        if ((*value_mask & (1U << 21)) != 0) {
+            updated->dashes = source->dashes;
+            updated->dash_count = source->dash_count;
+        }
+        if ((*value_mask & (1U << 22)) != 0)
+            updated->arc_mode = source->arc_mode;
     }
     catch (const std::bad_alloc &) {
         return send_error(context.order, bad_alloc, context.opcode,
@@ -3829,6 +4148,7 @@ Connection::handle_poly_lines(const RequestContext &context)
     std::int32_t previous_x = 0;
     std::int32_t previous_y = 0;
     bool first = true;
+    std::size_t dash_phase = 0;
     while (reader.remaining() != 0) {
         const auto x = reader.u16();
         const auto y = reader.u16();
@@ -3841,9 +4161,9 @@ Connection::handle_poly_lines(const RequestContext &context)
             current_y += previous_y;
         }
         if (!first) {
-            surface->draw_line(previous_x, previous_y, current_x, current_y,
-                               graphics->foreground, graphics->function,
-                               graphics->plane_mask, graphics->clip());
+            draw_gc_line(*surface, *graphics,
+                         {previous_x, previous_y}, {current_x, current_y},
+                         dash_phase);
         }
         previous_x = current_x;
         previous_y = current_y;
@@ -3885,10 +4205,11 @@ Connection::handle_poly_segments(const RequestContext &context)
         const auto end_y = reader.u16();
         if (!start_x || !start_y || !end_x || !end_y)
             return malformed("truncated PolySegment list");
-        surface->draw_line(signed_word(*start_x), signed_word(*start_y),
-                           signed_word(*end_x), signed_word(*end_y),
-                           graphics->foreground, graphics->function,
-                           graphics->plane_mask, graphics->clip());
+        std::size_t dash_phase = 0;
+        draw_gc_line(
+            *surface, *graphics,
+            {signed_word(*start_x), signed_word(*start_y)},
+            {signed_word(*end_x), signed_word(*end_y)}, dash_phase);
     }
     return finish_draw(context, *drawable_id);
 }
@@ -3930,22 +4251,18 @@ Connection::handle_poly_rectangles(const RequestContext &context)
         const std::int32_t y = signed_word(*encoded_y);
         const std::int32_t right = x + *width;
         const std::int32_t bottom = y + *height;
-        surface->draw_line(x, y, right, y, graphics->foreground,
-                           graphics->function, graphics->plane_mask,
-                           graphics->clip());
+        std::size_t dash_phase = 0;
+        draw_gc_line(*surface, *graphics, {x, y}, {right, y}, dash_phase);
         if (*height == 0)
             continue;
-        surface->draw_line(x, bottom, right, bottom, graphics->foreground,
-                           graphics->function, graphics->plane_mask,
-                           graphics->clip());
+        draw_gc_line(*surface, *graphics, {right, bottom}, {x, bottom},
+                     dash_phase);
         if (*height > 1) {
-            surface->draw_line(x, y + 1, x, bottom - 1,
-                               graphics->foreground, graphics->function,
-                               graphics->plane_mask, graphics->clip());
+            draw_gc_line(*surface, *graphics, {x, bottom - 1}, {x, y + 1},
+                         dash_phase);
             if (*width != 0) {
-                surface->draw_line(right, y + 1, right, bottom - 1,
-                                   graphics->foreground, graphics->function,
-                                   graphics->plane_mask, graphics->clip());
+                draw_gc_line(*surface, *graphics, {right, y + 1},
+                             {right, bottom - 1}, dash_phase);
             }
         }
     }
@@ -3984,10 +4301,9 @@ Connection::handle_fill_rectangles(const RequestContext &context)
         const auto height = reader.u16();
         if (!x || !y || !width || !height)
             return malformed("truncated PolyFillRectangle list");
-        surface->fill(Rectangle{signed_word(*x), signed_word(*y), *width,
-                                *height},
-                      graphics->foreground, graphics->function,
-                      graphics->plane_mask, graphics->clip());
+        fill_gc_rectangle(
+            *surface, *graphics,
+            Rectangle{signed_word(*x), signed_word(*y), *width, *height});
     }
     return finish_draw(context, *drawable_id);
 }
@@ -6741,6 +7057,12 @@ Connection::dispatch(const RequestContext &context)
             return handle_xinput(context);
         case ExtensionKind::shm:
             return handle_shm(context);
+        case ExtensionKind::xinerama:
+            return handle_xinerama(context);
+        case ExtensionKind::screensaver:
+            return handle_screensaver(context);
+        case ExtensionKind::dbe:
+            return handle_dbe(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {
@@ -6769,6 +7091,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_unmap_subwindows;
         table[opcode_index(CoreOpcode::ConfigureWindow)] =
             &Connection::handle_configure_window;
+        table[opcode_index(CoreOpcode::CirculateWindow)] =
+            &Connection::handle_circulate_window;
         table[opcode_index(CoreOpcode::GetGeometry)] =
             &Connection::handle_get_geometry;
         table[opcode_index(CoreOpcode::QueryTree)] =
@@ -6791,6 +7115,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_set_selection_owner;
         table[opcode_index(CoreOpcode::GetSelectionOwner)] =
             &Connection::handle_get_selection_owner;
+        table[opcode_index(CoreOpcode::ConvertSelection)] =
+            &Connection::handle_convert_selection;
         table[opcode_index(CoreOpcode::SendEvent)] =
             &Connection::handle_send_event;
         table[opcode_index(CoreOpcode::GrabPointer)] =
@@ -6853,6 +7179,8 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_change_graphics_context;
         table[opcode_index(CoreOpcode::CopyGC)] =
             &Connection::handle_copy_graphics_context;
+        table[opcode_index(CoreOpcode::SetDashes)] =
+            &Connection::handle_set_dashes;
         table[opcode_index(CoreOpcode::SetClipRectangles)] =
             &Connection::handle_set_clip_rectangles;
         table[opcode_index(CoreOpcode::FreeGC)] =
@@ -6871,8 +7199,14 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_poly_segments;
         table[opcode_index(CoreOpcode::PolyRectangle)] =
             &Connection::handle_poly_rectangles;
+        table[opcode_index(CoreOpcode::PolyArc)] =
+            &Connection::handle_poly_arcs;
+        table[opcode_index(CoreOpcode::FillPoly)] =
+            &Connection::handle_fill_polygon;
         table[opcode_index(CoreOpcode::PolyFillRectangle)] =
             &Connection::handle_fill_rectangles;
+        table[opcode_index(CoreOpcode::PolyFillArc)] =
+            &Connection::handle_fill_arcs;
         table[opcode_index(CoreOpcode::PolyText8)] =
             &Connection::handle_poly_text;
         table[opcode_index(CoreOpcode::PolyText16)] =
@@ -6947,10 +7281,26 @@ Connection::dispatch(const RequestContext &context)
             &Connection::handle_set_modifier_mapping;
         table[opcode_index(CoreOpcode::GetModifierMapping)] =
             &Connection::handle_get_modifier_mapping;
+        table[opcode_index(CoreOpcode::SetScreenSaver)] =
+            &Connection::handle_set_screen_saver;
+        table[opcode_index(CoreOpcode::GetScreenSaver)] =
+            &Connection::handle_get_screen_saver;
+        table[opcode_index(CoreOpcode::ChangeHosts)] =
+            &Connection::handle_change_hosts;
+        table[opcode_index(CoreOpcode::ListHosts)] =
+            &Connection::handle_list_hosts;
+        table[opcode_index(CoreOpcode::SetAccessControl)] =
+            &Connection::handle_set_access_control;
+        table[opcode_index(CoreOpcode::SetCloseDownMode)] =
+            &Connection::handle_set_close_down_mode;
+        table[opcode_index(CoreOpcode::KillClient)] =
+            &Connection::handle_kill_client;
         table[opcode_index(CoreOpcode::GetInputFocus)] =
             &Connection::handle_get_input_focus;
         table[opcode_index(CoreOpcode::QueryKeymap)] =
             &Connection::handle_query_keymap;
+        table[opcode_index(CoreOpcode::ForceScreenSaver)] =
+            &Connection::handle_force_screen_saver;
         table[opcode_index(CoreOpcode::QueryExtension)] =
             &Connection::handle_query_extension;
         table[opcode_index(CoreOpcode::ListExtensions)] =

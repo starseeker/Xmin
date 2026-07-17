@@ -665,6 +665,39 @@ ServerState::configure_window(
         : EventDelivery::no_recipient;
 }
 
+bool
+ServerState::circulate_window(std::uint32_t parent_id, bool raise_lowest)
+{
+    auto *parent = window(parent_id);
+    if (parent == nullptr)
+        return false;
+    auto &children = parent->children;
+    if (children.size() < 2)
+        return true;
+    if (raise_lowest) {
+        const auto found = std::find_if(
+            children.begin(), children.end(), [this](std::uint32_t id) {
+                const auto *child = window(id);
+                return child != nullptr && child->mapped;
+            });
+        if (found != children.end())
+            std::rotate(found, found + 1, children.end());
+    }
+    else {
+        const auto found = std::find_if(
+            children.rbegin(), children.rend(), [this](std::uint32_t id) {
+                const auto *child = window(id);
+                return child != nullptr && child->mapped;
+            });
+        if (found != children.rend()) {
+            const auto forward = std::prev(found.base());
+            std::rotate(children.begin(), forward, std::next(forward));
+        }
+    }
+    invalidate_scene();
+    return true;
+}
+
 void
 ServerState::replace_window_surface(
     WindowRecord &candidate, std::shared_ptr<Surface> replacement) noexcept
@@ -727,6 +760,76 @@ ServerState::erase_pixmap(std::uint32_t id)
     }
     pixmaps_.erase(found);
     static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+DbeBufferRecord *
+ServerState::dbe_buffer(std::uint32_t id)
+{
+    const auto found = dbe_buffers_.find(id);
+    return found == dbe_buffers_.end() ? nullptr : &found->second;
+}
+
+const DbeBufferRecord *
+ServerState::dbe_buffer(std::uint32_t id) const
+{
+    const auto found = dbe_buffers_.find(id);
+    return found == dbe_buffers_.end() ? nullptr : &found->second;
+}
+
+bool
+ServerState::add_dbe_buffer(DbeBufferRecord added, std::uint32_t owner)
+{
+    if (!added.surface || window(added.window) == nullptr ||
+        resource_exists(added.id) ||
+        !resources_.insert(added.id, ResourceKind::dbe_buffer, owner)) {
+        return false;
+    }
+    const auto shared = std::find_if(
+        dbe_buffers_.begin(), dbe_buffers_.end(), [&added](const auto &entry) {
+            return entry.second.window == added.window;
+        });
+    if (shared != dbe_buffers_.end())
+        added.surface = shared->second.surface;
+    const std::uint32_t id = added.id;
+    if (!dbe_buffers_.emplace(id, std::move(added)).second) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::erase_dbe_buffer(std::uint32_t id)
+{
+    if (dbe_buffers_.erase(id) == 0)
+        return false;
+    static_cast<void>(resources_.erase(id));
+    return true;
+}
+
+bool
+ServerState::swap_dbe_buffer(std::uint32_t window_id, std::uint8_t action)
+{
+    auto *front = window(window_id);
+    if (front == nullptr || !front->surface)
+        return false;
+    const auto found = std::find_if(
+        dbe_buffers_.begin(), dbe_buffers_.end(),
+        [window_id](const auto &entry) {
+            return entry.second.window == window_id;
+        });
+    if (found == dbe_buffers_.end() || !found->second.surface)
+        return false;
+    auto &back = *found->second.surface;
+    front->surface->copy_from(
+        back, 0, 0, 0, 0, front->width, front->height, 3, 0xffffffffU);
+    if (action == 0 || action == 1) {
+        const std::uint32_t pixel = action == 1 ? front->background_pixel : 0;
+        back.fill(Rectangle{0, 0, back.width(), back.height()}, pixel, 3,
+                  0xffffffffU);
+    }
+    invalidate_scene();
     return true;
 }
 
@@ -1653,6 +1756,8 @@ ServerState::drawable_surface(std::uint32_t id)
         return candidate->surface.get();
     if (auto *candidate = pixmap(id))
         return candidate->surface.get();
+    if (auto *candidate = dbe_buffer(id))
+        return candidate->surface.get();
     return nullptr;
 }
 
@@ -1662,6 +1767,8 @@ ServerState::drawable_surface(std::uint32_t id) const
     if (const auto *candidate = window(id))
         return candidate->surface.get();
     if (const auto *candidate = pixmap(id))
+        return candidate->surface.get();
+    if (const auto *candidate = dbe_buffer(id))
         return candidate->surface.get();
     return nullptr;
 }
@@ -2198,6 +2305,35 @@ ServerState::register_client(std::uint32_t client)
         return false;
     }
     return true;
+}
+
+bool
+ServerState::request_client_termination(std::uint32_t resource)
+{
+    if (resource == 0)
+        return true; // no retained-temporary resources in the clean profile
+    const auto owner = resource_owner(resource);
+    if (!owner || *owner == 0)
+        return false;
+    const auto client = std::find_if(
+        clients_.begin(), clients_.end(), [owner](const auto &entry) {
+            return entry.first == *owner;
+        });
+    if (client == clients_.end())
+        return false;
+    try {
+        clients_to_terminate_.insert(*owner);
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
+    return true;
+}
+
+bool
+ServerState::client_termination_requested(std::uint32_t client) const noexcept
+{
+    return clients_to_terminate_.find(client) != clients_to_terminate_.end();
 }
 
 void
@@ -3745,6 +3881,29 @@ ServerState::set_selection_owner(AtomId selection, std::uint32_t window_id,
     found->second = SelectionRecord{
         window_id, window_id == 0 ? 0 : client, effective_time};
     return SelectionUpdate::updated;
+}
+
+EventDelivery
+ServerState::convert_selection(
+    std::uint32_t client, std::uint32_t requestor, AtomId selection,
+    AtomId target, AtomId property, std::uint32_t time)
+{
+    const std::uint32_t effective_time = time == 0 ? current_time_ : time;
+    const auto found = selections_.find(selection);
+    if (found == selections_.end() || found->second.window == 0) {
+        return queue_event(
+            client, SelectionNotifyEvent{
+                effective_time, requestor, selection, target, 0})
+            ? EventDelivery::delivered
+            : EventDelivery::queue_full;
+    }
+    return queue_event(
+        found->second.client,
+        SelectionRequestEvent{
+            effective_time, found->second.window, requestor, selection,
+            target, property})
+        ? EventDelivery::delivered
+        : EventDelivery::queue_full;
 }
 
 EventDelivery
@@ -5578,6 +5737,14 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
             }),
         passive_grabs_.end());
     const std::uint32_t parent_id = found->second.parent;
+    for (auto buffer = dbe_buffers_.begin(); buffer != dbe_buffers_.end();) {
+        if (buffer->second.window != id) {
+            ++buffer;
+            continue;
+        }
+        static_cast<void>(resources_.erase(buffer->first));
+        buffer = dbe_buffers_.erase(buffer);
+    }
     clear_selections_for_window(id);
     xi2_selections_.erase(
         std::remove_if(
@@ -6139,6 +6306,7 @@ ServerState::constrain_pointer_by_barriers(
 void
 ServerState::disconnect_client(std::uint32_t owner)
 {
+    clients_to_terminate_.erase(owner);
     apply_save_set(owner);
     for (auto &selection : selections_) {
         if (selection.second.client != owner)
@@ -6357,6 +6525,10 @@ ServerState::disconnect_client(std::uint32_t owner)
     const auto fonts = resources_.owned_by(owner, ResourceKind::font);
     for (const auto id : fonts)
         static_cast<void>(erase_font(id));
+    const auto dbe_buffers =
+        resources_.owned_by(owner, ResourceKind::dbe_buffer);
+    for (const auto id : dbe_buffers)
+        static_cast<void>(erase_dbe_buffer(id));
     const auto pixmaps = resources_.owned_by(owner, ResourceKind::pixmap);
     for (const auto id : pixmaps)
         static_cast<void>(erase_pixmap(id));

@@ -915,14 +915,62 @@ cleanup:
 static int
 test_input(xcb_connection_t *connection)
 {
+    static const char extension_name[] = "XInputExtension";
     xcb_generic_error_t *error = NULL;
+    xcb_input_get_extension_version_reply_t *legacy_version =
+        xcb_input_get_extension_version_reply(
+            connection,
+            xcb_input_get_extension_version(
+                connection, sizeof(extension_name) - 1, extension_name),
+            &error);
+    xcb_input_list_input_devices_reply_t *legacy_devices = NULL;
+    xcb_input_open_device_reply_t *opened = NULL;
+    xcb_input_query_device_state_reply_t *legacy_state = NULL;
     xcb_input_xi_query_version_reply_t *version =
         xcb_input_xi_query_version_reply(
             connection, xcb_input_xi_query_version(connection, 2, 3), &error);
     xcb_input_xi_query_device_reply_t *devices = NULL;
     int result = 0;
+    uint8_t legacy_device = 0;
 
-    if (error != NULL || version == NULL || version->major_version != 2 ||
+    if (error != NULL || legacy_version == NULL || !legacy_version->present ||
+        legacy_version->server_major < 1)
+        goto cleanup;
+    legacy_devices = xcb_input_list_input_devices_reply(
+        connection, xcb_input_list_input_devices(connection), &error);
+    if (error != NULL || legacy_devices == NULL)
+        goto cleanup;
+    {
+        xcb_input_device_info_iterator_t devices =
+            xcb_input_list_input_devices_devices_iterator(legacy_devices);
+
+        while (devices.rem != 0) {
+            if (devices.data->device_use >=
+                XCB_INPUT_DEVICE_USE_IS_X_EXTENSION_DEVICE) {
+                legacy_device = devices.data->device_id;
+                break;
+            }
+            xcb_input_device_info_next(&devices);
+        }
+    }
+    if (legacy_device == 0)
+        goto cleanup;
+    opened = xcb_input_open_device_reply(
+        connection,
+        xcb_input_open_device(connection, legacy_device),
+        &error);
+    legacy_state = xcb_input_query_device_state_reply(
+        connection,
+        xcb_input_query_device_state(connection, legacy_device),
+        &error);
+    if (error != NULL || legacy_devices == NULL ||
+        xcb_input_list_input_devices_devices_length(legacy_devices) < 2 ||
+        opened == NULL || legacy_state == NULL ||
+        !checked(connection,
+                 xcb_input_close_device_checked(
+                     connection, legacy_device),
+                 "XI1 CloseDevice") ||
+        version == NULL || version->major_version != 2 ||
         version->minor_version < 3)
         goto cleanup;
     devices = xcb_input_xi_query_device_reply(
@@ -935,8 +983,12 @@ test_input(xcb_connection_t *connection)
 
 cleanup:
     if (!result)
-        fprintf(stderr, "XInput2 version or master-device query failed\n");
+        fprintf(stderr, "XInput 1.x/2 version or device query failed\n");
     free(error);
+    free(legacy_state);
+    free(opened);
+    free(legacy_devices);
+    free(legacy_version);
     free(devices);
     free(version);
     return result;

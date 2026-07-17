@@ -14,6 +14,25 @@ struct SelectionClearEvent {
     std::uint16_t sequence = 0;
 };
 
+struct SelectionRequestEvent {
+    std::uint32_t time = 0;
+    std::uint32_t owner = 0;
+    std::uint32_t requestor = 0;
+    std::uint32_t selection = 0;
+    std::uint32_t target = 0;
+    std::uint32_t property = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct SelectionNotifyEvent {
+    std::uint32_t time = 0;
+    std::uint32_t requestor = 0;
+    std::uint32_t selection = 0;
+    std::uint32_t target = 0;
+    std::uint32_t property = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct ClientMessageEvent {
     std::uint8_t format = 0;
     std::uint32_t window = 0;
@@ -328,7 +347,8 @@ struct FocusEvent {
 };
 
 using ClientEvent = std::variant<
-    SelectionClearEvent, ClientMessageEvent, MappingNotifyEvent,
+    SelectionClearEvent, SelectionRequestEvent, SelectionNotifyEvent,
+    ClientMessageEvent, MappingNotifyEvent,
     ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,
