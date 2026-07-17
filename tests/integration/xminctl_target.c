@@ -1,5 +1,3 @@
-#include "xmin_xcb_connect.h"
-
 #include <X11/keysym.h>
 
 #include <stdint.h>
@@ -73,9 +71,9 @@ int
 main(void)
 {
     static const char title[] = "xminctl-automation-target";
-    xmin_xcb_session session;
-    char error[256];
+    int screen_number = 0;
     xcb_connection_t *connection;
+    xcb_screen_t *screen;
     xcb_window_t window;
     xcb_gcontext_t graphics;
     xcb_atom_t wm_protocols;
@@ -95,11 +93,22 @@ main(void)
     int painted_success = 0;
     int result = 1;
 
-    if (xmin_xcb_connect(&session, NULL, error, sizeof(error)) != 0) {
-        fprintf(stderr, "target: %s\n", error);
+    connection = xcb_connect(NULL, &screen_number);
+    if (connection == NULL || xcb_connection_has_error(connection) != 0) {
+        fprintf(stderr, "target: cannot connect to the X server\n");
+        if (connection != NULL)
+            xcb_disconnect(connection);
         return 2;
     }
-    connection = session.connection;
+    xcb_screen_iterator_t screens =
+        xcb_setup_roots_iterator(xcb_get_setup(connection));
+    while (screen_number-- > 0 && screens.rem != 0)
+        xcb_screen_next(&screens);
+    if (screens.rem == 0) {
+        xcb_disconnect(connection);
+        return 2;
+    }
+    screen = screens.data;
     wm_protocols = intern_atom(connection, "WM_PROTOCOLS");
     wm_delete_window = intern_atom(connection, "WM_DELETE_WINDOW");
     a_keycode = find_keycode(connection, XK_a);
@@ -112,9 +121,9 @@ main(void)
     create_error = xcb_request_check(
         connection,
         xcb_create_window_checked(
-            connection, session.screen->root_depth, window,
-            session.screen->root, 20, 30, 80, 60, 0,
-            XCB_WINDOW_CLASS_INPUT_OUTPUT, session.screen->root_visual,
+            connection, screen->root_depth, window,
+            screen->root, 20, 30, 80, 60, 0,
+            XCB_WINDOW_CLASS_INPUT_OUTPUT, screen->root_visual,
             XCB_CW_BACK_PIXEL | XCB_CW_EVENT_MASK, create_values));
     if (create_error != NULL) {
         free(create_error);
@@ -187,6 +196,6 @@ cleanup_window:
     xcb_destroy_window(connection, window);
     xcb_flush(connection);
 cleanup:
-    xmin_xcb_disconnect(&session);
+    xcb_disconnect(connection);
     return result;
 }

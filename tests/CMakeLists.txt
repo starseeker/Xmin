@@ -139,19 +139,20 @@ if(TARGET Xmin::run)
       xmin.next-launcher-signal-cleanup PROPERTIES TIMEOUT 30)
   endif()
 
-  if(TARGET Xmin::ctl)
-    add_executable(xminctl_target
-      integration/xminctl_target.c
-      "${PROJECT_SOURCE_DIR}/src/control/xmin_xcb_connect.c"
-    )
+  # Product code has its own focused client. Keep host XCB here as an
+  # independent controller/protocol oracle when it is available.
+  find_path(XMIN_TEST_XCB_INCLUDE_DIR xcb/xcb.h)
+  find_library(XMIN_TEST_XCB_LIBRARY NAMES xcb)
+
+  if(TARGET Xmin::ctl AND XMIN_TEST_XCB_INCLUDE_DIR AND XMIN_TEST_XCB_LIBRARY)
+    add_executable(xminctl_target integration/xminctl_target.c)
     target_compile_features(xminctl_target PRIVATE c_std_11)
     target_include_directories(xminctl_target PRIVATE
-      "${PROJECT_SOURCE_DIR}/src/control"
+      SYSTEM PRIVATE "${XMIN_TEST_XCB_INCLUDE_DIR}"
     )
     target_compile_definitions(xminctl_target PRIVATE _POSIX_C_SOURCE=200809L)
     target_link_libraries(xminctl_target PRIVATE
-      Xmin::xcb
-      Xmin::xau
+      "${XMIN_TEST_XCB_LIBRARY}"
       Xmin::xorgproto
     )
     xmin_enable_warnings(xminctl_target)
@@ -171,12 +172,22 @@ if(TARGET Xmin::run)
            $<TARGET_FILE:xminctl_target>
     )
     set_tests_properties(xmin.control-automation PROPERTIES TIMEOUT 30)
+
+    if(TARGET Xmin::next_server)
+      add_test(NAME xmin.next-control-automation
+        COMMAND Xmin::run
+          --server $<TARGET_FILE:xmin_next>
+          --screen 160x120x24
+          -- $<TARGET_FILE:xminctl_integration>
+             $<TARGET_FILE:xminctl>
+             $<TARGET_FILE:xminctl_target>
+      )
+      set_tests_properties(xmin.next-control-automation PROPERTIES TIMEOUT 30)
+    endif()
   endif()
 
   # XCB is the transport used by Qt's xcb platform plugin. Keep this client
   # test optional and entirely outside the installed target graph.
-  find_path(XMIN_TEST_XCB_INCLUDE_DIR xcb/xcb.h)
-  find_library(XMIN_TEST_XCB_LIBRARY NAMES xcb)
   if(XMIN_TEST_XCB_INCLUDE_DIR AND XMIN_TEST_XCB_LIBRARY)
     add_executable(xmin_xcb_raster integration/xcb_raster.c)
     target_compile_features(xmin_xcb_raster PRIVATE c_std_11)

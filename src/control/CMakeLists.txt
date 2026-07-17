@@ -1,12 +1,12 @@
 add_executable(xminctl
-  xminctl.c
-  xmin_xcb_connect.c
+  xminctl.cpp
+  xmin_client.cpp
 )
 add_executable(Xmin::ctl ALIAS xminctl)
 set_target_properties(xminctl PROPERTIES
-  C_STANDARD 11
-  C_STANDARD_REQUIRED YES
-  C_EXTENSIONS NO
+  CXX_STANDARD 17
+  CXX_STANDARD_REQUIRED YES
+  CXX_EXTENSIONS NO
 )
 target_include_directories(xminctl PRIVATE
   "${CMAKE_CURRENT_SOURCE_DIR}"
@@ -14,8 +14,7 @@ target_include_directories(xminctl PRIVATE
 )
 target_compile_definitions(xminctl PRIVATE _POSIX_C_SOURCE=200809L)
 target_link_libraries(xminctl PRIVATE
-  Xmin::xcb
-  Xmin::xau
+  Xmin::next_platform
   Xmin::xorgproto
 )
 xmin_enable_warnings(xminctl)

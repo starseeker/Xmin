@@ -1,4 +1,4 @@
-#include "xmin_xcb_connect.h"
+#include "xmin_client.h"
 
 #include <X11/keysym.h>
 
@@ -14,10 +14,6 @@
 #include <strings.h>
 #include <time.h>
 #include <unistd.h>
-
-#include <xcb/composite.h>
-#include <xcb/damage.h>
-#include <xcb/xtest.h>
 
 #include "xmin/config.h"
 
@@ -176,7 +172,7 @@ read_text_property(controller *ctl, xcb_window_t window, xcb_atom_t property,
         free(reply);
         return NULL;
     }
-    text = malloc((size_t) length + 1);
+    text = static_cast<char *>(malloc((size_t) length + 1));
     if (text != NULL) {
         memcpy(text, xcb_get_property_value(reply), (size_t) length);
         text[length] = '\0';
@@ -292,7 +288,7 @@ static int
 find_visitor(controller *ctl, xcb_window_t window, unsigned int depth,
              void *opaque)
 {
-    find_context *context = opaque;
+    find_context *context = static_cast<find_context *>(opaque);
     char *name;
 
     (void) depth;
