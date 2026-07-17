@@ -375,7 +375,7 @@ read_setup(int descriptor, bool little)
     }
     std::vector<std::uint8_t> setup(
         static_cast<std::size_t>(get16(prefix, 6, little)) * 4);
-    if (!read_exact(descriptor, setup) || setup.size() < 148)
+    if (!read_exact(descriptor, setup) || setup.size() < 100)
         return std::nullopt;
     const auto vendor_size = get16(setup, 16, little);
     const std::size_t root_offset =
@@ -759,7 +759,7 @@ int
 main(int argc, char **argv)
 {
     if (argc != 2) {
-        std::cerr << "usage: next_standalone /path/to/Xmin-next\n";
+        std::cerr << "usage: xmin_standalone /path/to/Xmin\n";
         return 2;
     }
 

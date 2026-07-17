@@ -9,11 +9,6 @@ set_target_properties(xmin_glx_client_api PROPERTIES
 target_compile_features(xmin_glx_client_api PRIVATE c_std_11)
 target_compile_definitions(xmin_glx_client_api PRIVATE
   _POSIX_C_SOURCE=200809L
-  # The adapter reads Mesa's internal GLcontext/GLframebuffer structures to
-  # install its default-framebuffer dispatch hooks.  Their layout includes
-  # _glthread_Mutex, so it must match the PTHREADS setting used by the OSMesa
-  # objects linked into the same DSO.
-  PTHREADS
 )
 target_include_directories(xmin_glx_client_api PRIVATE
   "${xmin_client_gl_include}"
@@ -21,9 +16,6 @@ target_include_directories(xmin_glx_client_api PRIVATE
 )
 target_include_directories(xmin_glx_client_api SYSTEM PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/include"
-  "${PROJECT_SOURCE_DIR}/third_party/osmesa/src"
-  "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/main"
-  "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/glapi"
 )
 target_link_libraries(xmin_glx_client_api PRIVATE Threads::Threads)
 xmin_enable_warnings(xmin_glx_client_api)
@@ -39,6 +31,7 @@ list(TRANSFORM xmin_osmesa_source_files
 add_library(xmin_gl_client SHARED
   $<TARGET_OBJECTS:xmin_glx_client_api>
   ${xmin_osmesa_source_files}
+  "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/drivers/osmesa/xmin_osmesa_adapter.c"
 )
 add_library(Xmin::gl_client ALIAS xmin_gl_client)
 set_target_properties(xmin_gl_client PROPERTIES
@@ -69,6 +62,7 @@ target_include_directories(xmin_gl_client
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/shader/grammar"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/shader/slang"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/fxaa"
+    "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(xmin_gl_client PRIVATE Threads::Threads ${XMIN_M_LIBRARY})
 if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")

@@ -1,6 +1,5 @@
 #include "xmin_client.h"
-
-#include <X11/keysym.h>
+#include "xmin_keysyms.h"
 
 #include <ctype.h>
 #include <errno.h>

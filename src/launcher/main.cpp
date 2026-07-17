@@ -390,10 +390,6 @@ run(int argc, char **argv)
         authority,
         "-noreset",
     };
-#if XMIN_ENABLE_TCP
-    server_arguments.emplace_back("-nolisten");
-    server_arguments.emplace_back("tcp");
-#endif
     if (!screen.empty()) {
         server_arguments.emplace_back("-screen");
         server_arguments.emplace_back("0");

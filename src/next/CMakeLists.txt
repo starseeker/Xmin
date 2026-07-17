@@ -14,7 +14,7 @@ target_include_directories(xmin_platform
 )
 xmin_enable_warnings(xmin_platform)
 
-add_library(xmin_next_core STATIC
+add_library(xmin_server_core STATIC
   atom_table.cpp
   color.cpp
   connection.cpp
@@ -43,28 +43,28 @@ add_library(xmin_next_core STATIC
   xinput_legacy_protocol.cpp
   xfixes_protocol.cpp
 )
-add_library(Xmin::next_core ALIAS xmin_next_core)
-target_compile_features(xmin_next_core PUBLIC cxx_std_17)
-target_compile_definitions(xmin_next_core PRIVATE _POSIX_C_SOURCE=200809L)
-target_include_directories(xmin_next_core
+add_library(Xmin::server_core ALIAS xmin_server_core)
+target_compile_features(xmin_server_core PUBLIC cxx_std_17)
+target_compile_definitions(xmin_server_core PRIVATE _POSIX_C_SOURCE=200809L)
+target_include_directories(xmin_server_core
   PUBLIC
     "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
     "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
 )
-xmin_enable_warnings(xmin_next_core)
-target_link_libraries(xmin_next_core PUBLIC Xmin::next_platform Xmin::pixman)
+xmin_enable_warnings(xmin_server_core)
+target_link_libraries(xmin_server_core PUBLIC Xmin::next_platform Xmin::pixman)
 
-add_executable(xmin_next main.cpp)
-add_executable(Xmin::next_server ALIAS xmin_next)
-set_target_properties(xmin_next PROPERTIES OUTPUT_NAME Xmin-next)
-target_compile_features(xmin_next PRIVATE cxx_std_17)
-target_compile_definitions(xmin_next PRIVATE _POSIX_C_SOURCE=200809L)
-target_link_libraries(xmin_next PRIVATE Xmin::next_core)
-xmin_enable_warnings(xmin_next)
+add_executable(xmin_server main.cpp)
+add_executable(Xmin::server ALIAS xmin_server)
+set_target_properties(xmin_server PROPERTIES OUTPUT_NAME Xmin)
+target_compile_features(xmin_server PRIVATE cxx_std_17)
+target_compile_definitions(xmin_server PRIVATE _POSIX_C_SOURCE=200809L)
+target_link_libraries(xmin_server PRIVATE Xmin::server_core)
+xmin_enable_warnings(xmin_server)
 
 if(XMIN_ENABLE_INSTALL)
   install(
-    TARGETS xmin_next
+    TARGETS xmin_server
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Runtime
   )

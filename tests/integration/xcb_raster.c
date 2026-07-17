@@ -7,80 +7,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-#ifndef XMIN_NEXT_RASTER
-static int
-query_extension(xcb_connection_t *connection, const char *name)
-{
-    xcb_query_extension_cookie_t cookie = xcb_query_extension(
-        connection, (uint16_t) strlen(name), name);
-    xcb_query_extension_reply_t *reply = xcb_query_extension_reply(
-        connection, cookie, NULL);
-    int present = reply != NULL && reply->present;
-
-    free(reply);
-    return present;
-}
-
-static int
-test_exact_extension_profile(xcb_connection_t *connection,
-                             const char *const *expected,
-                             size_t expected_count)
-{
-    xcb_generic_error_t *error = NULL;
-    xcb_list_extensions_reply_t *reply = xcb_list_extensions_reply(
-        connection, xcb_list_extensions(connection), &error);
-    unsigned char *seen = calloc(expected_count, sizeof(*seen));
-    xcb_str_iterator_t names;
-    int result = 0;
-
-    if (error != NULL || reply == NULL || seen == NULL ||
-        (size_t) xcb_list_extensions_names_length(reply) != expected_count)
-        goto cleanup;
-    names = xcb_list_extensions_names_iterator(reply);
-    while (names.rem != 0) {
-        const char *name = xcb_str_name(names.data);
-        size_t name_length = (size_t) xcb_str_name_length(names.data);
-        size_t i;
-
-        for (i = 0; i < expected_count; ++i) {
-            if (!seen[i] && strlen(expected[i]) == name_length &&
-                memcmp(expected[i], name, name_length) == 0) {
-                seen[i] = 1;
-                break;
-            }
-        }
-        if (i == expected_count) {
-            fprintf(stderr, "Xmin advertised unexpected extension: %.*s\n",
-                    (int) name_length, name);
-            goto cleanup;
-        }
-        xcb_str_next(&names);
-    }
-    for (size_t i = 0; i < expected_count; ++i) {
-        if (!seen[i]) {
-            fprintf(stderr, "Xmin omitted expected extension: %s\n",
-                    expected[i]);
-            goto cleanup;
-        }
-    }
-    result = 1;
-
-cleanup:
-    if (!result && error != NULL)
-        fprintf(stderr, "ListExtensions failed with X11 error %u\n",
-                error->error_code);
-    else if (!result && reply != NULL && seen != NULL &&
-             (size_t) xcb_list_extensions_names_length(reply) !=
-                 expected_count)
-        fprintf(stderr, "Xmin advertised %d extensions; expected %zu\n",
-                xcb_list_extensions_names_length(reply), expected_count);
-    free(seen);
-    free(error);
-    free(reply);
-    return result;
-}
-#endif
-
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
         const char *operation)
@@ -394,33 +320,6 @@ cleanup:
 int
 main(void)
 {
-#ifndef XMIN_NEXT_RASTER
-    static const char *const required_extensions[] = {
-        "Generic Event Extension",
-        "SHAPE",
-        "XInputExtension",
-        "XTEST",
-        "BIG-REQUESTS",
-        "SYNC",
-        "XKEYBOARD",
-        "XC-MISC",
-        "XFIXES",
-        "RENDER",
-        "RANDR",
-        "Composite",
-        "DAMAGE",
-        "MIT-SCREEN-SAVER",
-        "DOUBLE-BUFFER",
-        "Present",
-        "XINERAMA",
-#if XMIN_BUILD_INDIRECT_GLX
-        "GLX",
-#endif
-#if XMIN_HAVE_MITSHM
-        "MIT-SHM",
-#endif
-    };
-#endif
     xcb_connection_t *connection;
     const xcb_setup_t *setup;
     xcb_screen_iterator_t screens;
@@ -451,21 +350,6 @@ main(void)
     if (screen->width_in_pixels != 96 || screen->height_in_pixels != 80 ||
         screen->root_depth != 24)
         goto cleanup;
-
-#ifndef XMIN_NEXT_RASTER
-    for (i = 0; i < sizeof(required_extensions) /
-                    sizeof(required_extensions[0]); ++i) {
-        if (!query_extension(connection, required_extensions[i])) {
-            fprintf(stderr, "XCB could not query required extension: %s\n",
-                    required_extensions[i]);
-            goto cleanup;
-        }
-    }
-    if (!test_exact_extension_profile(
-            connection, required_extensions,
-            sizeof(required_extensions) / sizeof(required_extensions[0])))
-        goto cleanup;
-#endif
 
     window = xcb_generate_id(connection);
     xcb_create_window(connection, screen->root_depth, window, screen->root,

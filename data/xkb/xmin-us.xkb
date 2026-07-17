@@ -1,7 +1,0 @@
-// Maintenance-time input for Xmin's embedded US PC105 keymap.
-xkb_keymap "xmin_us_pc105" {
-    xkb_keycodes  { include "evdev+aliases(qwerty)" };
-    xkb_types     { include "complete" };
-    xkb_compatibility { include "complete" };
-    xkb_symbols   { include "pc+us" };
-};

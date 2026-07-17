@@ -23,35 +23,32 @@ function(xmin_count_sources directory prefix)
 endfunction()
 
 xmin_count_sources("${SOURCE_DIR}/src" PROJECT)
-xmin_count_sources("${SOURCE_DIR}/src/next" NEXT)
-xmin_count_sources("${SOURCE_DIR}/third_party/xorg-server" XORG)
+xmin_count_sources("${SOURCE_DIR}/src/next" SERVER)
+xmin_count_sources("${SOURCE_DIR}/src/control" CONTROL)
 xmin_count_sources("${SOURCE_DIR}/third_party/osmesa" OSMESA)
+xmin_count_sources("${SOURCE_DIR}/third_party/pixman" PIXMAN)
 
 set(translation_units "unavailable")
-set(next_translation_units "unavailable")
+set(project_translation_units "unavailable")
 if(EXISTS "${BINARY_DIR}/compile_commands.json")
   file(READ "${BINARY_DIR}/compile_commands.json" compile_commands)
   string(JSON translation_units LENGTH "${compile_commands}")
-  set(next_translation_units 0)
+  set(project_translation_units 0)
   if(translation_units GREATER 0)
     math(EXPR command_last "${translation_units} - 1")
     foreach(index RANGE 0 ${command_last})
       string(JSON source_file GET "${compile_commands}" ${index} file)
-      string(FIND "${source_file}" "/src/next/" next_position)
-      if(NOT next_position EQUAL -1)
-        math(EXPR next_translation_units "${next_translation_units} + 1")
+      string(FIND "${source_file}" "/src/" project_position)
+      if(NOT project_position EQUAL -1)
+        math(EXPR project_translation_units "${project_translation_units} + 1")
       endif()
     endforeach()
   endif()
 endif()
 
-set(legacy_bytes "unavailable")
-if(DEFINED LEGACY_BINARY AND EXISTS "${LEGACY_BINARY}")
-  file(SIZE "${LEGACY_BINARY}" legacy_bytes)
-endif()
-set(next_bytes "unavailable")
-if(DEFINED NEXT_BINARY AND EXISTS "${NEXT_BINARY}")
-  file(SIZE "${NEXT_BINARY}" next_bytes)
+set(server_bytes "unavailable")
+if(DEFINED SERVER_BINARY AND EXISTS "${SERVER_BINARY}")
+  file(SIZE "${SERVER_BINARY}" server_bytes)
 endif()
 
 file(READ "${SOURCE_DIR}/profiles/protocol-coverage.json" protocol_profile)
@@ -63,16 +60,17 @@ string(CONCAT report
   "Xmin modernization metrics\n"
   "project_source_files=${PROJECT_FILES}\n"
   "project_source_lines=${PROJECT_LINES}\n"
-  "next_source_files=${NEXT_FILES}\n"
-  "next_source_lines=${NEXT_LINES}\n"
-  "xorg_source_files=${XORG_FILES}\n"
-  "xorg_source_lines=${XORG_LINES}\n"
+  "server_source_files=${SERVER_FILES}\n"
+  "server_source_lines=${SERVER_LINES}\n"
+  "control_source_files=${CONTROL_FILES}\n"
+  "control_source_lines=${CONTROL_LINES}\n"
+  "pixman_source_files=${PIXMAN_FILES}\n"
+  "pixman_source_lines=${PIXMAN_LINES}\n"
   "osmesa_source_files=${OSMESA_FILES}\n"
   "osmesa_source_lines=${OSMESA_LINES}\n"
   "translation_units=${translation_units}\n"
-  "next_translation_units=${next_translation_units}\n"
-  "legacy_binary_bytes=${legacy_bytes}\n"
-  "next_binary_bytes=${next_bytes}\n"
+  "project_translation_units=${project_translation_units}\n"
+  "server_binary_bytes=${server_bytes}\n"
   "core_opcode_slots=${core_slots}\n"
   "profile_extensions=${extensions}\n"
   "profile_extension_requests=${extension_requests}\n"

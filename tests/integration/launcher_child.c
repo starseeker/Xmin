@@ -1,5 +1,3 @@
-#include <X11/Xauth.h>
-
 #include <errno.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -174,8 +172,12 @@ main(void)
     const char *authority_path = getenv("XAUTHORITY");
     struct stat status;
     uint16_t endian_probe = 1;
-    FILE *authority_file;
-    Xauth *authority;
+    unsigned char authority[128];
+    size_t authority_size;
+    const unsigned char *authority_name;
+    const unsigned char *authority_data;
+    uint16_t authority_name_size;
+    uint16_t authority_data_size;
     int result = 1;
 
     little_endian = *(unsigned char *) &endian_probe == 1;
@@ -185,18 +187,34 @@ main(void)
         fprintf(stderr, "xmin-run supplied an insecure or incomplete environment\n");
         return 2;
     }
-    authority_file = fopen(authority_path, "rb");
+    FILE *authority_file = fopen(authority_path, "rb");
     if (authority_file == NULL)
         return 3;
-    authority = XauReadAuth(authority_file);
+    authority_size = fread(authority, 1, sizeof(authority), authority_file);
+    if (ferror(authority_file) || !feof(authority_file)) {
+        fclose(authority_file);
+        return 4;
+    }
     fclose(authority_file);
-    if (authority == NULL || authority->family != FamilyWild ||
-        authority->address_length != 0 || authority->number_length != 0 ||
-        authority->name_length != sizeof(expected_protocol) - 1 ||
-        memcmp(authority->name, expected_protocol,
+    if (authority_size < 12 || authority[0] != 0xff ||
+        authority[1] != 0xff || authority[2] != 0 || authority[3] != 0 ||
+        authority[4] != 0 || authority[5] != 0)
+        return 4;
+    authority_name_size = (uint16_t) (((uint16_t) authority[6] << 8) |
+                                      authority[7]);
+    authority_name = authority + 8;
+    if ((size_t) authority_name_size + 10 > authority_size)
+        return 4;
+    authority_data_size = (uint16_t)
+        (((uint16_t) authority[8 + authority_name_size] << 8) |
+         authority[9 + authority_name_size]);
+    authority_data = authority + 10 + authority_name_size;
+    if (authority_name_size != sizeof(expected_protocol) - 1 ||
+        memcmp(authority_name, expected_protocol,
                sizeof(expected_protocol) - 1) != 0 ||
-        authority->data_length != 16) {
-        XauDisposeAuth(authority);
+        authority_data_size != 16 ||
+        10 + (size_t) authority_name_size + authority_data_size !=
+            authority_size) {
         return 4;
     }
 
@@ -204,14 +222,13 @@ main(void)
         fprintf(stderr, "Xmin accepted an unauthenticated launcher client\n");
         goto cleanup;
     }
-    if (handshake(display, authority->name, authority->name_length,
-                  authority->data, authority->data_length, 1) != 0) {
+    if (handshake(display, authority_name, authority_name_size,
+                  authority_data, authority_data_size, 1) != 0) {
         fprintf(stderr, "Xmin rejected the launcher cookie\n");
         goto cleanup;
     }
     result = 0;
 
 cleanup:
-    XauDisposeAuth(authority);
     return result;
 }

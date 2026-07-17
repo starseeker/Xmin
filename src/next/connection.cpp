@@ -1045,7 +1045,7 @@ Connection::send_setup_failure(ByteOrder order, std::string reason)
 Result<void>
 Connection::send_setup_success(ByteOrder order)
 {
-    constexpr std::string_view vendor = "Xmin-next";
+    constexpr std::string_view vendor = "Xmin";
     WireWriter payload(order);
 
     payload.u32(1); // release

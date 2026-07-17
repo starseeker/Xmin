@@ -27,18 +27,6 @@
       }
     },
     {
-      "name": "legacy-glx",
-      "displayName": "Compatibility build with indirect GLX",
-      "description": "Enables the intentionally non-default server-side indirect GLX provider",
-      "binaryDir": "${sourceDir}/build/legacy-glx",
-      "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug",
-        "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
-        "XMIN_BUILD_TESTS": "ON",
-        "XMIN_BUILD_INDIRECT_GLX": "ON"
-      }
-    },
-    {
       "name": "minimal",
       "displayName": "Minimal server-only build",
       "description": "Builds neither client OpenGL nor legacy indirect server GLX",
@@ -47,8 +35,7 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "XMIN_BUILD_TESTS": "ON",
-        "XMIN_BUILD_CLIENT_GL": "OFF",
-        "XMIN_BUILD_INDIRECT_GLX": "OFF"
+        "XMIN_BUILD_CLIENT_GL": "OFF"
       }
     },
     {
@@ -61,7 +48,6 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "XMIN_BUILD_TESTS": "ON",
         "XMIN_BUILD_CLIENT_GL": "OFF",
-        "XMIN_BUILD_INDIRECT_GLX": "OFF",
         "XMIN_ENABLE_SANITIZERS": "ON",
         "XMIN_WARNINGS_AS_ERRORS": "ON"
       }
@@ -75,10 +61,6 @@
     {
       "name": "release",
       "configurePreset": "release"
-    },
-    {
-      "name": "legacy-glx",
-      "configurePreset": "legacy-glx"
     },
     {
       "name": "minimal",
@@ -100,13 +82,6 @@
     {
       "name": "release",
       "configurePreset": "release",
-      "output": {
-        "outputOnFailure": true
-      }
-    },
-    {
-      "name": "legacy-glx",
-      "configurePreset": "legacy-glx",
       "output": {
         "outputOnFailure": true
       }

@@ -13,10 +13,6 @@ endfunction()
 
 option(XMIN_BUILD_CLIENT_GL
   "Build the bundled software-direct client libGL" ON)
-option(XMIN_BUILD_INDIRECT_GLX
-  "Build embedded OSMesa and the legacy indirect server GLX provider" OFF)
-option(XMIN_ENABLE_TCP
-  "Enable the TCP transport (the normal build is local-socket only)" OFF)
 option(XMIN_BUILD_LAUNCHER
   "Build the authenticated xmin-run child launcher" ON)
 option(XMIN_BUILD_TESTS "Build Xmin's self-tests" ${PROJECT_IS_TOP_LEVEL})
@@ -43,7 +39,6 @@ xmin_normalize_tristate(XMIN_PIXMAN_SIMD)
 
 set(XMIN_DEFAULT_WIDTH "1280" CACHE STRING "Default screen width in pixels")
 set(XMIN_DEFAULT_HEIGHT "1024" CACHE STRING "Default screen height in pixels")
-set(XMIN_DEFAULT_DEPTH "24" CACHE STRING "Default screen depth")
 set(XMIN_DEFAULT_DPI "96" CACHE STRING "Default screen DPI")
 
 foreach(variable IN ITEMS
@@ -52,9 +47,3 @@ foreach(variable IN ITEMS
     message(FATAL_ERROR "${variable} must be a positive integer.")
   endif()
 endforeach()
-
-if(NOT XMIN_DEFAULT_DEPTH MATCHES "^(1|8|15|16|24|30)$")
-  message(FATAL_ERROR
-    "XMIN_DEFAULT_DEPTH must be one of 1, 8, 15, 16, 24, or 30."
-  )
-endif()

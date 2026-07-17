@@ -8,10 +8,7 @@
 #include <GL/glxext.h>
 #include <OSMesa/osmesa.h>
 #include <xmin/config.h>
-
-#include <main/context.h>
-#include <main/buffers.h>
-#include <glapi/dispatch.h>
+#include "xmin_osmesa_adapter.h"
 
 #include <pthread.h>
 #include <stdint.h>
@@ -742,7 +739,7 @@ xmin_client_flush(void)
 {
     int pbuffer;
 
-    _mesa_Flush();
+    XminOSMesaFlush();
     if (xmin_current_context == NULL || xmin_current_draw == 0 ||
         xmin_current_context->config->double_buffer ||
         !xmin_prepare_present(xmin_current_display, xmin_current_draw,
@@ -752,58 +749,10 @@ xmin_client_flush(void)
                         xmin_current_context->draw_surface);
 }
 
-/* OSMesa has one color buffer, while GLX clients address that storage as the
- * back buffer when they selected a double-buffered FBConfig.  Keep FBO draw
- * buffers untouched, but translate default-framebuffer back-buffer names to
- * OSMesa's front buffer. */
-static void GLAPIENTRY
-xmin_client_draw_buffer(GLenum buffer)
-{
-    GLcontext *mesa = _mesa_get_current_context();
-
-    if (mesa != NULL && mesa->DrawBuffer->Name == 0 &&
-        (buffer == GL_BACK || buffer == GL_BACK_LEFT))
-        buffer = GL_FRONT_LEFT;
-    _mesa_DrawBuffer(buffer);
-}
-
-static void GLAPIENTRY
-xmin_client_draw_buffers(GLsizei count, const GLenum *buffers)
-{
-    GLcontext *mesa = _mesa_get_current_context();
-
-    if (mesa != NULL && mesa->DrawBuffer->Name == 0 && count == 1 &&
-        buffers != NULL && buffers[0] == GL_BACK_LEFT) {
-        const GLenum front = GL_FRONT_LEFT;
-
-        _mesa_DrawBuffersARB(1, &front);
-        return;
-    }
-    _mesa_DrawBuffersARB(count, buffers);
-}
-
-static void GLAPIENTRY
-xmin_client_read_buffer(GLenum buffer)
-{
-    GLcontext *mesa = _mesa_get_current_context();
-
-    if (mesa != NULL && mesa->ReadBuffer->Name == 0 &&
-        (buffer == GL_BACK || buffer == GL_BACK_LEFT))
-        buffer = GL_FRONT_LEFT;
-    _mesa_ReadBuffer(buffer);
-}
-
 static void
 xmin_install_dispatch_hooks(void)
 {
-    GLcontext *mesa = _mesa_get_current_context();
-
-    if (mesa != NULL && mesa->Exec != NULL) {
-        SET_Flush(mesa->Exec, xmin_client_flush);
-        SET_DrawBuffer(mesa->Exec, xmin_client_draw_buffer);
-        SET_DrawBuffersARB(mesa->Exec, xmin_client_draw_buffers);
-        SET_ReadBuffer(mesa->Exec, xmin_client_read_buffer);
-    }
+    XminOSMesaInstallDispatchHooks(xmin_client_flush);
 }
 
 XVisualInfo *
@@ -938,16 +887,12 @@ glXCopyContext(Display *display, GLXContext source, GLXContext destination,
 {
     (void) display;
 
-    /* OSMesa's context embeds Mesa's GLcontext as its first member.  The
-     * renderer's state copier implements the GL attribute-group semantics
-     * required by glXCopyContext; shared objects are deliberately not part of
-     * this operation.  GLX forbids a current destination, so leave it
-     * untouched when that case can be detected in this thread. */
+    /* GLX forbids a current destination, so leave it untouched when that case
+     * can be detected in this thread. */
     if (source == NULL || destination == NULL || source == destination ||
         destination == xmin_current_context)
         return;
-    _mesa_copy_context((const GLcontext *) source->osmesa,
-                       (GLcontext *) destination->osmesa, (GLuint) mask);
+    XminOSMesaCopyContext(source->osmesa, destination->osmesa, mask);
 }
 
 void

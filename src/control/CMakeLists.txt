@@ -15,7 +15,6 @@ target_include_directories(xminctl PRIVATE
 target_compile_definitions(xminctl PRIVATE _POSIX_C_SOURCE=200809L)
 target_link_libraries(xminctl PRIVATE
   Xmin::next_platform
-  Xmin::xorgproto
 )
 xmin_enable_warnings(xminctl)
 

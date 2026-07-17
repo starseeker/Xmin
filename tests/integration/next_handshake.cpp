@@ -264,13 +264,13 @@ check_setup_success(int descriptor, bool little, std::uint32_t &resource_base)
     }
     std::vector<std::uint8_t> setup(
         static_cast<std::size_t>(get16(prefix, 6, little)) * 4);
-    if (!read_all(descriptor, setup) || setup.size() < 148)
+    if (!read_all(descriptor, setup) || setup.size() < 100)
         return false;
     const auto vendor_size = get16(setup, 16, little);
     const std::size_t root_offset = 32 + ((vendor_size + 3) & ~std::size_t{3}) +
         static_cast<std::size_t>(setup[21]) * 8;
     resource_base = get32(setup, 4, little);
-    return vendor_size == 9 && setup[20] == 1 && setup[21] == 4 &&
+    return vendor_size == 4 && setup[20] == 1 && setup[21] == 4 &&
         root_offset + 40 <= setup.size() &&
         get32(setup, root_offset, little) == root_window &&
         get16(setup, root_offset + 20, little) == 320 &&
@@ -4535,7 +4535,7 @@ int
 main(int argc, char **argv)
 {
     if (argc != 2) {
-        std::cerr << "usage: next_handshake /path/to/Xmin-next\n";
+        std::cerr << "usage: xmin_handshake /path/to/Xmin\n";
         return 2;
     }
     const bool native = host_is_little_endian();

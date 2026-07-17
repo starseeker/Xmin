@@ -268,7 +268,7 @@ Server::run()
                     state_);
                 auto prepared = connection->prepare();
                 if (!prepared) {
-                    std::cerr << "Xmin-next: rejected client: "
+                    std::cerr << "Xmin: rejected client: "
                               << prepared.error().message << '\n';
                     continue;
                 }
@@ -329,7 +329,7 @@ Server::run()
                 }
             }
             if (!operation) {
-                std::cerr << "Xmin-next: closing client: "
+                std::cerr << "Xmin: closing client: "
                           << operation.error().message << '\n';
                 remove[index] = true;
             }

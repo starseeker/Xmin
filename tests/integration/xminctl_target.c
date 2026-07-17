@@ -1,4 +1,4 @@
-#include <X11/keysym.h>
+#include "../../src/control/xmin_keysyms.h"
 
 #include <stdint.h>
 #include <stdio.h>

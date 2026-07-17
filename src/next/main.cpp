@@ -35,12 +35,12 @@ void
 print_help()
 {
     std::cout
-        << "usage: Xmin-next [DISPLAY] [--display-fd FD] "
+        << "usage: Xmin [DISPLAY] [--display-fd FD] "
            "(--auth FILE | --cookie-hex HEX | --no-auth)\n"
         << "                 [--screen WIDTHxHEIGHT] [--max-clients N]\n"
-        << "       Xmin-next --client-fd FD "
+        << "       Xmin --client-fd FD "
            "(--cookie-hex HEX | --no-auth) [--screen WIDTHxHEIGHT]\n"
-        << "       Xmin-next --help | --version\n";
+        << "       Xmin --help | --version\n";
 }
 
 template <typename T>
@@ -133,7 +133,7 @@ parse_cookie(std::string_view text, std::vector<std::uint8_t> &cookie)
 int
 fail(std::string_view message)
 {
-    std::cerr << "Xmin-next: " << message << '\n';
+    std::cerr << "Xmin: " << message << '\n';
     return 2;
 }
 
@@ -169,7 +169,7 @@ run(int argc, char **argv)
             return 0;
         }
         if (argument == "--version") {
-            std::cout << "Xmin-next " << XMIN_VERSION << '\n';
+            std::cout << "Xmin " << XMIN_VERSION << '\n';
             return 0;
         }
         if (argument == "--client-fd" || argument == "--display-fd" ||
@@ -290,7 +290,7 @@ run(int argc, char **argv)
             UniqueFd(client_fd), std::move(config), state);
         const auto result = connection.serve();
         if (!result) {
-            std::cerr << "Xmin-next: " << result.error().message << '\n';
+            std::cerr << "Xmin: " << result.error().message << '\n';
             return 1;
         }
         return 0;
@@ -302,27 +302,27 @@ run(int argc, char **argv)
     }
     auto listener = DisplaySocket::open(requested_display, runtime_root);
     if (!listener) {
-        std::cerr << "Xmin-next: " << listener.error().message << '\n';
+        std::cerr << "Xmin: " << listener.error().message << '\n';
         return 1;
     }
     if (authentication == Authentication::authority_file) {
         auto cookie = xmin::next::load_xauthority_cookie(
             authority_path, listener.value().display());
         if (!cookie) {
-            std::cerr << "Xmin-next: " << cookie.error().message << '\n';
+            std::cerr << "Xmin: " << cookie.error().message << '\n';
             return 1;
         }
         config.cookie = std::move(cookie.value());
     }
 
-    std::cerr << "Xmin-next: listening on :" << listener.value().display()
+    std::cerr << "Xmin: listening on :" << listener.value().display()
               << " at " << listener.value().socket_path() << '\n';
     xmin::next::Server server(
         std::move(listener.value()), std::move(config), maximum_clients,
         UniqueFd(display_fd));
     const auto result = server.run();
     if (!result) {
-        std::cerr << "Xmin-next: " << result.error().message << '\n';
+        std::cerr << "Xmin: " << result.error().message << '\n';
         return 1;
     }
     return 0;
@@ -338,11 +338,11 @@ main(int argc, char **argv)
         return run(argc, argv);
     }
     catch (const std::bad_alloc &) {
-        std::cerr << "Xmin-next: out of memory\n";
+        std::cerr << "Xmin: out of memory\n";
         return 1;
     }
     catch (const std::exception &error) {
-        std::cerr << "Xmin-next: fatal error: " << error.what() << '\n';
+        std::cerr << "Xmin: fatal error: " << error.what() << '\n';
         return 1;
     }
 }

@@ -1,8 +1,9 @@
 #ifndef XMIN_NEXT_GENERATED_CORE_KEYMAP_HPP
 #define XMIN_NEXT_GENERATED_CORE_KEYMAP_HPP
 
-// Captured from Xmin's pinned xmin-us.xkb map; do not edit.
-// Run tools/capture-next-core-keymap.c against the legacy oracle.
+// Fixed US keymap and input defaults retained from the original Xmin profile.
+// This checked-in table is the canonical server input; no runtime XKB database
+// or legacy-server generator is required.
 
 #include <array>
 #include <cstddef>
