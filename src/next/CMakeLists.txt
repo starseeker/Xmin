@@ -1,6 +1,21 @@
+add_library(xmin_platform STATIC
+  clock.cpp
+  display_socket.cpp
+  shared_memory.cpp
+  xauthority.cpp
+)
+add_library(Xmin::next_platform ALIAS xmin_platform)
+target_compile_features(xmin_platform PUBLIC cxx_std_17)
+target_compile_definitions(xmin_platform PRIVATE _POSIX_C_SOURCE=200809L)
+target_include_directories(xmin_platform
+  PUBLIC
+    "$<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>"
+    "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
+)
+xmin_enable_warnings(xmin_platform)
+
 add_library(xmin_next_core STATIC
   atom_table.cpp
-  clock.cpp
   color.cpp
   connection.cpp
   core_protocol.cpp
@@ -9,7 +24,6 @@ add_library(xmin_next_core STATIC
   compatibility_protocol.cpp
   cursor_protocol.cpp
   damage_protocol.cpp
-  display_socket.cpp
   font.cpp
   font_protocol.cpp
   present_protocol.cpp
@@ -21,11 +35,9 @@ add_library(xmin_next_core STATIC
   region.cpp
   server.cpp
   server_state.cpp
-  shared_memory.cpp
   shm_protocol.cpp
   surface.cpp
   wire.cpp
-  xauthority.cpp
   xkb_protocol.cpp
   xinput_protocol.cpp
   xinput_legacy_protocol.cpp
@@ -40,7 +52,7 @@ target_include_directories(xmin_next_core
     "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
 )
 xmin_enable_warnings(xmin_next_core)
-target_link_libraries(xmin_next_core PUBLIC Xmin::pixman)
+target_link_libraries(xmin_next_core PUBLIC Xmin::next_platform Xmin::pixman)
 
 add_executable(xmin_next main.cpp)
 add_executable(Xmin::next_server ALIAS xmin_next)

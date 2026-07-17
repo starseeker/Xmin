@@ -113,6 +113,32 @@ if(TARGET Xmin::run)
   )
   set_tests_properties(xmin.launcher-signal-cleanup PROPERTIES TIMEOUT 30)
 
+  if(TARGET Xmin::next_server)
+    add_test(NAME xmin.next-launcher-auth
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_next>
+        --screen 320x240x24
+        -- $<TARGET_FILE:xmin_launcher_child>
+    )
+    set_tests_properties(xmin.next-launcher-auth PROPERTIES TIMEOUT 20)
+
+    add_test(NAME xmin.next-launcher-concurrent
+      COMMAND xmin_launcher_concurrent
+        $<TARGET_FILE:xmin_run>
+        $<TARGET_FILE:xmin_next>
+        $<TARGET_FILE:xmin_launcher_child>
+    )
+    set_tests_properties(xmin.next-launcher-concurrent PROPERTIES TIMEOUT 30)
+
+    add_test(NAME xmin.next-launcher-signal-cleanup
+      COMMAND xmin_launcher_signal
+        $<TARGET_FILE:xmin_run>
+        $<TARGET_FILE:xmin_next>
+    )
+    set_tests_properties(
+      xmin.next-launcher-signal-cleanup PROPERTIES TIMEOUT 30)
+  endif()
+
   if(TARGET Xmin::ctl)
     add_executable(xminctl_target
       integration/xminctl_target.c

@@ -109,6 +109,7 @@ test_xauthority(const std::string &root)
     const std::string wildcard_path = root + "/wildcard-authority";
     const std::string local_empty_path = root + "/local-empty-authority";
     const std::string invalid_path = root + "/invalid-authority";
+    const std::string written_path = root + "/written-authority";
     const std::vector<std::uint8_t> wildcard_cookie{1, 2, 3, 4};
     const std::vector<std::uint8_t> local_cookie{5, 6, 7, 8};
     std::vector<std::uint8_t> records;
@@ -131,13 +132,24 @@ test_xauthority(const std::string &root)
     auto wildcard = xmin::next::load_xauthority_cookie(wildcard_path, 9);
     auto local_empty = xmin::next::load_xauthority_cookie(local_empty_path, 9);
     auto malformed = xmin::next::load_xauthority_cookie(invalid_path, 7);
+    auto random = xmin::next::secure_random_bytes(16);
+    auto written = random
+        ? xmin::next::write_xauthority_cookie(written_path, random.value())
+        : xmin::next::Result<void>::failure(
+              xmin::next::ErrorCode::io, "random generation failed");
+    auto round_trip = written
+        ? xmin::next::load_xauthority_cookie(written_path, 42)
+        : xmin::next::Result<std::vector<std::uint8_t>>::failure(
+              xmin::next::ErrorCode::io, "authority writing failed");
     const bool passed = selected && selected.value() == local_cookie &&
         !missing && wildcard && wildcard.value() == wildcard_cookie &&
-        !local_empty && !malformed;
+        !local_empty && !malformed && random && written && round_trip &&
+        round_trip.value() == random.value();
     static_cast<void>(::unlink(valid_path.c_str()));
     static_cast<void>(::unlink(wildcard_path.c_str()));
     static_cast<void>(::unlink(local_empty_path.c_str()));
     static_cast<void>(::unlink(invalid_path.c_str()));
+    static_cast<void>(::unlink(written_path.c_str()));
     return passed;
 }
 
