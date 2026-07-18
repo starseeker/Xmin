@@ -171,12 +171,15 @@ OSMesaMakeCurrent(OSMesaContext ctx, void *buffer, GLenum type,
 
 
 /*
- * Xmin extension: bind distinct draw and read image buffers to one context.
- * The draw and read buffers use the context format and the same component
- * type, but may have different dimensions. This mirrors the separate
- * drawable arguments of glXMakeContextCurrent without requiring DRI. The
- * read buffer is tightly packed; OSMESA_ROW_LENGTH continues to describe
- * only the draw buffer.
+ * Bind distinct draw and read color buffers to one context.  This is useful
+ * to window-system adapters implementing separate draw and read drawables.
+ * The buffers use the context format and the same component type, but may
+ * have different dimensions.  The read buffer is tightly packed;
+ * OSMESA_ROW_LENGTH continues to describe only the draw buffer.
+ *
+ * Only the color read buffer is supplied by this extension.  While distinct
+ * buffers are bound, depth, stencil, and accumulation reads are unavailable.
+ * OSMesaMakeCurrent retains its original single-framebuffer behavior.
  */
 GLAPI GLboolean GLAPIENTRY
 OSMesaMakeCurrentSeparate(OSMesaContext ctx,

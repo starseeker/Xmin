@@ -1175,8 +1175,13 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[0] = 8; // MapWindow
     put16(request, 2, 2, little);
     put32(request, 4, child, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply))
         return false;
+    if (reply[0] != 19 || get16(reply, 2, little) != 12 ||
+        get32(reply, 4, little) != child || get32(reply, 8, little) != child ||
+        reply[12] != 0) {
+        return false;
+    }
 
     request[0] = 15; // QueryTree(root)
     put32(request, 4, root_window, little);
@@ -1312,8 +1317,12 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     request[0] = 4; // DestroyWindow
     put16(request, 2, 2, little);
     put32(request, 4, child, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 18 || get16(reply, 2, little) != 24 ||
+        get32(reply, 4, little) != child || get32(reply, 8, little) != child ||
+        reply[12] != 0) {
         return false;
+    }
     request[0] = 15; // QueryTree(destroyed child)
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
         reply[0] != 0 || reply[1] != 3 ||

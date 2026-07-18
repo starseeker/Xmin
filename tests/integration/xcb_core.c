@@ -1040,6 +1040,58 @@ main(void)
     memcpy(&pixel, xcb_get_image_data(image) + 4, sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x0000ff00U)
         goto cleanup;
+    stage = "copying root inferiors into a pixmap";
+    {
+        const uint32_t include_values[] = {
+            0x00ffff00U,
+            0x0000ffffU,
+            XCB_SUBWINDOW_MODE_INCLUDE_INFERIORS
+        };
+        const uint32_t clip_by_children =
+            XCB_SUBWINDOW_MODE_CLIP_BY_CHILDREN;
+
+        if (!checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics,
+                         XCB_GC_FOREGROUND | XCB_GC_BACKGROUND |
+                             XCB_GC_SUBWINDOW_MODE,
+                         include_values),
+                     "ChangeGC IncludeInferiors") ||
+            !checked(connection,
+                     xcb_copy_area_checked(
+                         connection, screen->root, pixmap, graphics,
+                         translated->dst_x + 1, translated->dst_y,
+                         0, 0, 1, 1),
+                     "CopyArea IncludeInferiors") ||
+            !checked(connection,
+                     xcb_copy_plane_checked(
+                         connection, screen->root, pixmap, graphics,
+                         translated->dst_x + 1, translated->dst_y,
+                         1, 0, 1, 1, 0x00000100U),
+                     "CopyPlane IncludeInferiors") ||
+            !checked(connection,
+                     xcb_change_gc_checked(
+                         connection, graphics, XCB_GC_SUBWINDOW_MODE,
+                         &clip_by_children),
+                     "restore GC subwindow mode")) {
+            goto cleanup;
+        }
+    }
+    free(image);
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap,
+                      0, 0, 2, 1, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL ||
+        xcb_get_image_data_length(image) < 8)
+        goto cleanup;
+    memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
+    if ((pixel & 0x00ffffffU) != 0x0000ff00U)
+        goto cleanup;
+    memcpy(&pixel, xcb_get_image_data(image) + 4, sizeof(pixel));
+    if ((pixel & 0x00ffffffU) != 0x00ffff00U)
+        goto cleanup;
     stage = "drawing core point and line primitives";
     {
         const uint32_t stroke = 0x00fedcbaU;

@@ -63,16 +63,29 @@ struct osmesa_context {
     GLvisual *gl_visual;		/*< Describes the buffers */
     struct gl_renderbuffer *rb;  /*< The user's colorbuffer */
     GLframebuffer *gl_buffer;	/*< The framebuffer, containing user's rb */
-    struct gl_renderbuffer *read_rb; /*< Separate user read colorbuffer */
-    GLframebuffer *read_buffer; /*< Framebuffer containing read_rb */
+    struct gl_renderbuffer *read_rb; /*< Lazily-created read colorbuffer */
+    GLframebuffer *read_buffer; /*< Lazily-created read framebuffer */
     GLenum format;		/*< User-specified context format */
     GLint userRowLength;		/*< user-specified number of pixels per row */
     GLint rInd, gInd, bInd, aInd;/*< index offsets for RGBA formats */
-    GLvoid *rowaddr[MAX_HEIGHT];	/*< address of first pixel in each image row */
     GLboolean yup;		/*< TRUE  -> Y increases upward */
     /*< FALSE -> Y increases downward */
     GLboolean enable_fxaa;	/*< TRUE to enable FXAA post-processing */
 };
+
+
+/**
+ * OSMesa color renderbuffer.  Keeping the precomputed row table with its
+ * renderbuffer lets the ordinary and separate-read paths use the same direct
+ * row lookup without format, stride, or orientation work in span callbacks.
+ */
+struct osmesa_renderbuffer {
+    struct gl_renderbuffer base; /*< Base class - this must be first */
+    GLvoid *rowaddr[MAX_HEIGHT];
+};
+
+
+#define OSMESA_RENDERBUFFER(rb) ((struct osmesa_renderbuffer *) (rb))
 
 
 static INLINE OSMesaContext
@@ -86,34 +99,8 @@ OSMESA_CONTEXT(GLcontext *ctx)
 static INLINE GLvoid *
 osmesa_span_row(OSMesaContext osmesa, struct gl_renderbuffer *rb, GLint y)
 {
-    GLint bytes_per_component;
-    GLint components;
-    GLint row_length;
-    GLint row;
-
-    if (osmesa->format == OSMESA_RGB_565) {
-	bytes_per_component = 2;
-	components = 1;
-    } else {
-	if (rb->DataType == GL_UNSIGNED_BYTE)
-	    bytes_per_component = 1;
-	else if (rb->DataType == GL_UNSIGNED_SHORT)
-	    bytes_per_component = 2;
-	else
-	    bytes_per_component = 4;
-	if (osmesa->format == OSMESA_COLOR_INDEX)
-	    components = 1;
-	else if (osmesa->format == OSMESA_RGB || osmesa->format == OSMESA_BGR)
-	    components = 3;
-	else
-	    components = 4;
-    }
-
-    row_length = rb == osmesa->rb && osmesa->userRowLength ?
-	osmesa->userRowLength : (GLint) rb->Width;
-    row = osmesa->yup ? y : (GLint) rb->Height - y - 1;
-    return (GLubyte *) rb->Data +
-	(size_t) row * row_length * components * bytes_per_component;
+    (void) osmesa;
+    return OSMESA_RENDERBUFFER(rb)->rowaddr[y];
 }
 
 
@@ -610,7 +597,8 @@ do {					\
    (DST)[osmesa->aInd] = A;		\
 } while (0)
 
-#define PIXELADDR4(X,Y)  ((GLchan *) osmesa->rowaddr[Y] + 4 * (X))
+#define PIXELADDR4(X,Y)  \
+   ((GLchan *) OSMESA_RENDERBUFFER(osmesa->rb)->rowaddr[Y] + 4 * (X))
 
 
 /**
@@ -1019,27 +1007,28 @@ osmesa_choose_line(GLcontext *ctx)
 
 
 /**
- * Recompute the values of the context's rowaddr array.
+ * Recompute the row addresses for one user-provided color renderbuffer.
  */
 static void
-compute_row_addresses(OSMesaContext osmesa)
+compute_row_addresses(OSMesaContext osmesa, struct gl_renderbuffer *rb)
 {
+    struct osmesa_renderbuffer *orb = OSMESA_RENDERBUFFER(rb);
     GLint bytesPerPixel, bytesPerRow, i;
-    GLubyte *origin = (GLubyte *) osmesa->rb->Data;
+    GLubyte *origin = (GLubyte *) rb->Data;
     GLint bpc; /* bytes per channel */
     GLint rowlength; /* in pixels */
-    GLint height = osmesa->rb->Height;
+    GLint height = rb->Height;
 
-    if (osmesa->userRowLength)
+    if (rb == osmesa->rb && osmesa->userRowLength)
 	rowlength = osmesa->userRowLength;
     else
-	rowlength = osmesa->rb->Width;
+	rowlength = rb->Width;
 
-    if (osmesa->rb->DataType == GL_UNSIGNED_BYTE)
+    if (rb->DataType == GL_UNSIGNED_BYTE)
 	bpc = 1;
-    else if (osmesa->rb->DataType == GL_UNSIGNED_SHORT)
+    else if (rb->DataType == GL_UNSIGNED_SHORT)
 	bpc = 2;
-    else if (osmesa->rb->DataType == GL_FLOAT)
+    else if (rb->DataType == GL_FLOAT)
 	bpc = 4;
     else {
 	_mesa_problem(&osmesa->mesa,
@@ -1066,13 +1055,13 @@ compute_row_addresses(OSMesaContext osmesa)
     if (osmesa->yup) {
 	/* Y=0 is bottom line of window */
 	for (i = 0; i < height; i++) {
-	    osmesa->rowaddr[i] = (GLvoid *)((GLubyte *) origin + i * bytesPerRow);
+	    orb->rowaddr[i] = (GLvoid *) (origin + i * bytesPerRow);
 	}
     } else {
 	/* Y=0 is top line of window */
 	for (i = 0; i < height; i++) {
 	    GLint j = height - i - 1;
-	    osmesa->rowaddr[i] = (GLvoid *)((GLubyte *) origin + j * bytesPerRow);
+	    orb->rowaddr[i] = (GLvoid *) (origin + j * bytesPerRow);
 	}
     }
 }
@@ -1278,7 +1267,7 @@ osmesa_renderbuffer_storage(GLcontext *ctx, struct gl_renderbuffer *rb,
     rb->Width = width;
     rb->Height = height;
 
-    compute_row_addresses(osmesa);
+    compute_row_addresses(osmesa, rb);
 
     return GL_TRUE;
 }
@@ -1291,8 +1280,11 @@ static struct gl_renderbuffer *
 new_osmesa_renderbuffer(GLcontext *ctx, GLenum format, GLenum type)
 {
     const GLuint name = 0;
-    struct gl_renderbuffer *rb = _mesa_new_renderbuffer(ctx, name);
+    struct osmesa_renderbuffer *orb = CALLOC_STRUCT(osmesa_renderbuffer);
+    struct gl_renderbuffer *rb = orb ? &orb->base : NULL;
+    (void) ctx;
     if (rb) {
+	_mesa_init_renderbuffer(rb, name);
 	rb->RefCount = 1;
 	rb->Delete = osmesa_delete_renderbuffer;
 	rb->AllocStorage = osmesa_renderbuffer_storage;
@@ -1481,24 +1473,10 @@ OSMesaCreateContextExt(GLenum format, GLint depthBits, GLint stencilBits,
 	    free(osmesa);
 	    return NULL;
 	}
-	osmesa->read_buffer = _mesa_create_framebuffer(osmesa->gl_visual);
-	if (!osmesa->read_buffer) {
-	    _mesa_unreference_framebuffer(&osmesa->gl_buffer);
-	    _mesa_destroy_visual(osmesa->gl_visual);
-	    _mesa_free_context_data(&osmesa->mesa);
-	    free(osmesa);
-	    return NULL;
-	}
 
 	/* create front color buffer in user-provided memory (no back buffer) */
 	osmesa->rb = new_osmesa_renderbuffer(&osmesa->mesa, format, type);
-	osmesa->read_rb = new_osmesa_renderbuffer(&osmesa->mesa, format, type);
-	if (!osmesa->rb || !osmesa->read_rb) {
-	    if (osmesa->rb)
-		_mesa_reference_renderbuffer(&osmesa->rb, NULL);
-	    if (osmesa->read_rb)
-		_mesa_reference_renderbuffer(&osmesa->read_rb, NULL);
-	    _mesa_unreference_framebuffer(&osmesa->read_buffer);
+	if (!osmesa->rb) {
 	    _mesa_unreference_framebuffer(&osmesa->gl_buffer);
 	    _mesa_destroy_visual(osmesa->gl_visual);
 	    _mesa_free_context_data(&osmesa->mesa);
@@ -1506,19 +1484,9 @@ OSMesaCreateContextExt(GLenum format, GLint depthBits, GLint stencilBits,
 	    return NULL;
 	}
 	_mesa_add_renderbuffer(osmesa->gl_buffer, BUFFER_FRONT_LEFT, osmesa->rb);
-	_mesa_add_renderbuffer(osmesa->read_buffer, BUFFER_FRONT_LEFT,
-			       osmesa->read_rb);
 	assert(osmesa->rb->RefCount == 2);
-	assert(osmesa->read_rb->RefCount == 2);
 
 	_mesa_add_soft_renderbuffers(osmesa->gl_buffer,
-				     GL_FALSE, /* color */
-				     osmesa->gl_visual->haveDepthBuffer,
-				     osmesa->gl_visual->haveStencilBuffer,
-				     osmesa->gl_visual->haveAccumBuffer,
-				     GL_FALSE, /* alpha */
-				     GL_FALSE /* aux */);
-	_mesa_add_soft_renderbuffers(osmesa->read_buffer,
 				     GL_FALSE, /* color */
 				     osmesa->gl_visual->haveDepthBuffer,
 				     osmesa->gl_visual->haveStencilBuffer,
@@ -1546,8 +1514,6 @@ OSMesaCreateContextExt(GLenum format, GLint depthBits, GLint stencilBits,
 		!_tnl_CreateContext(ctx) ||
 		!_swsetup_CreateContext(ctx)) {
 		_mesa_reference_renderbuffer(&osmesa->rb, NULL);
-		_mesa_reference_renderbuffer(&osmesa->read_rb, NULL);
-		_mesa_unreference_framebuffer(&osmesa->read_buffer);
 		_mesa_unreference_framebuffer(&osmesa->gl_buffer);
 		_mesa_destroy_visual(osmesa->gl_visual);
 		_mesa_free_context_data(ctx);
@@ -1594,7 +1560,8 @@ OSMesaDestroyContext(OSMesaContext osmesa)
 
 	_mesa_destroy_visual(osmesa->gl_visual);
 	_mesa_unreference_framebuffer(&osmesa->gl_buffer);
-	_mesa_unreference_framebuffer(&osmesa->read_buffer);
+	if (osmesa->read_buffer)
+	    _mesa_unreference_framebuffer(&osmesa->read_buffer);
 
 	_mesa_free_context_data(&osmesa->mesa);
 	free(osmesa);
@@ -1658,6 +1625,33 @@ osmesa_prepare_buffer(OSMesaContext osmesa, GLframebuffer *framebuffer,
 
 
 static GLboolean
+osmesa_ensure_read_buffer(OSMesaContext osmesa)
+{
+    GLframebuffer *framebuffer;
+    struct gl_renderbuffer *renderbuffer;
+
+    if (osmesa->read_buffer && osmesa->read_rb)
+	return GL_TRUE;
+
+    framebuffer = _mesa_create_framebuffer(osmesa->gl_visual);
+    if (!framebuffer)
+	return GL_FALSE;
+    renderbuffer = new_osmesa_renderbuffer(&osmesa->mesa, osmesa->format,
+					   osmesa->rb->DataType);
+    if (!renderbuffer) {
+	_mesa_unreference_framebuffer(&framebuffer);
+	return GL_FALSE;
+    }
+
+    _mesa_add_renderbuffer(framebuffer, BUFFER_FRONT_LEFT, renderbuffer);
+    assert(renderbuffer->RefCount == 2);
+    osmesa->read_buffer = framebuffer;
+    osmesa->read_rb = renderbuffer;
+    return GL_TRUE;
+}
+
+
+static GLboolean
 osmesa_make_current_buffers(OSMesaContext osmesa,
 			    void *draw_buffer, GLsizei draw_width,
 			    GLsizei draw_height,
@@ -1665,14 +1659,17 @@ osmesa_make_current_buffers(OSMesaContext osmesa,
 			    GLsizei read_height, GLenum type,
 			    GLboolean separate)
 {
-    GLframebuffer *read_framebuffer = separate ?
-	osmesa->read_buffer : osmesa->gl_buffer;
+    GLframebuffer *read_framebuffer;
 
     if (!osmesa_valid_binding(osmesa, draw_buffer, type,
 			      draw_width, draw_height) ||
 	!osmesa_valid_binding(osmesa, read_buffer, type,
 			      read_width, read_height))
 	return GL_FALSE;
+    if (separate && !osmesa_ensure_read_buffer(osmesa))
+	return GL_FALSE;
+
+    read_framebuffer = separate ? osmesa->read_buffer : osmesa->gl_buffer;
 
     osmesa_update_state(&osmesa->mesa, 0);
 
@@ -1710,7 +1707,9 @@ osmesa_make_current_buffers(OSMesaContext osmesa,
     if (separate)
 	_mesa_resize_framebuffer(&osmesa->mesa, osmesa->read_buffer,
 				 read_width, read_height);
-    compute_row_addresses(osmesa);
+    compute_row_addresses(osmesa, osmesa->rb);
+    if (separate)
+	compute_row_addresses(osmesa, osmesa->read_rb);
 
     return GL_TRUE;
 }
@@ -1791,7 +1790,9 @@ OSMesaPixelStore(GLint pname, GLint value)
 	    return;
     }
 
-    compute_row_addresses(osmesa);
+    compute_row_addresses(osmesa, osmesa->rb);
+    if (osmesa->read_rb && osmesa->read_rb->Data)
+	compute_row_addresses(osmesa, osmesa->read_rb);
 }
 
 

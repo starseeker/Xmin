@@ -14,6 +14,114 @@ patches = []
 generator = "tools/generate-protocol-coverage.py"
 
 [[source]]
+name = "libxcb-public-headers"
+revision = "1.17.0"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "libxcb-1.17.0.tar.xz"
+sha256 = "599ebf9996710fea71622e6e184f3a8ad5b43d0e5fa8c4e407123c88a59a6d55"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb"
+retained_paths = ["xcb.h and xcbext.h public ABI declarations; no libxcb implementation sources"]
+license_paths = ["LICENSES/libxcb/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-public-headers"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-0.4.1.tar.xz"
+sha256 = "5abe3bbbd8e54f0fa3ec945291b7e8fa8cfd3cccc43718f8758430f94126e512"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb"
+retained_paths = ["xcb_atom.h, xcb_aux.h, xcb_event.h, and xcb_util.h public ABI declarations; no implementation sources"]
+license_paths = ["LICENSES/xcb-util/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-image-public-headers"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-image-0.4.1.tar.xz"
+sha256 = "ccad8ee5dadb1271fd4727ad14d9bd77a64e505608766c4e98267d9aede40d3d"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb"
+retained_paths = ["xcb_image.h, xcb_pixel.h, and xcb_bitops.h public ABI declarations; no implementation sources"]
+license_paths = ["LICENSES/xcb-util-image/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-keysyms-public-header"
+revision = "0.4.1"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-keysyms-0.4.1.tar.xz"
+sha256 = "7c260a5294412aed429df1da2f8afd3bd07b7cba3fec772fba15a613a6d5c638"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb/xcb_keysyms.h"
+retained_paths = ["public ABI declaration only; no implementation sources"]
+license_paths = ["LICENSES/xcb-util-keysyms/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-renderutil-public-header"
+revision = "0.3.10"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-renderutil-0.3.10.tar.xz"
+sha256 = "3e15d4f0e22d8ddbfbb9f5d77db43eacd7a304029bf25a6166cc63caa96d04ba"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb/xcb_renderutil.h"
+retained_paths = ["public ABI declaration only; no implementation sources"]
+license_paths = ["LICENSES/xcb-util-renderutil/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-cursor-public-header"
+revision = "0.1.5"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-cursor-0.1.5.tar.xz"
+sha256 = "0caf99b0d60970f81ce41c7ba694e5eaaf833227bb2cbcdb2f6dc9666a663c57"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb/xcb_cursor.h"
+retained_paths = ["public ABI declaration only; no implementation sources"]
+license_paths = ["LICENSES/xcb-util-cursor/COPYING"]
+patches = []
+
+[[source]]
+name = "xcb-util-wm-icccm-public-header"
+revision = "0.4.2"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-util-wm-0.4.2.tar.xz"
+sha256 = "62c34e21d06264687faea7edbf63632c9f04d55e72114aa4a57bb95e4f888a0b"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb/xcb_icccm.h"
+retained_paths = ["ICCCM public ABI declaration only; no implementation sources"]
+license_paths = ["LICENSES/xcb-util-wm/COPYING"]
+patches = []
+
+[[source]]
+name = "libxkbcommon-public-headers"
+revision = "1.13.2"
+url = "https://github.com/xkbcommon/libxkbcommon/archive/refs/tags/"
+archive = "xkbcommon-1.13.2.tar.gz"
+sha256 = "acc4d5f7c3cbba5f9f8d08d8bdbeede84ecede46792f47929aa9321873385528"
+status = "headers-only"
+local_path = "src/client/x11/include/xkbcommon"
+retained_paths = ["public xkbcommon and xkbcommon-x11 ABI declarations; no implementation sources"]
+license_paths = ["LICENSES/libxkbcommon/LICENSE"]
+patches = []
+
+[[source]]
+name = "xcb-proto-generated-client-headers"
+revision = "1.17.0"
+url = "https://www.x.org/releases/individual/xcb/"
+archive = "xcb-proto-1.17.0.tar.xz"
+sha256 = "2c1bacd2110f4799f74de6ebb714b94cf6f80fb112316b1219480fd22562148c"
+status = "headers-only"
+local_path = "src/client/x11/include/xcb"
+retained_paths = ["generated protocol public ABI declarations used by Qt qxcb; no generated upstream implementation sources"]
+license_paths = ["LICENSES/xcb-proto/COPYING"]
+patches = ["patches/qt-client/0001-xkb-cxx-keywords.patch"]
+
+[[source]]
 name = "pixman"
 revision = "0.46.2"
 url = "https://www.cairographics.org/releases/"
@@ -28,10 +136,10 @@ importer = "tools/import-pixman.sh"
 
 [[source]]
 name = "osmesa"
-revision = "986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c"
+revision = "13b14a95b470fac7022844ea91443f39a0fbdbf8"
 url = "https://github.com/starseeker/osmesa"
-tree = "18c2c015ca9d8373ee0159ea558effb439814a73"
-archive_sha256 = "1048a8fb53cee26acaf943b5175098832e259aadc5fcdc9b7cff04b981fc1224"
+tree = "257f33229e044ea20b67e7abc10e81d0dbe171a0"
+archive_sha256 = "cb9dbc28f01f7098d7637282b9dd6e9ba83447e4e82b83dd8bd99cd77ba60fe3"
 status = "optional-import"
 local_path = "third_party/osmesa"
 retained_paths = [
@@ -41,7 +149,7 @@ retained_paths = [
   "Xmin-owned drivers/osmesa/xmin_osmesa_adapter.c integration boundary",
 ]
 license_paths = ["LICENSES/osmesa/LICENSE"]
-patches = ["patches/osmesa/0001-separate-draw-read-buffers.patch"]
+patches = []
 importer = "tools/import-osmesa.sh"
 generator = "tools/generate-osmesa-sources.py"
 

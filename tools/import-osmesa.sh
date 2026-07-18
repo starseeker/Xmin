@@ -3,7 +3,7 @@
 set -eu
 
 if [ "$#" -ne 1 ]; then
-    echo "usage: $0 /path/to/osmesa-986a9ce0" >&2
+    echo "usage: $0 /path/to/osmesa-13b14a95" >&2
     exit 2
 fi
 
@@ -47,10 +47,7 @@ python3 "$root/tools/generate-osmesa-sources.py" \
     "$source_tree/src/CMakeLists.txt" \
     "$root/third_party/osmesa/osmesa-sources.cmake"
 
-patch -s -V none -d "$root" -p1 < \
-    "$root/patches/osmesa/0001-separate-draw-read-buffers.patch"
-
 install -d "$root/LICENSES/osmesa"
 cp -p "$source_tree/LICENSE" "$root/LICENSES/osmesa/LICENSE"
 
-echo "Imported OSMesa 986a9ce0a4fa9a0ee3a79c821b293aa47d6cab6c runtime sources."
+echo "Imported OSMesa 13b14a95b470fac7022844ea91443f39a0fbdbf8 runtime sources."

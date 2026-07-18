@@ -23,7 +23,8 @@ controller codec, and raster semantics should not require redesign.
 
 Host XCB, xkbcommon-x11, Qt, GTK, and Xlib are test-only discoveries. Missing
 test packages reduce the applicable acceptance set but do not affect the
-product graph.
+product graph. `XMIN_BUILD_QT_CLIENT` instead builds Xmin's own narrow client
+ABI and does not discover or link those host X libraries.
 
 ## Presets
 
@@ -53,6 +54,7 @@ cmake --preset minimal --fresh
 | Option | Default | Meaning |
 | --- | --- | --- |
 | `XMIN_BUILD_CLIENT_GL` | `ON` | Build the independent software-direct `libGL`. |
+| `XMIN_BUILD_QT_CLIENT` | `OFF` | Build and install the Xmin-native C++17 XCB/xkbcommon client SDK used by patched Qt qxcb. |
 | `XMIN_BUILD_LAUNCHER` | `ON` | Build authenticated process supervisor `xmin-run`. |
 | `XMIN_BUILD_TESTS` | top-level `ON` | Build the self-tests and independent client gates. |
 | `XMIN_REQUIRE_TOOLKIT_TESTS` | `OFF` | Require Qt 5/6 and GTK 3 acceptance targets. |
@@ -100,7 +102,10 @@ cmake --install build/release --prefix /opt/xmin
 
 The package installs `Xmin`, `xmin-run`, `xminctl`, documentation, and—when
 enabled—`lib/xmin/libGL` plus its GL/GLX/OSMesa headers. Applications opt into
-the companion GL DSO explicitly; it is not a server dependency.
+the companion GL DSO explicitly; it is not a server dependency. Enabling
+`XMIN_BUILD_QT_CLIENT` also installs `Xmin::QtX11`, its standard ABI headers,
+and the XCB bridge header for `Xmin::GL`. See `patches/qt/README.md` for the
+validated Qt configuration.
 
 Every test-enabled build contains `xmin.install-relocation-dependencies`. It
 installs into a disposable arbitrary prefix, runs the installed launcher and
@@ -128,11 +133,12 @@ are in `UPSTREAM.toml`.
 
 ```sh
 tools/import-pixman.sh /path/to/pixman-0.46.2
-tools/import-osmesa.sh /path/to/osmesa-986a9ce0
+tools/import-osmesa.sh /path/to/osmesa-13b14a95
 ```
 
 Pixman uses `tools/pixman-files.txt` as an exact allowlist. OSMesa regenerates
-its CMake source list and applies the recorded draw/read-buffer patch. Preserve
+its CMake source list from the pinned upstream revision, which already contains
+the neutral separate draw/read-buffer API. Preserve
 `third_party/osmesa/src/drivers/osmesa/xmin_osmesa_adapter.c`; it is
 project-owned and confines Mesa-private types to the dependency boundary.
 

@@ -98,6 +98,29 @@ if(XMIN_BUILD_TESTS)
 endif()
 
 if(XMIN_ENABLE_INSTALL)
+  include(CMakePackageConfigHelpers)
+  write_basic_package_version_file(
+    "${PROJECT_BINARY_DIR}/XminConfigVersion.cmake"
+    VERSION "${PROJECT_VERSION}"
+    COMPATIBILITY SameMajorVersion
+  )
+  configure_package_config_file(
+    "${PROJECT_SOURCE_DIR}/cmake/XminConfig.cmake.in"
+    "${PROJECT_BINARY_DIR}/XminConfig.cmake"
+    INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Xmin"
+  )
+  install(EXPORT XminTargets
+    FILE XminTargets.cmake
+    NAMESPACE Xmin::
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Xmin"
+    COMPONENT Development
+  )
+  install(FILES
+    "${PROJECT_BINARY_DIR}/XminConfig.cmake"
+    "${PROJECT_BINARY_DIR}/XminConfigVersion.cmake"
+    DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Xmin"
+    COMPONENT Development
+  )
   install(
     FILES README.txt DESIGN.md BUILDING.md
     TYPE DOC
@@ -107,6 +130,7 @@ endif()
 
 message(STATUS "Xmin ${PROJECT_VERSION} configuration")
 message(STATUS "  Direct client OpenGL:  ${XMIN_BUILD_CLIENT_GL}")
+message(STATUS "  Qt X11 client SDK:     ${XMIN_BUILD_QT_CLIENT}")
 message(STATUS "  MIT-SHM support:       ${XMIN_HAVE_MITSHM}")
 message(STATUS "  Integrated launcher:   ${XMIN_BUILD_LAUNCHER}")
 message(STATUS "  Tests:                 ${XMIN_BUILD_TESTS}")

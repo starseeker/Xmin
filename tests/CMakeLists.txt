@@ -72,6 +72,23 @@ if(TARGET Xmin::run)
   )
   set_tests_properties(xmin.launcher-signal-cleanup PROPERTIES TIMEOUT 30)
 
+  if(TARGET Xmin::QtX11)
+    add_executable(xmin_qt_client_core integration/qt_client_core.c)
+    target_compile_features(xmin_qt_client_core PRIVATE c_std_11)
+    target_include_directories(xmin_qt_client_core PRIVATE
+      "${PROJECT_BINARY_DIR}/generated"
+    )
+    target_link_libraries(xmin_qt_client_core PRIVATE Xmin::QtX11)
+    xmin_enable_warnings(xmin_qt_client_core)
+    add_test(NAME xmin.qt-client-core
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 96x80x24
+        -- $<TARGET_FILE:xmin_qt_client_core>
+    )
+    set_tests_properties(xmin.qt-client-core PROPERTIES TIMEOUT 20)
+  endif()
+
   # Host XCB is test-only and remains an independent protocol authority.
   find_path(XMIN_TEST_XCB_INCLUDE_DIR xcb/xcb.h)
   find_library(XMIN_TEST_XCB_LIBRARY NAMES xcb)
@@ -221,6 +238,12 @@ endif()
 
 # The direct client library is intentionally independent of server-side GLX.
 if(TARGET Xmin::gl_client)
+  add_executable(xmin_osmesa_separate glx/osmesa_separate.c)
+  target_compile_features(xmin_osmesa_separate PRIVATE c_std_11)
+  target_link_libraries(xmin_osmesa_separate PRIVATE Xmin::gl_client)
+  xmin_enable_warnings(xmin_osmesa_separate)
+  add_test(NAME xmin.osmesa-separate COMMAND xmin_osmesa_separate)
+
   add_executable(xmin_software_direct_glsl glx/software_direct_glsl.c)
   target_compile_features(xmin_software_direct_glsl PRIVATE c_std_11)
   target_link_libraries(xmin_software_direct_glsl PRIVATE Xmin::gl_client)

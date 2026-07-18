@@ -7,14 +7,20 @@
 #include <GL/glx.h>
 #include <GL/glxext.h>
 #include <OSMesa/osmesa.h>
+#include <Xmin/GLXxcb.h>
 #include <xmin/config.h>
 #include "xmin_osmesa_adapter.h"
 
 #include <mutex>
+#include <new>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+#if XMIN_HAVE_QT_XCB
+#include <xcb/xcb.h>
+#endif
 
 #if XMIN_IS_BIG_ENDIAN
 #define XMIN_OSMESA_X_FORMAT OSMESA_ARGB
@@ -101,6 +107,74 @@ static thread_local GLXDrawable xmin_current_draw;
 static thread_local GLXDrawable xmin_current_read;
 static thread_local Display *xmin_current_display;
 static thread_local unsigned int xmin_swap_interval;
+
+#if XMIN_HAVE_QT_XCB
+struct xmin_xcb_display {
+    xcb_connection_t *connection = nullptr;
+    xmin_xcb_display *next = nullptr;
+};
+
+static std::mutex xmin_xcb_display_mutex;
+static xmin_xcb_display *xmin_xcb_displays;
+
+static xcb_connection_t *
+xmin_xcb_connection(Display *display)
+{
+    const std::lock_guard<std::mutex> lock(xmin_xcb_display_mutex);
+    for (auto *entry = xmin_xcb_displays; entry != nullptr;
+         entry = entry->next) {
+        if (reinterpret_cast<Display *>(entry) == display)
+            return entry->connection;
+    }
+    return nullptr;
+}
+#endif
+
+Display *
+xminGlxCreateXcbDisplay(struct xcb_connection_t *connection)
+{
+#if XMIN_HAVE_QT_XCB
+    if (connection == nullptr || xcb_connection_has_error(connection) != 0)
+        return nullptr;
+    auto *entry = new (std::nothrow) xmin_xcb_display;
+    if (entry == nullptr)
+        return nullptr;
+    entry->connection = connection;
+    {
+        const std::lock_guard<std::mutex> lock(xmin_xcb_display_mutex);
+        entry->next = xmin_xcb_displays;
+        xmin_xcb_displays = entry;
+    }
+    return reinterpret_cast<Display *>(entry);
+#else
+    (void) connection;
+    return nullptr;
+#endif
+}
+
+void
+xminGlxDestroyXcbDisplay(Display *display)
+{
+#if XMIN_HAVE_QT_XCB
+    if (display == nullptr)
+        return;
+    xmin_xcb_display *removed = nullptr;
+    {
+        const std::lock_guard<std::mutex> lock(xmin_xcb_display_mutex);
+        for (auto **link = &xmin_xcb_displays; *link != nullptr;
+             link = &(*link)->next) {
+            if (reinterpret_cast<Display *>(*link) != display)
+                continue;
+            removed = *link;
+            *link = removed->next;
+            break;
+        }
+    }
+    delete removed;
+#else
+    (void) display;
+#endif
+}
 
 static void xmin_install_dispatch_hooks(void);
 
@@ -475,6 +549,20 @@ xmin_drawable_size(Display *display, GLXDrawable handle,
     }
 
     *pbuffer = 0;
+#if XMIN_HAVE_QT_XCB
+    if (auto *connection = xmin_xcb_connection(display)) {
+        auto *reply = xcb_get_geometry_reply(
+            connection,
+            xcb_get_geometry(connection, static_cast<xcb_drawable_t>(handle)),
+            nullptr);
+        if (reply == nullptr)
+            return 0;
+        *width = reply->width;
+        *height = reply->height;
+        free(reply);
+        return 1;
+    }
+#endif
     if (display != NULL && XGetGeometry != NULL) {
         Window root;
         int x;
@@ -657,6 +745,39 @@ xmin_present(Display *display, GLXDrawable handle,
         storage_width = surface->storage_width;
         storage_height = surface->storage_height;
     }
+
+#if XMIN_HAVE_QT_XCB
+    if (auto *connection = xmin_xcb_connection(display)) {
+        auto *geometry = xcb_get_geometry_reply(
+            connection,
+            xcb_get_geometry(connection, static_cast<xcb_drawable_t>(xid)),
+            nullptr);
+        if (geometry == nullptr)
+            return 0;
+        width = geometry->width;
+        height = geometry->height;
+        depth = geometry->depth;
+        free(geometry);
+        const std::uint64_t image_size =
+            static_cast<std::uint64_t>(width) * height * 4U;
+        if (width != storage_width || height != storage_height ||
+            pixels == nullptr || (depth != 24 && depth != 32) ||
+            image_size > UINT32_MAX) {
+            return 0;
+        }
+        const xcb_gcontext_t xcb_gc = xcb_generate_id(connection);
+        xcb_create_gc(connection, xcb_gc,
+                      static_cast<xcb_drawable_t>(xid), 0, nullptr);
+        xcb_put_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP,
+                      static_cast<xcb_drawable_t>(xid), xcb_gc,
+                      static_cast<std::uint16_t>(width),
+                      static_cast<std::uint16_t>(height),
+                      0, 0, 0, static_cast<std::uint8_t>(depth),
+                      static_cast<std::uint32_t>(image_size), pixels);
+        xcb_free_gc(connection, xcb_gc);
+        return xcb_flush(connection) > 0;
+    }
+#endif
 
     if (display == NULL || XGetGeometry == NULL || XCreateGC == NULL ||
         XFreeGC == NULL || XCreateImage == NULL || XPutImage == NULL ||

@@ -48,6 +48,20 @@ struct MappingNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct MapNotifyEvent {
+    std::uint32_t event = 0;
+    std::uint32_t window = 0;
+    bool override_redirect = false;
+    std::uint16_t sequence = 0;
+};
+
+struct UnmapNotifyEvent {
+    std::uint32_t event = 0;
+    std::uint32_t window = 0;
+    bool from_configure = false;
+    std::uint16_t sequence = 0;
+};
+
 struct ShapeNotifyEvent {
     std::uint8_t kind = 0;
     std::uint32_t window = 0;
@@ -348,7 +362,7 @@ struct FocusEvent {
 
 using ClientEvent = std::variant<
     SelectionClearEvent, SelectionRequestEvent, SelectionNotifyEvent,
-    ClientMessageEvent, MappingNotifyEvent,
+    ClientMessageEvent, MappingNotifyEvent, MapNotifyEvent, UnmapNotifyEvent,
     ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,

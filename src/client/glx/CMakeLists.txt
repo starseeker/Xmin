@@ -19,6 +19,16 @@ target_include_directories(xmin_glx_client_api SYSTEM PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/include"
 )
 target_link_libraries(xmin_glx_client_api PRIVATE Threads::Threads)
+if(TARGET Xmin::QtX11)
+  target_compile_definitions(xmin_glx_client_api PRIVATE
+    XMIN_HAVE_QT_XCB=1
+  )
+  target_link_libraries(xmin_glx_client_api PRIVATE Xmin::QtX11)
+else()
+  target_compile_definitions(xmin_glx_client_api PRIVATE
+    XMIN_HAVE_QT_XCB=0
+  )
+endif()
 xmin_enable_warnings(xmin_glx_client_api)
 
 # A complete libGL ABI must export ordinary gl* symbols. The server's OSMesa
@@ -35,7 +45,9 @@ add_library(xmin_gl_client SHARED
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/drivers/osmesa/xmin_osmesa_adapter.c"
 )
 add_library(Xmin::gl_client ALIAS xmin_gl_client)
+add_library(Xmin::GL ALIAS xmin_gl_client)
 set_target_properties(xmin_gl_client PROPERTIES
+  EXPORT_NAME GL
   OUTPUT_NAME GL
   VERSION 1.0.0
   SOVERSION 1
@@ -55,6 +67,7 @@ target_include_directories(xmin_gl_client
   PUBLIC
     "$<BUILD_INTERFACE:${xmin_client_gl_include}>"
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third_party/osmesa/include>"
+    "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src"
     "${PROJECT_SOURCE_DIR}/third_party/osmesa/src/main"
@@ -70,6 +83,9 @@ target_include_directories(xmin_gl_client
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(xmin_gl_client PRIVATE Threads::Threads ${XMIN_M_LIBRARY})
+if(TARGET Xmin::QtX11)
+  target_link_libraries(xmin_gl_client PRIVATE Xmin::QtX11)
+endif()
 if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
   target_compile_definitions(xmin_gl_client PRIVATE UTIL_ARCH_LITTLE_ENDIAN=1)
 else()
@@ -105,7 +121,9 @@ endif()
 
 if(XMIN_ENABLE_INSTALL)
   install(TARGETS xmin_gl_client
+    EXPORT XminTargets
     LIBRARY DESTINATION "${CMAKE_INSTALL_LIBDIR}/xmin"
+    ARCHIVE DESTINATION "${CMAKE_INSTALL_LIBDIR}/xmin"
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Runtime
   )
@@ -115,6 +133,11 @@ if(XMIN_ENABLE_INSTALL)
     "${xmin_client_gl_include}/GL/glx.h"
     "${xmin_client_gl_include}/GL/glxext.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/GL"
+    COMPONENT Development
+  )
+  install(FILES
+    "${xmin_client_gl_include}/Xmin/GLXxcb.h"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/Xmin"
     COMPONENT Development
   )
   install(FILES

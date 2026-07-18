@@ -13,6 +13,8 @@ endfunction()
 
 option(XMIN_BUILD_CLIENT_GL
   "Build the bundled software-direct client libGL" ON)
+option(XMIN_BUILD_QT_CLIENT
+  "Build the Xmin-native XCB/xkbcommon compatibility SDK for Qt" OFF)
 option(XMIN_BUILD_LAUNCHER
   "Build the authenticated xmin-run child launcher" ON)
 option(XMIN_BUILD_TESTS "Build Xmin's self-tests" ${PROJECT_IS_TOP_LEVEL})

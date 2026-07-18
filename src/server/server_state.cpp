@@ -30,6 +30,9 @@ struct ServerState::ManagedSurface {
 
 namespace {
 
+constexpr std::uint32_t structure_notify_mask = 1U << 17;
+constexpr std::uint32_t substructure_notify_mask = 1U << 19;
+
 std::uint32_t
 pack_cursor_color(const RenderColor &color) noexcept
 {
@@ -1920,6 +1923,42 @@ ServerState::update_window_mappings(
             focus == EventDelivery::queue_full
         ? EventDelivery::queue_full
         : append_cursor_change(prospective_cursor, events);
+    bool lifecycle_events_appended = true;
+    try {
+        for (std::size_t index = 0; index < count; ++index) {
+            const auto *candidate = window(changed[index]);
+            if (candidate == nullptr || candidate->id == root_window_id)
+                continue;
+
+            const ClientEvent structure_event = mapped
+                ? ClientEvent{MapNotifyEvent{
+                      candidate->id, candidate->id,
+                      candidate->override_redirect}}
+                : ClientEvent{UnmapNotifyEvent{
+                      candidate->id, candidate->id, false}};
+            for (const auto &selection : candidate->event_masks) {
+                if ((selection.second & structure_notify_mask) != 0)
+                    events.emplace_back(selection.first, structure_event);
+            }
+
+            const auto *parent = window(candidate->parent);
+            if (parent == nullptr)
+                continue;
+            const ClientEvent substructure_event = mapped
+                ? ClientEvent{MapNotifyEvent{
+                      parent->id, candidate->id,
+                      candidate->override_redirect}}
+                : ClientEvent{UnmapNotifyEvent{
+                      parent->id, candidate->id, false}};
+            for (const auto &selection : parent->event_masks) {
+                if ((selection.second & substructure_notify_mask) != 0)
+                    events.emplace_back(selection.first, substructure_event);
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        lifecycle_events_appended = false;
+    }
     for (std::size_t index = 0; index < count; ++index) {
         auto *candidate = window(changed[index]);
         if (candidate != nullptr && candidate->id != root_window_id)
@@ -1929,8 +1968,9 @@ ServerState::update_window_mappings(
         keyboard_ungrab == EventDelivery::queue_full ||
         crossing == EventDelivery::queue_full ||
         focus == EventDelivery::queue_full ||
-        cursor == EventDelivery::queue_full ||
-        !queue_events_atomically(events)) {
+            cursor == EventDelivery::queue_full ||
+            !lifecycle_events_appended ||
+            !queue_events_atomically(events)) {
         return EventDelivery::queue_full;
     }
 
@@ -1950,7 +1990,7 @@ ServerState::update_window_mappings(
             keyboard_ungrab == EventDelivery::delivered ||
             crossing == EventDelivery::delivered ||
             focus == EventDelivery::delivered ||
-            cursor == EventDelivery::delivered
+            cursor == EventDelivery::delivered || !events.empty()
         ? EventDelivery::delivered
         : EventDelivery::no_recipient;
 }

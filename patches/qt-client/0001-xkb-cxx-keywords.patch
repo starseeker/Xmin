@@ -1,0 +1,16 @@
+diff --git a/xcb/xkb.h b/xcb/xkb.h
+--- a/xcb/xkb.h
++++ b/xcb/xkb.h
+@@ -724,7 +724,7 @@ typedef struct xcb_xkb_set_explicit_t {
+     xcb_keycode_t keycode;
+-    uint8_t       explicit;
++    uint8_t       explicit_;
+ } xcb_xkb_set_explicit_t;
+@@ -2002,7 +2002,7 @@ typedef struct xcb_xkb_set_map_values_t {
+     xcb_xkb_set_behavior_t  *behaviors;
+     uint8_t                 *vmods;
+-    xcb_xkb_set_explicit_t  *explicit;
++    xcb_xkb_set_explicit_t  *explicit_;
+     xcb_xkb_key_mod_map_t   *modmap;
+     xcb_xkb_key_v_mod_map_t *vmodmap;
+ } xcb_xkb_set_map_values_t;

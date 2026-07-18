@@ -1611,6 +1611,104 @@ test_focus_events()
 }
 
 bool
+test_structure_mapping_notifications()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t observer = 0x00400000;
+    constexpr std::uint32_t child = owner | 1U;
+    constexpr std::uint32_t structure_notify_mask = 1U << 17;
+    constexpr std::uint32_t substructure_notify_mask = 1U << 19;
+    xmin::server::ServerState server(100, 80);
+    if (!expect(server.register_client(owner) &&
+                    server.register_client(observer),
+                "mapping-notify client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 107);
+    server.note_client_sequence(observer, 109);
+
+    xmin::server::WindowRecord window;
+    window.id = child;
+    window.parent = xmin::server::root_window_id;
+    window.x = 5;
+    window.y = 7;
+    window.width = 20;
+    window.height = 15;
+    if (!expect(server.add_window(std::move(window), owner),
+                "mapping-notify window insertion failed")) {
+        return false;
+    }
+    server.window(child)->event_masks.emplace(
+        owner, structure_notify_mask);
+    server.window(xmin::server::root_window_id)->event_masks.emplace(
+        observer, substructure_notify_mask);
+
+    const auto structure_map = [&]() {
+        const auto *queued = server.next_event(owner);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::MapNotifyEvent>(queued);
+        const bool matches = event != nullptr && event->event == child &&
+            event->window == child && !event->override_redirect &&
+            event->sequence == 107;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto substructure_map = [&]() {
+        const auto *queued = server.next_event(observer);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::MapNotifyEvent>(queued);
+        const bool matches = event != nullptr &&
+            event->event == xmin::server::root_window_id &&
+            event->window == child && !event->override_redirect &&
+            event->sequence == 109;
+        server.pop_event(observer);
+        return matches;
+    };
+    if (!expect(server.set_window_mapped(*server.window(child), true) ==
+                    xmin::server::EventDelivery::delivered &&
+                    server.window(child)->mapped && structure_map() &&
+                    substructure_map() &&
+                    !server.has_pending_event(owner) &&
+                    !server.has_pending_event(observer),
+                "MapNotify routing or payload is wrong")) {
+        return false;
+    }
+
+    const auto structure_unmap = [&]() {
+        const auto *queued = server.next_event(owner);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::UnmapNotifyEvent>(queued);
+        const bool matches = event != nullptr && event->event == child &&
+            event->window == child && !event->from_configure &&
+            event->sequence == 107;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto substructure_unmap = [&]() {
+        const auto *queued = server.next_event(observer);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::UnmapNotifyEvent>(queued);
+        const bool matches = event != nullptr &&
+            event->event == xmin::server::root_window_id &&
+            event->window == child && !event->from_configure &&
+            event->sequence == 109;
+        server.pop_event(observer);
+        return matches;
+    };
+    return expect(
+        server.set_window_mapped(*server.window(child), false) ==
+                xmin::server::EventDelivery::delivered &&
+            !server.window(child)->mapped && structure_unmap() &&
+            substructure_unmap() && !server.has_pending_event(owner) &&
+            !server.has_pending_event(observer),
+        "UnmapNotify routing or payload is wrong");
+}
+
+bool
 test_mapping_lifecycle_events()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -4695,6 +4793,7 @@ main()
             test_crossing_events() &&
             test_automatic_pointer_grab() &&
             test_focus_events() &&
+            test_structure_mapping_notifications() &&
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
             test_grab_transitions() &&

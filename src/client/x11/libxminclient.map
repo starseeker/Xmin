@@ -1,0 +1,7 @@
+{
+  global:
+    xcb_*;
+    xkb_*;
+  local:
+    *;
+};

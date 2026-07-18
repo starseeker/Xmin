@@ -533,6 +533,28 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *map = std::get_if<MapNotifyEvent>(&event)) {
+        writer.u8(19); // MapNotify
+        writer.u8(0);
+        writer.u16(map->sequence);
+        writer.u32(map->event);
+        writer.u32(map->window);
+        writer.u8(map->override_redirect ? 1U : 0U);
+        writer.pad(19);
+        return writer.data();
+    }
+
+    if (const auto *unmap = std::get_if<UnmapNotifyEvent>(&event)) {
+        writer.u8(18); // UnmapNotify
+        writer.u8(0);
+        writer.u16(unmap->sequence);
+        writer.u32(unmap->event);
+        writer.u32(unmap->window);
+        writer.u8(unmap->from_configure ? 1U : 0U);
+        writer.pad(19);
+        return writer.data();
+    }
+
     if (const auto *mapping = std::get_if<MappingNotifyEvent>(&event)) {
         writer.u8(34); // MappingNotify
         writer.u8(0);
@@ -3995,6 +4017,8 @@ Connection::handle_copy_area(const RequestContext &context)
     if (graphics == nullptr)
         return send_error(context.order, bad_graphics_context, context.opcode,
                           context.sequence, *graphics_id);
+    if (graphics->subwindow_mode != 0)
+        source = server_.readable_surface(*source_id);
     if (source->depth() != destination->depth() ||
         graphics->depth != destination->depth()) {
         return send_error(context.order, bad_match, context.opcode,
@@ -4043,6 +4067,8 @@ Connection::handle_copy_plane(const RequestContext &context)
     if (graphics == nullptr)
         return send_error(context.order, bad_graphics_context,
                           context.opcode, context.sequence, *graphics_id);
+    if (graphics->subwindow_mode != 0)
+        source = server_.readable_surface(*source_id);
     const bool plane_in_depth = source->depth() == 32 ||
         *bit_plane < (std::uint32_t{1} << source->depth());
     if (*bit_plane == 0 || (*bit_plane & (*bit_plane - 1U)) != 0 ||

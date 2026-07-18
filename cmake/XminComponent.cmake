@@ -48,7 +48,6 @@ function(xmin_add_component name)
     endif()
     target_include_directories(${target}
       PUBLIC
-        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
         "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
         ${XAC_PUBLIC_INCLUDE_DIRS}
       PRIVATE
@@ -66,7 +65,6 @@ function(xmin_add_component name)
     add_library(${target} INTERFACE)
     target_include_directories(${target}
       INTERFACE
-        "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>"
         "$<BUILD_INTERFACE:${PROJECT_BINARY_DIR}/generated>"
         ${XAC_PUBLIC_INCLUDE_DIRS}
     )

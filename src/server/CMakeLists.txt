@@ -5,6 +5,9 @@ add_library(xmin_platform STATIC
   xauthority.cpp
 )
 add_library(Xmin::platform ALIAS xmin_platform)
+set_target_properties(xmin_platform PROPERTIES
+  POSITION_INDEPENDENT_CODE ON
+)
 target_compile_features(xmin_platform PUBLIC cxx_std_17)
 target_compile_definitions(xmin_platform PRIVATE _POSIX_C_SOURCE=200809L)
 target_include_directories(xmin_platform
