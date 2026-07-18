@@ -32,6 +32,7 @@ namespace {
 
 constexpr std::uint32_t structure_notify_mask = 1U << 17;
 constexpr std::uint32_t substructure_notify_mask = 1U << 19;
+constexpr std::uint32_t property_change_mask = 1U << 22;
 
 std::uint32_t
 pack_cursor_color(const RenderColor &color) noexcept
@@ -2465,6 +2466,50 @@ ServerState::queue_events_atomically(const std::vector<PlannedEvent> &events)
         return false;
     }
     return true;
+}
+
+EventDelivery
+ServerState::queue_property_notifications(
+    const WindowRecord &candidate, const AtomId *properties,
+    std::size_t count, std::uint8_t state)
+{
+    if (count == 0)
+        return EventDelivery::no_recipient;
+
+    std::size_t recipients = 0;
+    for (const auto &selection : candidate.event_masks) {
+        if ((selection.second & property_change_mask) != 0)
+            ++recipients;
+    }
+    if (recipients == 0)
+        return EventDelivery::no_recipient;
+    if (count > maximum_pending_events / recipients)
+        return EventDelivery::queue_full;
+
+    const std::size_t event_count = count * recipients;
+    if (event_count > maximum_pending_events - pending_events_)
+        return EventDelivery::queue_full;
+
+    std::vector<PlannedEvent> events;
+    try {
+        events.reserve(event_count);
+        for (std::size_t index = 0; index < count; ++index) {
+            for (const auto &selection : candidate.event_masks) {
+                if ((selection.second & property_change_mask) == 0)
+                    continue;
+                events.emplace_back(
+                    selection.first,
+                    PropertyNotifyEvent{
+                        state, candidate.id, properties[index], current_time_});
+            }
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    return queue_events_atomically(events)
+        ? EventDelivery::delivered
+        : EventDelivery::queue_full;
 }
 
 bool
@@ -5706,33 +5751,100 @@ ServerState::pop_event(std::uint32_t client)
         event_queues_.erase(found);
 }
 
-bool
+EventDelivery
 ServerState::set_property(WindowRecord &candidate, AtomId property,
                           PropertyValue value)
 {
     if (value.data.size() > maximum_property_bytes)
-        return false;
-    const auto found = candidate.properties.find(property);
+        return EventDelivery::queue_full;
+    auto found = candidate.properties.find(property);
     const std::size_t old_size = found == candidate.properties.end()
         ? 0
         : found->second.data.size();
     if (property_bytes_ - old_size >
         maximum_server_property_bytes - value.data.size()) {
-        return false;
+        return EventDelivery::queue_full;
     }
-    property_bytes_ = property_bytes_ - old_size + value.data.size();
-    candidate.properties.insert_or_assign(property, std::move(value));
-    return true;
+
+    const std::size_t new_size = value.data.size();
+    const bool inserted = found == candidate.properties.end();
+    PropertyValue previous;
+    try {
+        if (inserted) {
+            found = candidate.properties.emplace(
+                property, std::move(value)).first;
+        }
+        else {
+            previous = std::move(found->second);
+            found->second = std::move(value);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+
+    property_bytes_ = property_bytes_ - old_size + new_size;
+    const auto delivery = queue_property_notifications(
+        candidate, &property, 1, 0); // NewValue
+    if (delivery != EventDelivery::queue_full)
+        return delivery;
+
+    property_bytes_ = property_bytes_ - new_size + old_size;
+    if (inserted)
+        candidate.properties.erase(found);
+    else
+        found->second = std::move(previous);
+    return EventDelivery::queue_full;
 }
 
-void
+EventDelivery
 ServerState::delete_property(WindowRecord &candidate, AtomId property)
 {
     const auto found = candidate.properties.find(property);
     if (found == candidate.properties.end())
-        return;
+        return EventDelivery::no_recipient;
+    const auto delivery = queue_property_notifications(
+        candidate, &property, 1, 1); // Deleted
+    if (delivery == EventDelivery::queue_full)
+        return delivery;
     property_bytes_ -= found->second.data.size();
     candidate.properties.erase(found);
+    return delivery;
+}
+
+EventDelivery
+ServerState::rotate_properties(WindowRecord &candidate,
+                               const std::vector<AtomId> &properties,
+                               std::size_t delta)
+{
+    if (properties.empty())
+        return EventDelivery::no_recipient;
+    delta %= properties.size();
+    if (delta == 0)
+        return EventDelivery::no_recipient;
+
+    std::vector<PropertyValue> values;
+    try {
+        values.reserve(properties.size());
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+
+    const auto delivery = queue_property_notifications(
+        candidate, properties.data(), properties.size(), 0); // NewValue
+    if (delivery == EventDelivery::queue_full)
+        return delivery;
+
+    for (const auto property : properties) {
+        values.push_back(std::move(candidate.properties.find(property)->second));
+    }
+    for (std::size_t index = 0; index < properties.size(); ++index) {
+        const std::size_t destination = (index + delta) % properties.size();
+        candidate.properties.find(properties[destination])->second =
+            std::move(values[index]);
+    }
+    return delivery;
 }
 
 EventDelivery

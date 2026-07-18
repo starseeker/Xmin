@@ -1,0 +1,16 @@
+--- Xft.h.upstream
++++ Xft.h
+@@ -38,8 +38,11 @@
+ #define XftVersion	XFT_VERSION
+ 
+ #include <stdarg.h>
+-#include <ft2build.h>
+-#include FT_FREETYPE_H
++/* Xmin's compatible surface carries no FreeType implementation. */
++typedef void *FT_Library;
++typedef void *FT_Face;
++typedef unsigned int FT_UInt;
++
+ #include <fontconfig/fontconfig.h>
+ #include <X11/extensions/Xrender.h>
+ 

@@ -12,7 +12,6 @@
 #include <QWindow>
 
 #include <cstdio>
-#include <cstring>
 
 static bool
 waitForExposure(QWindow &window)
@@ -71,6 +70,7 @@ main(int argc, char **argv)
     GLuint fragment = 0;
     GLuint program = 0;
     unsigned char pixel[4] = { 0, 0, 0, 0 };
+    const char *stage = "checking the OpenGL version";
     int result = 1;
 
     if (QGuiApplication::platformName() != QStringLiteral("xcb")) {
@@ -108,9 +108,14 @@ main(int argc, char **argv)
     gl->initializeOpenGLFunctions();
     const char *version = reinterpret_cast<const char *>(
         gl->glGetString(GL_VERSION));
-    if (version == nullptr || std::strncmp(version, "2.0", 3) != 0)
+    int majorVersion = 0;
+    int minorVersion = 0;
+    if (version == nullptr ||
+        std::sscanf(version, "%d.%d", &majorVersion, &minorVersion) != 2 ||
+        majorVersion < 2)
         goto cleanup;
 
+    stage = "compiling shaders";
     vertex = gl->glCreateShader(GL_VERTEX_SHADER);
     fragment = gl->glCreateShader(GL_FRAGMENT_SHADER);
     if (vertex == 0 || fragment == 0 ||
@@ -118,6 +123,7 @@ main(int argc, char **argv)
         !compileShader(gl, fragment, fragmentSource))
         goto cleanup;
 
+    stage = "linking the shader program";
     program = gl->glCreateProgram();
     gl->glAttachShader(program, vertex);
     gl->glAttachShader(program, fragment);
@@ -130,6 +136,7 @@ main(int argc, char **argv)
             goto cleanup;
     }
 
+    stage = "drawing and reading the OpenGL surface";
     gl->glViewport(0, 0, 64, 64);
     gl->glClearColor(1.0F, 0.0F, 0.0F, 1.0F);
     gl->glClear(GL_COLOR_BUFFER_BIT);
@@ -142,6 +149,7 @@ main(int argc, char **argv)
     context.swapBuffers(&window);
     if (pixel[1] < 200 || pixel[0] > 40 || pixel[2] > 40)
         goto cleanup;
+    stage = "capturing the presented window";
     QCoreApplication::processEvents(QEventLoop::AllEvents, 10);
     {
         QScreen *screen = window.screen();
@@ -161,6 +169,12 @@ main(int argc, char **argv)
     result = 0;
 
 cleanup:
+    if (result != 0) {
+        std::fprintf(
+            stderr, "Qt %d OpenGL acceptance failed while %s "
+                    "(pixel %u,%u,%u,%u)\n",
+            XMIN_QT_MAJOR, stage, pixel[0], pixel[1], pixel[2], pixel[3]);
+    }
     if (program != 0)
         gl->glDeleteProgram(program);
     if (vertex != 0)

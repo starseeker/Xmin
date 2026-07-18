@@ -533,6 +533,18 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *property = std::get_if<PropertyNotifyEvent>(&event)) {
+        writer.u8(28); // PropertyNotify
+        writer.u8(0);
+        writer.u16(property->sequence);
+        writer.u32(property->window);
+        writer.u32(property->atom);
+        writer.u32(property->time);
+        writer.u8(property->state);
+        writer.pad(15);
+        return writer.data();
+    }
+
     if (const auto *map = std::get_if<MapNotifyEvent>(&event)) {
         writer.u8(19); // MapNotify
         writer.u8(0);
@@ -1349,7 +1361,11 @@ Connection::handle_create_window(const RequestContext &context)
     window.colormap = parent->colormap;
 
     if (window_class == WindowClass::input_only) {
-        if (context.data != 0 || *visual != 0 || *border_width != 0) {
+        const std::uint32_t resolved_visual = *visual == 0
+            ? parent->visual
+            : *visual;
+        if (context.data != 0 || resolved_visual != root_visual_id ||
+            *border_width != 0) {
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence);
         }
@@ -1358,7 +1374,7 @@ Connection::handle_create_window(const RequestContext &context)
                               context.sequence);
         }
         window.depth = 0;
-        window.visual = 0;
+        window.visual = resolved_visual;
         window.colormap = 0;
     }
     else {
@@ -2247,10 +2263,12 @@ Connection::handle_change_property(const RequestContext &context)
         updated.data.insert(updated.data.end(), canonical->begin(),
                             canonical->end());
 
-    if (!server_.set_property(*window, *property, std::move(updated)))
+    const auto delivery = server_.set_property(
+        *window, *property, std::move(updated));
+    if (delivery == EventDelivery::queue_full)
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>
@@ -2271,8 +2289,11 @@ Connection::handle_delete_property(const RequestContext &context)
     if (!server_.atoms().name(*property))
         return send_error(context.order, bad_atom, context.opcode,
                           context.sequence, *property);
-    server_.delete_property(*window, *property);
-    return Result<void>::success();
+    const auto delivery = server_.delete_property(*window, *property);
+    if (delivery == EventDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    return drain_pending_events();
 }
 
 Result<void>
@@ -2354,10 +2375,16 @@ Connection::handle_get_property(const RequestContext &context)
     reply.pad(12);
     reply.bytes(encoded);
     reply.pad_to_four();
+    if (context.data != 0 && matching_type && bytes_after == 0) {
+        const auto delivery = server_.delete_property(*window, *property);
+        if (delivery == EventDelivery::queue_full)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
+    }
     auto queued = queue(reply.data());
-    if (queued && context.data != 0 && matching_type && bytes_after == 0)
-        server_.delete_property(*window, *property);
-    return queued;
+    if (!queued)
+        return queued;
+    return drain_pending_events();
 }
 
 Result<void>
@@ -2464,22 +2491,17 @@ Connection::handle_rotate_properties(const RequestContext &context)
         if (delta == 0)
             return Result<void>::success();
 
-        std::vector<PropertyValue> values;
-        values.reserve(atoms.size());
-        for (const auto atom : atoms)
-            values.push_back(std::move(window->properties.find(atom)->second));
-        for (std::size_t index = 0; index < atoms.size(); ++index) {
-            const auto destination = (index + static_cast<std::size_t>(delta)) %
-                atoms.size();
-            window->properties.find(atoms[destination])->second =
-                std::move(values[index]);
-        }
+        const auto delivery = server_.rotate_properties(
+            *window, atoms, static_cast<std::size_t>(delta));
+        if (delivery == EventDelivery::queue_full)
+            return send_error(context.order, bad_alloc, context.opcode,
+                              context.sequence);
     }
     catch (const std::bad_alloc &) {
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     }
-    return Result<void>::success();
+    return drain_pending_events();
 }
 
 Result<void>

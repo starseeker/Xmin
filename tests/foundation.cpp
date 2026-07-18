@@ -407,6 +407,101 @@ test_shared_server_state()
 }
 
 bool
+test_property_notifications()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t window_id = owner + 1;
+    constexpr std::uint32_t property_change_mask = 1U << 22;
+    constexpr std::uint16_t sequence = 73;
+    xmin::server::ServerState server(32, 24);
+
+    if (!expect(server.register_client(owner),
+                "property-event client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, sequence);
+    auto *root = server.window(xmin::server::root_window_id);
+    root->event_masks.emplace(owner, property_change_mask);
+
+    xmin::server::WindowRecord target;
+    target.id = window_id;
+    target.parent = xmin::server::root_window_id;
+    target.width = 1;
+    target.height = 1;
+    if (!expect(server.add_window(std::move(target), owner),
+                "property-event target insertion failed")) {
+        return false;
+    }
+
+    const auto property = server.atoms().intern("XMIN_PROPERTY_NOTIFY");
+    const auto type = server.atoms().intern("INTEGER");
+    server.advance_time();
+    xmin::server::PropertyValue initial{type, 8, {0x11}};
+    if (!expect(server.set_property(*root, property, std::move(initial)) ==
+                    xmin::server::EventDelivery::delivered,
+                "property change notification was not delivered")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *changed = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::PropertyNotifyEvent>(queued);
+    if (!expect(changed != nullptr && changed->state == 0 &&
+                    changed->window == xmin::server::root_window_id &&
+                    changed->atom == property && changed->time == 2 &&
+                    changed->sequence == sequence,
+                "property change notification is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    xmin::server::ClientMessageEvent message;
+    message.window = window_id;
+    for (std::size_t count = 0;
+         count < xmin::server::maximum_pending_events_per_client; ++count) {
+        if (!expect(server.deliver_client_message(
+                        window_id, 0, false, message) ==
+                        xmin::server::EventDelivery::delivered,
+                    "property queue-pressure setup failed")) {
+            return false;
+        }
+    }
+
+    xmin::server::PropertyValue replacement{type, 8, {0x22}};
+    if (!expect(server.set_property(
+                    *root, property, std::move(replacement)) ==
+                    xmin::server::EventDelivery::queue_full &&
+                    root->properties.at(property).data ==
+                        std::vector<std::uint8_t>{0x11},
+                "queue-full property replacement was not atomic") ||
+        !expect(server.delete_property(*root, property) ==
+                    xmin::server::EventDelivery::queue_full &&
+                    root->properties.count(property) == 1,
+                "queue-full property deletion was not atomic")) {
+        return false;
+    }
+    while (server.has_pending_event(owner))
+        server.pop_event(owner);
+
+    if (!expect(server.delete_property(*root, property) ==
+                    xmin::server::EventDelivery::delivered,
+                "property deletion notification was not delivered")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    const auto *deleted = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::PropertyNotifyEvent>(queued);
+    return expect(deleted != nullptr && deleted->state == 1 &&
+                      deleted->window == xmin::server::root_window_id &&
+                      deleted->atom == property && deleted->time == 2 &&
+                      deleted->sequence == sequence,
+                  "property deletion notification is malformed") &&
+        expect(root->properties.count(property) == 0,
+               "property deletion retained its value");
+}
+
+bool
 test_passive_grabs()
 {
     constexpr std::uint32_t first_owner = 0x00200000;
@@ -4786,7 +4881,8 @@ main()
             test_wire_order(xmin::server::ByteOrder::big) &&
             test_property_byte_order() &&
             test_atoms_and_resources() && test_unique_fd() &&
-            test_shared_server_state() && test_passive_grabs() &&
+            test_shared_server_state() && test_property_notifications() &&
+            test_passive_grabs() &&
             test_input_routing() && test_key_repeat_timers() &&
             test_xkb_state() && test_xkb_detectable_repeat() &&
             test_xi2_state() &&

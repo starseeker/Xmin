@@ -102,6 +102,42 @@ wait_for_client_message(xcb_connection_t *connection, xcb_window_t window,
     return 0;
 }
 
+static int
+wait_for_property_notify(xcb_connection_t *connection, xcb_window_t window,
+                         xcb_atom_t atom, uint8_t state)
+{
+    int attempt;
+
+    xcb_flush(connection);
+    for (attempt = 0; attempt < 20; ++attempt) {
+        xcb_generic_event_t *event;
+
+        while ((event = xcb_poll_for_event(connection)) != NULL) {
+            if (event->response_type == XCB_PROPERTY_NOTIFY) {
+                xcb_property_notify_event_t *property =
+                    (xcb_property_notify_event_t *) event;
+
+                if (property->window == window && property->atom == atom &&
+                    property->state == state &&
+                    property->time != XCB_CURRENT_TIME) {
+                    free(event);
+                    return 1;
+                }
+            }
+            free(event);
+        }
+        {
+            struct pollfd ready = {
+                .fd = xcb_get_file_descriptor(connection),
+                .events = POLLIN
+            };
+
+            (void) poll(&ready, 1, 100);
+        }
+    }
+    return 0;
+}
+
 int
 main(void)
 {
@@ -148,6 +184,7 @@ main(void)
     xcb_grab_keyboard_reply_t *keyboard_grab = NULL;
     xcb_window_t parent = XCB_NONE;
     xcb_window_t child = XCB_NONE;
+    xcb_window_t input_only = XCB_NONE;
     xcb_pixmap_t pixmap = XCB_NONE;
     xcb_pixmap_t bitmap = XCB_NONE;
     xcb_gcontext_t graphics = XCB_NONE;
@@ -194,14 +231,59 @@ main(void)
         selection_atom->atom == XCB_NONE || message_atom->atom == XCB_NONE)
         goto cleanup;
 
+    stage = "waking an event reader through an input-only window";
+    {
+        xcb_client_message_event_t message;
+
+        input_only = xcb_generate_id(connection);
+        memset(&message, 0, sizeof(message));
+        message.response_type = XCB_CLIENT_MESSAGE;
+        message.format = 32;
+        message.window = input_only;
+        message.type = message_atom->atom;
+        message.data.data32[0] = 0x5154434cU;
+        xcb_create_window(
+            connection, XCB_COPY_FROM_PARENT, input_only, screen->root,
+            0, 0, 1, 1, 0, XCB_WINDOW_CLASS_INPUT_ONLY,
+            screen->root_visual, 0, NULL);
+        xcb_send_event(
+            connection, 0, input_only, XCB_EVENT_MASK_NO_EVENT,
+            (const char *) &message);
+        xcb_destroy_window(connection, input_only);
+        input_only = XCB_NONE;
+        if (!wait_for_client_message(
+                connection, message.window, message.type,
+                message.data.data32[0])) {
+            goto cleanup;
+        }
+    }
+
+    stage = "selecting root property notifications";
+    {
+        const uint32_t property_mask = XCB_EVENT_MASK_PROPERTY_CHANGE;
+
+        if (!checked(
+                connection,
+                xcb_change_window_attributes_checked(
+                    connection, screen->root, XCB_CW_EVENT_MASK,
+                    &property_mask),
+                "SelectInput(PropertyChange)")) {
+            goto cleanup;
+        }
+    }
+
     stage = "round-tripping a root property";
     if (!checked(connection,
                  xcb_change_property_checked(
                      connection, XCB_PROP_MODE_REPLACE, screen->root,
                      property_atom->atom, XCB_ATOM_INTEGER, 32, 2,
                      property_values),
-                 "ChangeProperty"))
+                 "ChangeProperty") ||
+        !wait_for_property_notify(
+            connection, screen->root, property_atom->atom,
+            XCB_PROPERTY_NEW_VALUE)) {
         goto cleanup;
+    }
     property_created = 1;
     property = xcb_get_property_reply(
         connection,
@@ -220,6 +302,47 @@ main(void)
         !atom_is_listed(properties, property_atom->atom))
         goto cleanup;
 
+    stage = "deleting a property through GetProperty";
+    {
+        const uint32_t deleted_value = 0x44454c45U;
+        xcb_get_property_reply_t *deleted_property;
+
+        if (!checked(
+                connection,
+                xcb_change_property_checked(
+                    connection, XCB_PROP_MODE_REPLACE, screen->root,
+                    selection_atom->atom, XCB_ATOM_INTEGER, 32, 1,
+                    &deleted_value),
+                "ChangeProperty before deleting GetProperty") ||
+            !wait_for_property_notify(
+                connection, screen->root, selection_atom->atom,
+                XCB_PROPERTY_NEW_VALUE)) {
+            goto cleanup;
+        }
+        deleted_property = xcb_get_property_reply(
+            connection,
+            xcb_get_property(
+                connection, 1, screen->root, selection_atom->atom,
+                XCB_ATOM_INTEGER, 0, 1),
+            &error);
+        if (error != NULL || deleted_property == NULL ||
+            deleted_property->type != XCB_ATOM_INTEGER ||
+            deleted_property->format != 32 ||
+            deleted_property->value_len != 1 ||
+            memcmp(xcb_get_property_value(deleted_property), &deleted_value,
+                   sizeof(deleted_value)) != 0) {
+            free(deleted_property);
+            goto cleanup;
+        }
+        free(deleted_property);
+        stage = "waiting for a deleting GetProperty notification";
+        if (!wait_for_property_notify(
+                connection, screen->root, selection_atom->atom,
+                XCB_PROPERTY_DELETE)) {
+            goto cleanup;
+        }
+    }
+
     stage = "rotating property values";
     {
         const uint32_t rotated_value = 0x524f5441U;
@@ -232,7 +355,10 @@ main(void)
                          connection, XCB_PROP_MODE_REPLACE, screen->root,
                          message_atom->atom, XCB_ATOM_INTEGER, 32, 1,
                          &rotated_value),
-                     "ChangeProperty before RotateProperties")) {
+                     "ChangeProperty before RotateProperties") ||
+            !wait_for_property_notify(
+                connection, screen->root, message_atom->atom,
+                XCB_PROPERTY_NEW_VALUE)) {
             goto cleanup;
         }
         message_property_created = 1;
@@ -260,7 +386,13 @@ main(void)
         if (!checked(connection,
                      xcb_rotate_properties_checked(
                          connection, screen->root, 2, 1, atoms),
-                     "RotateProperties")) {
+                     "RotateProperties") ||
+            !wait_for_property_notify(
+                connection, screen->root, property_atom->atom,
+                XCB_PROPERTY_NEW_VALUE) ||
+            !wait_for_property_notify(
+                connection, screen->root, message_atom->atom,
+                XCB_PROPERTY_NEW_VALUE)) {
             goto cleanup;
         }
         free(property);
@@ -289,7 +421,13 @@ main(void)
         if (!checked(connection,
                      xcb_rotate_properties_checked(
                          connection, screen->root, 2, -1, atoms),
-                     "RotateProperties with negative delta")) {
+                     "RotateProperties with negative delta") ||
+            !wait_for_property_notify(
+                connection, screen->root, property_atom->atom,
+                XCB_PROPERTY_NEW_VALUE) ||
+            !wait_for_property_notify(
+                connection, screen->root, message_atom->atom,
+                XCB_PROPERTY_NEW_VALUE)) {
             goto cleanup;
         }
         free(property);
@@ -317,11 +455,18 @@ main(void)
                  xcb_delete_property_checked(connection, screen->root,
                                              property_atom->atom),
                  "DeleteProperty") ||
+        !wait_for_property_notify(
+            connection, screen->root, property_atom->atom,
+            XCB_PROPERTY_DELETE) ||
         !checked(connection,
                  xcb_delete_property_checked(connection, screen->root,
                                              message_atom->atom),
-                 "Delete rotated property"))
+                 "Delete rotated property") ||
+        !wait_for_property_notify(
+            connection, screen->root, message_atom->atom,
+            XCB_PROPERTY_DELETE)) {
         goto cleanup;
+    }
     property_created = 0;
     message_property_created = 0;
 
@@ -1407,6 +1552,8 @@ cleanup:
         fprintf(stderr, "core X11 acceptance failed while %s (pixel 0x%08x)\n",
                 stage, pixel);
     if (connection != NULL && !xcb_connection_has_error(connection)) {
+        if (input_only != XCB_NONE)
+            xcb_destroy_window(connection, input_only);
         if (selection_owned)
             xcb_set_selection_owner(connection, XCB_NONE,
                                     selection_atom->atom, XCB_CURRENT_TIME);

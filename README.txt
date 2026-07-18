@@ -40,6 +40,13 @@ xminctl capture-root root.ppm
 The controller contains its own focused X11 transport and protocol codec. It
 does not link Xlib, XCB, or Xau.
 
+Optional client SDKs provide similarly focused C++17 XCB/xkbcommon and
+Xlib/Xft compatibility surfaces for patched Qt, FLTK, and Tk. Toolkit fonts
+are rendered through struetype from embedded Go Sans and Go Mono regular,
+bold, italic, and bold-italic faces; no system font discovery or font runtime
+library is used. These SDKs are off by default and never become server
+dependencies.
+
 ## Product profile
 
 Xmin implements all 127 core opcode slots, including correct reserved-opcode

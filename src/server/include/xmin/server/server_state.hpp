@@ -1014,9 +1014,13 @@ public:
     [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
     [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
     void pop_event(std::uint32_t client);
-    [[nodiscard]] bool set_property(WindowRecord &window, AtomId property,
-                                    PropertyValue value);
-    void delete_property(WindowRecord &window, AtomId property);
+    [[nodiscard]] EventDelivery set_property(
+        WindowRecord &window, AtomId property, PropertyValue value);
+    [[nodiscard]] EventDelivery delete_property(
+        WindowRecord &window, AtomId property);
+    [[nodiscard]] EventDelivery rotate_properties(
+        WindowRecord &window, const std::vector<AtomId> &properties,
+        std::size_t delta);
     [[nodiscard]] EventDelivery destroy_window(std::uint32_t id);
     [[nodiscard]] EventDelivery destroy_subwindows(std::uint32_t id);
     [[nodiscard]] ReparentUpdate reparent_window(
@@ -1156,6 +1160,9 @@ private:
     [[nodiscard]] bool queue_event(std::uint32_t client, ClientEvent event);
     [[nodiscard]] bool queue_events_atomically(
         const std::vector<PlannedEvent> &events);
+    [[nodiscard]] EventDelivery queue_property_notifications(
+        const WindowRecord &window, const AtomId *properties,
+        std::size_t count, std::uint8_t state);
     [[nodiscard]] bool append_damage_notifications(
         const DamageRecord &damage, const Region &reported,
         bool full_area, std::vector<PlannedEvent> &events) const;

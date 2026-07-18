@@ -19,7 +19,7 @@ target_include_directories(xmin_glx_client_api SYSTEM PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/include"
 )
 target_link_libraries(xmin_glx_client_api PRIVATE Threads::Threads)
-if(TARGET Xmin::QtX11)
+if(XMIN_BUILD_QT_CLIENT AND TARGET Xmin::QtX11)
   target_compile_definitions(xmin_glx_client_api PRIVATE
     XMIN_HAVE_QT_XCB=1
   )
@@ -83,7 +83,7 @@ target_include_directories(xmin_gl_client
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(xmin_gl_client PRIVATE Threads::Threads ${XMIN_M_LIBRARY})
-if(TARGET Xmin::QtX11)
+if(XMIN_BUILD_QT_CLIENT AND TARGET Xmin::QtX11)
   target_link_libraries(xmin_gl_client PRIVATE Xmin::QtX11)
 endif()
 if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")

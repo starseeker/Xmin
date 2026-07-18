@@ -1,5 +1,8 @@
 {
   global:
+    Fc*;
+    X*;
+    _XInitImageFuncPtrs;
     xcb_*;
     xkb_*;
   local:

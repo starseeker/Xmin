@@ -177,3 +177,87 @@ local_path = "src/server/include/xmin/server/generated/core_keymap.hpp"
 retained_paths = ["canonical fixed US PC keysyms, modifiers, repeat and input defaults"]
 license_paths = ["LICENSES/xkeyboard-config/COPYING"]
 patches = []
+
+[[source]]
+name = "struetype"
+revision = "223c6580907e87df3a262ca7f382df5314a1710d"
+url = "https://github.com/starseeker/struetype"
+tree = "d6ac191199d399120bab2d28c907f1bb8686a411"
+status = "header-only"
+local_path = "third_party/struetype"
+retained_paths = ["struetype.h hardened TrueType/OpenType parser and rasterizer"]
+license_paths = ["LICENSES/struetype/LICENSE"]
+patches = []
+importer = "tools/import-struetype.sh"
+
+[[source]]
+name = "go-fonts"
+revision = "315273a91ff5701d7239e64fd96351539939f8e7"
+url = "https://go.googlesource.com/image"
+tree = "c90f4f001d0bb8164399a64556c5d7d8a64e42ea"
+status = "embedded-data"
+local_path = "third_party/fonts/go"
+retained_paths = [
+  "Go Sans regular, bold, italic, and bold-italic TrueType faces",
+  "Go Mono regular, bold, italic, and bold-italic TrueType faces",
+  "exact file hashes listed in tools/go-font-files.sha256",
+]
+license_paths = ["LICENSES/go-fonts/LICENSE"]
+patches = []
+importer = "tools/import-go-fonts.sh"
+
+[[source]]
+name = "libX11-public-headers"
+revision = "1.8.13"
+url = "https://www.x.org/releases/individual/lib/"
+archive = "libX11-1.8.13.tar.xz"
+sha256 = "69606f485c2c07c14ef64f75b7bb326d48587af33795d9ab3e607c0b5f94f11c"
+status = "headers-only"
+local_path = "src/client/x11/include/X11"
+retained_paths = ["focused public Xlib, Xutil, locale, region, resource, XKB, and cursor declarations"]
+license_paths = ["LICENSES/libX11/COPYING"]
+patches = []
+importer = "tools/import-x11-client-headers.sh"
+
+[[source]]
+name = "xorgproto-public-headers"
+revision = "2025.1"
+url = "https://www.x.org/releases/individual/proto/"
+archive = "xorgproto-2025.1.tar.xz"
+sha256 = "56898c716c0578df8a2d828c9c3e5c528277705c0484381a81960fe1a67668e8"
+status = "headers-only"
+local_path = "src/client/x11/include/X11"
+retained_paths = ["public core, RENDER, and XKB protocol declarations needed by the Xlib facade"]
+license_paths = [
+  "LICENSES/xorgproto/COPYING-x11proto",
+  "LICENSES/xorgproto/COPYING-renderproto",
+  "LICENSES/xorgproto/COPYING-kbproto",
+]
+patches = []
+importer = "tools/import-x11-client-headers.sh"
+
+[[source]]
+name = "libXrender-public-header"
+revision = "0.9.12"
+url = "https://www.x.org/releases/individual/lib/"
+archive = "libXrender-0.9.12.tar.xz"
+sha256 = "b832128da48b39c8d608224481743403ad1691bf4e554e4be9c174df171d1b97"
+status = "header-only"
+local_path = "src/client/x11/include/X11/extensions/Xrender.h"
+retained_paths = ["public XRender ABI declarations only"]
+license_paths = ["LICENSES/libXrender/COPYING"]
+patches = []
+importer = "tools/import-x11-client-headers.sh"
+
+[[source]]
+name = "libXft-public-headers"
+revision = "2.3.9"
+url = "https://www.x.org/releases/individual/lib/"
+archive = "libXft-2.3.9.tar.xz"
+sha256 = "60a25b78945ed6932635b3bb1899a517d31df7456e69867ffba27f89ff3976f5"
+status = "headers-only"
+local_path = "src/client/x11/include/X11/Xft"
+retained_paths = ["public Xft ABI declarations only; FreeType public-header dependency removed"]
+license_paths = ["LICENSES/libXft/COPYING"]
+patches = ["patches/toolkit-client/0001-xft-drop-freetype-header.patch"]
+importer = "tools/import-x11-client-headers.sh"

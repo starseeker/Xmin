@@ -2,7 +2,9 @@
 
 The server has one bundled dependency: pixman, used behind Xmin's Surface,
 Region, and Renderer types. Optional client-side OpenGL adds one independent
-OSMesa copy to `libGL`; OSMesa is never linked into the X server.
+OSMesa copy to `libGL`; OSMesa is never linked into the X server. Optional
+minimalist toolkit clients use the header-only struetype rasterizer and eight
+embedded Go font faces; they do not search for or load host fonts.
 
 Pixman is compiled as a generic, single-threaded C raster kernel. Xmin owns
 all access on its server thread, so pixman's process-local fast-path cache

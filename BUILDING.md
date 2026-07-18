@@ -23,8 +23,9 @@ controller codec, and raster semantics should not require redesign.
 
 Host XCB, xkbcommon-x11, Qt, GTK, and Xlib are test-only discoveries. Missing
 test packages reduce the applicable acceptance set but do not affect the
-product graph. `XMIN_BUILD_QT_CLIENT` instead builds Xmin's own narrow client
-ABI and does not discover or link those host X libraries.
+product graph. `XMIN_BUILD_QT_CLIENT` and `XMIN_BUILD_TOOLKIT_CLIENT` instead
+build Xmin's own narrow client ABIs and do not discover or link those host X
+libraries.
 
 ## Presets
 
@@ -55,6 +56,7 @@ cmake --preset minimal --fresh
 | --- | --- | --- |
 | `XMIN_BUILD_CLIENT_GL` | `ON` | Build the independent software-direct `libGL`. |
 | `XMIN_BUILD_QT_CLIENT` | `OFF` | Build and install the Xmin-native C++17 XCB/xkbcommon client SDK used by patched Qt qxcb. |
+| `XMIN_BUILD_TOOLKIT_CLIENT` | `OFF` | Add the focused Xlib/Xft/Fontconfig facade and embedded Go fonts used by patched FLTK and Tk. |
 | `XMIN_BUILD_LAUNCHER` | `ON` | Build authenticated process supervisor `xmin-run`. |
 | `XMIN_BUILD_TESTS` | top-level `ON` | Build the self-tests and independent client gates. |
 | `XMIN_REQUIRE_TOOLKIT_TESTS` | `OFF` | Require Qt 5/6 and GTK 3 acceptance targets. |
@@ -107,6 +109,13 @@ the companion GL DSO explicitly; it is not a server dependency. Enabling
 and the XCB bridge header for `Xmin::GL`. See `patches/qt/README.md` for the
 validated Qt configuration.
 
+`XMIN_BUILD_TOOLKIT_CLIENT` installs `Xmin::ToolkitX11`, focused X11, Xft,
+and Fontconfig public headers, and `libXminClient`. The client embeds Go Sans
+and Go Mono regular, bold, italic, and bold-italic faces and resolves requests
+only among those faces—there is no host font-directory search. Toolkit
+integration is explicitly opt-in; see `patches/fltk/README.md` and
+`patches/tk/README.md` for validated releases and build options.
+
 Every test-enabled build contains `xmin.install-relocation-dependencies`. It
 installs into a disposable arbitrary prefix, runs the installed launcher and
 server with an authenticated client, checks development files, and uses
@@ -142,6 +151,6 @@ the neutral separate draw/read-buffer API. Preserve
 `third_party/osmesa/src/drivers/osmesa/xmin_osmesa_adapter.c`; it is
 project-owned and confines Mesa-private types to the dependency boundary.
 
-Protocol and font regeneration commands are in `tools/README.md`. Generated
+Protocol and font import/regeneration commands are in `tools/README.md`. Generated
 files are reviewed and committed. No removed Xorg-server, xtrans, Xau, XCB,
 Xfont, or XKB implementation import workflow remains.

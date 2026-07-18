@@ -1,0 +1,125 @@
+diff --git a/unix/configure b/unix/configure
+index 0109b09..b2e9931 100755
+--- a/unix/configure
++++ b/unix/configure
+@@ -796,6 +796,7 @@ enable_load
+ enable_symbols
+ enable_aqua
+ with_x
++with_xmin
+ enable_xft
+ enable_libcups
+ enable_xss
+@@ -1464,6 +1465,7 @@ Optional Packages:
+                           (tclConfig.sh)
+   --with-encoding         encoding for configuration values (default: utf-8)
+   --with-x                use the X Window System
++  --with-xmin=DIR         use the minimalist Xmin X11 client SDK installed in DIR
+ 
+ Some influential environment variables:
+   CC          C compiler command
+@@ -7952,6 +7954,19 @@ else
+     #--------------------------------------------------------------------
+ 
+ 
++    if test ${with_xmin+y}; then
++	tk_xmin_prefix=$with_xmin
++    else
++	tk_xmin_prefix=""
++    fi
++    if test "x$tk_xmin_prefix" != "x" -a "x$tk_xmin_prefix" != "xno"; then
++	XINCLUDES="-I$tk_xmin_prefix/include"
++	XLIBSW="-L$tk_xmin_prefix/lib -Wl,-rpath,$tk_xmin_prefix/lib -lXminClient"
++	x_includes="$tk_xmin_prefix/include"
++	x_libraries="$tk_xmin_prefix/lib"
++	tk_xmin=yes
++    else
++	tk_xmin=no
+     { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for X" >&5
+ printf %s "checking for X... " >&6; }
+ 
+@@ -8320,6 +8335,7 @@ fi
+ printf '%s\n' "could not find any!  Using -lX11." >&6; }
+ 	XLIBSW=-lX11
+     fi
++    fi
+ 
+     TK_WINDOWINGSYSTEM=X11
+ fi
+@@ -8480,6 +8496,12 @@ fi
+     if test "$enable_xft" = "no" ; then
+ 	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $enable_xft" >&5
+ printf '%s\n' "$enable_xft" >&6; }
++    elif test "$tk_xmin" = "yes" ; then
++	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: yes (Xmin embedded fonts)" >&5
++printf '%s\n' "yes (Xmin embedded fonts)" >&6; }
++	enable_xft=yes
++	XFT_CFLAGS="$XINCLUDES"
++	XFT_LIBS=""
+     else
+ 	found_xft="yes"
+ 			XFT_CFLAGS=`xft-config --cflags 2>/dev/null` || found_xft="no"
+@@ -8745,6 +8767,9 @@ else case e in #(
+ esac
+ fi
+ 
++    if test "$tk_xmin" = "yes" ; then
++	enable_xss=no
++    fi
+     if test "$enable_xss" = "no" ; then
+ 	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $enable_xss" >&5
+ printf '%s\n' "$enable_xss" >&6; }
+@@ -10546,5 +10571,3 @@ if test -n "$ac_unrecognized_opts" && test "$enable_option_checking" != no; then
+ printf '%s\n' "$as_me: WARNING: unrecognized options: $ac_unrecognized_opts" >&2;}
+ fi
+ 
+-
+-
+diff --git a/unix/configure.ac b/unix/configure.ac
+index ad782ff..5ec671b 100644
+--- a/unix/configure.ac
++++ b/unix/configure.ac
+@@ -259,7 +259,20 @@ else
+     #	no include files, so double-check its result just to be safe.
+     #--------------------------------------------------------------------
+ 
+-    SC_PATH_X
++    AC_ARG_WITH(xmin,
++	AS_HELP_STRING([--with-xmin=DIR],
++	    [use the minimalist Xmin X11 client SDK installed in DIR]),
++	[tk_xmin_prefix=$withval], [tk_xmin_prefix=""])
++    if test "x$tk_xmin_prefix" != "x" -a "x$tk_xmin_prefix" != "xno"; then
++	XINCLUDES="-I$tk_xmin_prefix/include"
++	XLIBSW="-L$tk_xmin_prefix/lib -Wl,-rpath,$tk_xmin_prefix/lib -lXminClient"
++	x_includes="$tk_xmin_prefix/include"
++	x_libraries="$tk_xmin_prefix/lib"
++	tk_xmin=yes
++    else
++	SC_PATH_X
++	tk_xmin=no
++    fi
+     TK_WINDOWINGSYSTEM=X11
+ fi
+ 
+@@ -352,6 +365,11 @@ if test $tk_aqua = no; then
+     XFT_LIBS=""
+     if test "$enable_xft" = "no" ; then
+ 	AC_MSG_RESULT([$enable_xft])
++    elif test "$tk_xmin" = "yes" ; then
++	AC_MSG_RESULT([yes (Xmin embedded fonts)])
++	enable_xft=yes
++	XFT_CFLAGS="$XINCLUDES"
++	XFT_LIBS=""
+     else
+ 	found_xft="yes"
+ 	dnl make sure package configurator (xft-config or pkg-config
+@@ -490,6 +508,9 @@ if test $tk_aqua = no; then
+ 	AS_HELP_STRING([--enable-xss],
+ 	    [use XScreenSaver for activity timer (default: on)]),
+ 	[enable_xss=$enableval], [enable_xss=yes])
++    if test "$tk_xmin" = "yes" ; then
++	enable_xss=no
++    fi
+     if test "$enable_xss" = "no" ; then
+ 	AC_MSG_RESULT([$enable_xss])
+     else

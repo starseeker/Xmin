@@ -41,6 +41,14 @@ struct ClientMessageEvent {
     std::uint16_t sequence = 0;
 };
 
+struct PropertyNotifyEvent {
+    std::uint8_t state = 0;
+    std::uint32_t window = 0;
+    std::uint32_t atom = 0;
+    std::uint32_t time = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct MappingNotifyEvent {
     std::uint8_t request = 0;
     std::uint8_t first_keycode = 0;
@@ -362,8 +370,9 @@ struct FocusEvent {
 
 using ClientEvent = std::variant<
     SelectionClearEvent, SelectionRequestEvent, SelectionNotifyEvent,
-    ClientMessageEvent, MappingNotifyEvent, MapNotifyEvent, UnmapNotifyEvent,
-    ShapeNotifyEvent, SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
+    ClientMessageEvent, PropertyNotifyEvent, MappingNotifyEvent,
+    MapNotifyEvent, UnmapNotifyEvent, ShapeNotifyEvent,
+    SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,
     PresentConfigureNotifyEvent, PresentCompleteNotifyEvent,

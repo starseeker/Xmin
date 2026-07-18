@@ -1,0 +1,80 @@
+diff --git a/CMake/options.cmake b/CMake/options.cmake
+index ee08a589..c3973687 100644
+--- a/CMake/options.cmake
++++ b/CMake/options.cmake
+@@ -398,10 +398,29 @@ endif()
+ # find X11 libraries and headers
+ set(PATH_TO_XLIBS)
+ if((NOT APPLE OR FLTK_BACKEND_X11) AND NOT WIN32 AND NOT FLTK_BACKEND_WAYLAND)
+-  include(FindX11)
++  if(FLTK_USE_XMIN)
++    set(X11_FOUND TRUE)
++    set(X11_X11_FOUND TRUE)
++    set(X11_Xft_FOUND TRUE)
++    set(X11_Xext_FOUND FALSE)
++    set(X11_Xfixes_FOUND FALSE)
++    set(X11_Xcursor_FOUND FALSE)
++    set(X11_Xinerama_FOUND FALSE)
++    set(X11_Xrender_FOUND FALSE)
++    set(X11_INCLUDE_DIR ${FLTK_XMIN_INCLUDE_DIRECTORIES})
++    set(X11_X11_LIB Xmin::ToolkitX11)
++    set(X11_Xft_LIB Xmin::ToolkitX11)
++    set(X11_LIBRARIES Xmin::ToolkitX11)
++  else()
++    include(FindX11)
++  endif()
+   if(X11_FOUND)
+     set(FLTK_USE_X11 1)
+-    list(APPEND FLTK_LDLIBS -lX11)
++    if(FLTK_USE_XMIN)
++      list(APPEND FLTK_LDLIBS Xmin::ToolkitX11)
++    else()
++      list(APPEND FLTK_LDLIBS -lX11)
++    endif()
+     if(X11_Xext_FOUND)
+       list(APPEND FLTK_LDLIBS -lXext)
+     endif(X11_Xext_FOUND)
+@@ -985,7 +1004,11 @@ endif()
+ 
+ if(FLTK_USE_XFT)
+   set(USE_XFT X11_Xft_FOUND)
+-  list(APPEND FLTK_LDLIBS -lXft)
++  if(FLTK_USE_XMIN)
++    list(APPEND FLTK_LDLIBS Xmin::ToolkitX11)
++  else()
++    list(APPEND FLTK_LDLIBS -lXft)
++  endif()
+   set(FLTK_XFT_FOUND TRUE)
+   if(APPLE AND FLTK_BACKEND_X11)
+     find_library(LIB_fontconfig fontconfig "/opt/X11/lib")
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index cf44b1c2..e1803f3b 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -67,10 +67,26 @@ set(FLTK_VERSION ${FLTK_VERSION} CACHE STRING "FLTK version" FORCE)
+ #######################################################################
+ include(CMake/setup.cmake)
+ 
++option(FLTK_USE_XMIN "use the Xmin minimalist X11 client" OFF)
++if(FLTK_USE_XMIN)
++  find_package(Xmin CONFIG REQUIRED)
++  if(NOT TARGET Xmin::ToolkitX11)
++    message(FATAL_ERROR "FLTK_USE_XMIN requires an Xmin build with XMIN_BUILD_TOOLKIT_CLIENT enabled")
++  endif()
++  get_target_property(FLTK_XMIN_INCLUDE_DIRECTORIES
++    Xmin::ToolkitX11 INTERFACE_INCLUDE_DIRECTORIES)
++  list(APPEND CMAKE_REQUIRED_INCLUDES ${FLTK_XMIN_INCLUDE_DIRECTORIES})
++endif()
++
+ #######################################################################
+ # check for headers, libraries and functions
+ #######################################################################
+ include(CMake/resources.cmake)
++if(FLTK_USE_XMIN)
++  # Xmin supplies its focused Fontconfig surface and uses embedded fonts.
++  set(LIB_fontconfig "")
++  set(LIB_freetype "")
++endif()
+ 
+ #######################################################################
+ # options

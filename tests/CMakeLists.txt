@@ -20,6 +20,14 @@ target_link_libraries(xmin_platform_test PRIVATE Xmin::platform)
 xmin_enable_warnings(xmin_platform_test)
 add_test(NAME xmin.platform COMMAND xmin_platform_test)
 
+if(TARGET Xmin::FontEngine)
+  add_executable(xmin_font_engine_test font_engine.cpp)
+  target_compile_features(xmin_font_engine_test PRIVATE cxx_std_17)
+  target_link_libraries(xmin_font_engine_test PRIVATE Xmin::FontEngine)
+  xmin_enable_warnings(xmin_font_engine_test)
+  add_test(NAME xmin.font-engine COMMAND xmin_font_engine_test)
+endif()
+
 add_executable(xmin_handshake integration/handshake.cpp)
 target_compile_features(xmin_handshake PRIVATE cxx_std_17)
 target_compile_definitions(xmin_handshake PRIVATE _POSIX_C_SOURCE=200809L)
@@ -72,13 +80,13 @@ if(TARGET Xmin::run)
   )
   set_tests_properties(xmin.launcher-signal-cleanup PROPERTIES TIMEOUT 30)
 
-  if(TARGET Xmin::QtX11)
+  if(TARGET Xmin::ClientX11)
     add_executable(xmin_qt_client_core integration/qt_client_core.c)
     target_compile_features(xmin_qt_client_core PRIVATE c_std_11)
     target_include_directories(xmin_qt_client_core PRIVATE
       "${PROJECT_BINARY_DIR}/generated"
     )
-    target_link_libraries(xmin_qt_client_core PRIVATE Xmin::QtX11)
+    target_link_libraries(xmin_qt_client_core PRIVATE Xmin::ClientX11)
     xmin_enable_warnings(xmin_qt_client_core)
     add_test(NAME xmin.qt-client-core
       COMMAND Xmin::run
@@ -87,6 +95,53 @@ if(TARGET Xmin::run)
         -- $<TARGET_FILE:xmin_qt_client_core>
     )
     set_tests_properties(xmin.qt-client-core PROPERTIES TIMEOUT 20)
+  endif()
+
+  if(TARGET Xmin::ToolkitX11)
+    add_executable(xmin_font_render
+      integration/font_render.cpp
+      "${PROJECT_SOURCE_DIR}/src/client/x11/font/render_font.cpp"
+    )
+    target_compile_features(xmin_font_render PRIVATE cxx_std_17)
+    target_include_directories(xmin_font_render PRIVATE
+      "${PROJECT_SOURCE_DIR}/src/client/x11/font"
+    )
+    target_link_libraries(xmin_font_render PRIVATE
+      Xmin::ToolkitX11
+      Xmin::FontEngine
+    )
+    xmin_enable_warnings(xmin_font_render)
+    add_test(NAME xmin.font-render
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 160x60x24
+        -- $<TARGET_FILE:xmin_font_render>
+    )
+    set_tests_properties(xmin.font-render PROPERTIES TIMEOUT 20)
+
+    add_executable(xmin_xft_client integration/xft_client.cpp)
+    target_compile_features(xmin_xft_client PRIVATE cxx_std_17)
+    target_link_libraries(xmin_xft_client PRIVATE Xmin::ToolkitX11)
+    xmin_enable_warnings(xmin_xft_client)
+    add_test(NAME xmin.xft-client
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 180x64x24
+        -- $<TARGET_FILE:xmin_xft_client>
+    )
+    set_tests_properties(xmin.xft-client PROPERTIES TIMEOUT 20)
+
+    add_executable(xmin_toolkit_xlib integration/toolkit_xlib.cpp)
+    target_compile_features(xmin_toolkit_xlib PRIVATE cxx_std_17)
+    target_link_libraries(xmin_toolkit_xlib PRIVATE Xmin::ToolkitX11)
+    xmin_enable_warnings(xmin_toolkit_xlib)
+    add_test(NAME xmin.toolkit-xlib
+      COMMAND Xmin::run
+        --server $<TARGET_FILE:xmin_server>
+        --screen 96x72x24
+        -- $<TARGET_FILE:xmin_toolkit_xlib>
+    )
+    set_tests_properties(xmin.toolkit-xlib PROPERTIES TIMEOUT 20)
   endif()
 
   # Host XCB is test-only and remains an independent protocol authority.
