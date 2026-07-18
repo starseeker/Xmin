@@ -4,7 +4,7 @@ Xmin is a small, self-contained, software-only X11 server for headless testing.
 It is a full C++17 fork built around the X11 wire contract—not a reduced Xorg
 build. It has one virtual screen, deterministic software rendering, fixed
 virtual input devices, authenticated local sockets, and no hardware or driver
-stack.
+stack.  GPT 5.6 and Codex have been used to do the heavy lifting.
 
 The server links only the platform C/C++ runtime, math, and a private static
 pixman. It does not load Xorg, X11, XCB, font, GL, crypto, DRM, or GPU
