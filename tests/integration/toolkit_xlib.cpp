@@ -1,14 +1,29 @@
+#include <X11/Xatom.h>
 #include <X11/XKBlib.h>
 #include <X11/Xlib.h>
+#include <X11/Xproto.h>
 #include <X11/Xutil.h>
 #include <X11/keysym.h>
 
+#include <algorithm>
 #include <cstdlib>
 #include <iostream>
+#include <iterator>
 
 extern "C" int _XInitImageFuncPtrs(XImage *image);
 
 namespace {
+
+int protocol_error_count = 0;
+XErrorEvent last_protocol_error{};
+
+int record_protocol_error(Display *, XErrorEvent *error)
+{
+    ++protocol_error_count;
+    if (error != nullptr)
+        last_protocol_error = *error;
+    return 0;
+}
 
 int fail(Display *display, const char *message, int result)
 {
@@ -54,17 +69,117 @@ int main()
     if (!region_ok)
         return fail(display, "region subtraction failed", 3);
 
+    Region adjacent = XCreateRegion();
+    XRectangle adjacent_left{0, 0, 5, 10};
+    XRectangle adjacent_right{5, 0, 5, 10};
+    XUnionRectWithRegion(&adjacent_left, adjacent, adjacent);
+    XUnionRectWithRegion(&adjacent_right, adjacent, adjacent);
+    const bool adjacent_region_ok =
+        XRectInRegion(adjacent, 0, 0, 10, 10) == RectangleIn;
+    XDestroyRegion(adjacent);
+    if (!adjacent_region_ok)
+        return fail(display, "region union coverage failed", 4);
+
     XImage *callbacks = XCreateImage(
         display, nullptr, 1, XYBitmap, 0, nullptr, 8, 8, 8, 1);
     if (callbacks == nullptr || !_XInitImageFuncPtrs(callbacks) ||
         callbacks->f.put_pixel == nullptr || callbacks->f.get_pixel == nullptr) {
         if (callbacks != nullptr)
             XDestroyImage(callbacks);
-        return fail(display, "XImage callbacks were not initialized", 4);
+        return fail(display, "XImage callbacks were not initialized", 5);
     }
     XDestroyImage(callbacks);
 
     Screen *screen = DefaultScreenOfDisplay(display);
+
+    XSelectInput(
+        display, screen->root,
+        PropertyChangeMask | SubstructureNotifyMask);
+    const Window structure_window = XCreateSimpleWindow(
+        display, screen->root, 0, 0, 8, 8, 0,
+        screen->black_pixel, screen->black_pixel);
+    XMapWindow(display, structure_window);
+    XEvent structure_event{};
+    if (XWindowEvent(
+            display, screen->root, SubstructureNotifyMask,
+            &structure_event) != 0 || structure_event.type != MapNotify ||
+        structure_event.xmap.event != screen->root ||
+        structure_event.xmap.window != structure_window) {
+        return fail(display, "substructure event matching failed", 6);
+    }
+
+    const Atom event_property = XInternAtom(
+        display, "XMIN_TOOLKIT_EVENT_ORDER", False);
+    const Atom event_message = XInternAtom(
+        display, "XMIN_TOOLKIT_QUEUED_MESSAGE", False);
+    XEvent message{};
+    message.xclient.type = ClientMessage;
+    message.xclient.window = screen->root;
+    message.xclient.message_type = event_message;
+    message.xclient.format = 32;
+    message.xclient.data.l[0] = 0x584d494eL;
+    const unsigned char property_value = 0x5a;
+    XSendEvent(display, structure_window, False, NoEventMask, &message);
+    XChangeProperty(
+        display, screen->root, event_property, XA_INTEGER, 8,
+        PropModeReplace, &property_value, 1);
+    XSync(display, False);
+    const int queued_before_filter = XPending(display);
+    XEvent property_event{};
+    const int property_wait = XWindowEvent(
+        display, screen->root, PropertyChangeMask, &property_event);
+    const int retained_events = QLength(display);
+    if (queued_before_filter != 2 || property_wait != 0 ||
+        property_event.type != PropertyNotify ||
+        property_event.xproperty.atom != event_property ||
+        retained_events != 1) {
+        std::cerr << "queued before filter " << queued_before_filter
+                  << ", property wait " << property_wait << ", type "
+                  << property_event.type << ", atom "
+                  << property_event.xproperty.atom << ", expected atom "
+                  << event_property << ", retained " << retained_events
+                  << '\n';
+        return fail(display, "filtered event queue stalled or lost order", 7);
+    }
+    XEvent queued_message{};
+    if (XNextEvent(display, &queued_message) != 0 ||
+        queued_message.type != ClientMessage ||
+        queued_message.xclient.message_type != event_message ||
+        queued_message.xclient.data.l[0] != 0x584d494eL ||
+        QLength(display) != 0) {
+        return fail(display, "filtered event was not retained", 8);
+    }
+
+    XSendEvent(display, screen->root, False, NoEventMask, &message);
+    XSync(display, True);
+    if (QLength(display) != 0)
+        return fail(display, "XSync did not discard queued events", 9);
+
+    XErrorHandler previous_handler = XSetErrorHandler(record_protocol_error);
+    if (previous_handler == nullptr)
+        return fail(display, "default X error handler was not restorable", 10);
+    XDestroyWindow(display, static_cast<Window>(0xffffffffUL));
+    XSync(display, False);
+    XSetErrorHandler(previous_handler);
+    if (protocol_error_count != 1 ||
+        last_protocol_error.error_code != BadWindow ||
+        last_protocol_error.request_code != X_DestroyWindow ||
+        last_protocol_error.resourceid != 0xffffffffUL) {
+        return fail(display, "asynchronous X error dispatch failed", 11);
+    }
+
+    char pressed_keys[32];
+    std::fill(std::begin(pressed_keys), std::end(pressed_keys), '\x7f');
+    if (!XQueryKeymap(display, pressed_keys) ||
+        !std::all_of(
+            std::begin(pressed_keys), std::end(pressed_keys),
+            [](char value) { return value == 0; })) {
+        return fail(display, "keyboard state query failed", 12);
+    }
+
+    XDeleteProperty(display, screen->root, event_property);
+    XSelectInput(display, screen->root, NoEventMask);
+    XDestroyWindow(display, structure_window);
     const Window window = XCreateSimpleWindow(
         display, screen->root, 0, 0, 64, 48, 0,
         screen->black_pixel, screen->black_pixel);
@@ -101,11 +216,11 @@ int main()
 
     if (!property_value_ok) {
         std::cerr << "WM_COLORMAP_WINDOWS round trip failed\n";
-        return 5;
+        return 13;
     }
     if (!clip_ok) {
         std::cerr << "Xlib drawing clip failed\n";
-        return 6;
+        return 14;
     }
     return 0;
 }

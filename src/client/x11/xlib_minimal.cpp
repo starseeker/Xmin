@@ -267,7 +267,8 @@ Display *XOpenDisplay(const char *display_name)
         return nullptr;
     }
 
-    auto display_state = std::make_unique<DisplayState>();
+    auto display_state = std::unique_ptr<DisplayState>(
+        new (std::nothrow) DisplayState);
     auto *storage = static_cast<_XPrivDisplay>(
         std::calloc(1, sizeof(*static_cast<_XPrivDisplay>(nullptr))));
     if (!display_state || storage == nullptr) {
@@ -341,6 +342,10 @@ Display *XOpenDisplay(const char *display_name)
     if (storage->vendor != nullptr && vendor != nullptr) {
         std::memcpy(storage->vendor, vendor, vendor_length);
     }
+    if (storage->display_name == nullptr || storage->vendor == nullptr) {
+        XCloseDisplay(display);
+        return nullptr;
+    }
     return display;
 }
 
@@ -389,7 +394,7 @@ int XFlush(Display *display)
     return connection == nullptr ? 0 : xcb_flush(connection);
 }
 
-int XSync(Display *display, Bool)
+int XSync(Display *display, Bool discard)
 {
     auto *connection = xmin::client::x11::xlib_connection(display);
     if (connection == nullptr) {
@@ -398,8 +403,13 @@ int XSync(Display *display, Bool)
     xcb_generic_error_t *error = nullptr;
     xcb_get_input_focus_reply_t *reply = xcb_get_input_focus_reply(
         connection, xcb_get_input_focus(connection), &error);
+    if (error != nullptr)
+        xmin::client::x11::xlib_dispatch_error(display, error);
     std::free(error);
     std::free(reply);
+    xmin::client::x11::xlib_pump_events(display);
+    if (discard)
+        xmin::client::x11::xlib_forget_events(display);
     return xcb_connection_has_error(connection) == 0;
 }
 
@@ -598,7 +608,15 @@ int XMapWindow(Display *display, Window window)
 
 int XMapRaised(Display *display, Window window)
 {
-    return XMapWindow(display, window);
+    auto *connection = xmin::client::x11::xlib_connection(display);
+    if (connection == nullptr)
+        return 0;
+    const std::uint32_t mode = XCB_STACK_MODE_ABOVE;
+    xcb_configure_window(
+        connection, static_cast<xcb_window_t>(window),
+        XCB_CONFIG_WINDOW_STACK_MODE, &mode);
+    xcb_map_window(connection, static_cast<xcb_window_t>(window));
+    return 1;
 }
 
 int XUnmapWindow(Display *display, Window window)

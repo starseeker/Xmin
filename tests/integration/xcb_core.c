@@ -1310,12 +1310,17 @@ main(void)
     bitmap_graphics = xcb_generate_id(connection);
     {
         uint8_t bitmap_data[4] = { 0, 0, 0, 0 };
+        uint8_t xy_bitmap_data[4] = { 0, 0, 0, 0 };
         const uint32_t colors[] = { 0x00ffff00U, 0x0000ffffU };
         const xcb_setup_t *setup = xcb_get_setup(connection);
 
         bitmap_data[0] = setup->bitmap_format_bit_order == XCB_IMAGE_ORDER_LSB_FIRST
             ? 0x05U
             : 0xa0U;
+        xy_bitmap_data[0] =
+            setup->bitmap_format_bit_order == XCB_IMAGE_ORDER_LSB_FIRST
+                ? 0x0aU
+                : 0x50U;
         if (!checked(connection,
                      xcb_create_pixmap_checked(
                          connection, 1, bitmap, screen->root, 8, 1),
@@ -1326,10 +1331,10 @@ main(void)
                      "CreateGC bitmap") ||
             !checked(connection,
                      xcb_put_image_checked(
-                         connection, XCB_IMAGE_FORMAT_Z_PIXMAP, bitmap,
+                         connection, XCB_IMAGE_FORMAT_XY_PIXMAP, bitmap,
                          bitmap_graphics, 8, 1, 0, 0, 0, 1,
                          sizeof(bitmap_data), bitmap_data),
-                     "PutImage bitmap") ||
+                     "PutImage XYPixmap") ||
             !checked(connection,
                      xcb_change_gc_checked(
                          connection, graphics,
@@ -1339,7 +1344,13 @@ main(void)
                      xcb_copy_plane_checked(
                          connection, bitmap, child, graphics, 0, 0, 0, 5,
                          8, 1, 1),
-                     "CopyPlane")) {
+                     "CopyPlane") ||
+            !checked(connection,
+                     xcb_put_image_checked(
+                         connection, XCB_IMAGE_FORMAT_XY_BITMAP, child,
+                         graphics, 8, 1, 0, 6, 1, 1,
+                         sizeof(xy_bitmap_data), xy_bitmap_data),
+                     "PutImage XYBitmap")) {
             goto cleanup;
         }
     }
@@ -1347,22 +1358,26 @@ main(void)
     image = xcb_get_image_reply(
         connection,
         xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, child, 0, 5,
-                      8, 1, UINT32_MAX),
+                      8, 2, UINT32_MAX),
         &error);
     if (error != NULL || image == NULL ||
-        xcb_get_image_data_length(image) < 8 * 4)
+        xcb_get_image_data_length(image) < 8 * 2 * 4)
         goto cleanup;
     {
+        unsigned y;
         unsigned x;
 
-        for (x = 0; x < 8; ++x) {
-            const uint32_t expected = x == 0 || x == 2
-                ? 0x00ffff00U
-                : 0x0000ffffU;
-            memcpy(&pixel, xcb_get_image_data(image) + x * 4,
-                   sizeof(pixel));
-            if ((pixel & 0x00ffffffU) != expected)
-                goto cleanup;
+        for (y = 0; y < 2; ++y) {
+            for (x = 0; x < 8; ++x) {
+                const uint32_t expected = x == 0 || x == 2
+                    ? 0x00ffff00U
+                    : 0x0000ffffU;
+                memcpy(&pixel,
+                       xcb_get_image_data(image) + (y * 8 + x) * 4,
+                       sizeof(pixel));
+                if ((pixel & 0x00ffffffU) != expected)
+                    goto cleanup;
+            }
         }
     }
     stage = "checking child pixels through the root";

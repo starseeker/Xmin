@@ -47,6 +47,7 @@ private:
     void cleanup() noexcept;
 
     UniqueFd listener_;
+    UniqueFd lock_descriptor_;
     unsigned display_ = 0;
     std::string socket_path_;
     std::string lock_path_;

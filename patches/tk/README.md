@@ -17,5 +17,7 @@ make
 
 The explicit `--with-xmin` option replaces Xlib, Xft, Fontconfig, FreeType,
 and XScreenSaver linkage with Xmin's focused client facade and embedded fonts.
-Normal Tk builds are unchanged. The patch updates both `configure.ac` and the
-release's generated `configure`, so Autoconf is not required to use it.
+It discovers `libXminClient` in `lib`, `lib64`, or a multiarch subdirectory
+below that prefix. Normal Tk builds are unchanged. The patch updates both
+`configure.ac` and the release's generated `configure`, so Autoconf is not
+required to use it.

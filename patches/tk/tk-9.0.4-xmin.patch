@@ -1,5 +1,5 @@
 diff --git a/unix/configure b/unix/configure
-index 0109b09..b2e9931 100755
+index 0109b09..7352d3f 100755
 --- a/unix/configure
 +++ b/unix/configure
 @@ -796,6 +796,7 @@ enable_load
@@ -18,7 +18,7 @@ index 0109b09..b2e9931 100755
  
  Some influential environment variables:
    CC          C compiler command
-@@ -7952,6 +7954,19 @@ else
+@@ -7952,6 +7954,32 @@ else
      #--------------------------------------------------------------------
  
  
@@ -28,10 +28,23 @@ index 0109b09..b2e9931 100755
 +	tk_xmin_prefix=""
 +    fi
 +    if test "x$tk_xmin_prefix" != "x" -a "x$tk_xmin_prefix" != "xno"; then
++	tk_xmin_libdir=""
++	for tk_xmin_library in \
++	    "$tk_xmin_prefix"/lib/libXminClient.* \
++	    "$tk_xmin_prefix"/lib64/libXminClient.* \
++	    "$tk_xmin_prefix"/lib/*/libXminClient.*; do
++	    if test -f "$tk_xmin_library"; then
++		tk_xmin_libdir=`dirname "$tk_xmin_library"`
++		break
++	    fi
++	done
++	if test "x$tk_xmin_libdir" = "x"; then
++	    as_fn_error $? "could not find libXminClient below $tk_xmin_prefix" "$LINENO" 5
++	fi
 +	XINCLUDES="-I$tk_xmin_prefix/include"
-+	XLIBSW="-L$tk_xmin_prefix/lib -Wl,-rpath,$tk_xmin_prefix/lib -lXminClient"
++	XLIBSW="-L$tk_xmin_libdir -Wl,-rpath,$tk_xmin_libdir -lXminClient"
 +	x_includes="$tk_xmin_prefix/include"
-+	x_libraries="$tk_xmin_prefix/lib"
++	x_libraries="$tk_xmin_libdir"
 +	tk_xmin=yes
 +    else
 +	tk_xmin=no
@@ -76,10 +89,10 @@ index 0109b09..b2e9931 100755
 -
 -
 diff --git a/unix/configure.ac b/unix/configure.ac
-index ad782ff..5ec671b 100644
+index ad782ff..8ce6f8f 100644
 --- a/unix/configure.ac
 +++ b/unix/configure.ac
-@@ -259,7 +259,20 @@ else
+@@ -259,7 +259,33 @@ else
      #	no include files, so double-check its result just to be safe.
      #--------------------------------------------------------------------
  
@@ -89,10 +102,23 @@ index ad782ff..5ec671b 100644
 +	    [use the minimalist Xmin X11 client SDK installed in DIR]),
 +	[tk_xmin_prefix=$withval], [tk_xmin_prefix=""])
 +    if test "x$tk_xmin_prefix" != "x" -a "x$tk_xmin_prefix" != "xno"; then
++	tk_xmin_libdir=""
++	for tk_xmin_library in \
++	    "$tk_xmin_prefix"/lib/libXminClient.* \
++	    "$tk_xmin_prefix"/lib64/libXminClient.* \
++	    "$tk_xmin_prefix"/lib/*/libXminClient.*; do
++	    if test -f "$tk_xmin_library"; then
++		tk_xmin_libdir=`dirname "$tk_xmin_library"`
++		break
++	    fi
++	done
++	if test "x$tk_xmin_libdir" = "x"; then
++	    AC_MSG_ERROR([could not find libXminClient below $tk_xmin_prefix])
++	fi
 +	XINCLUDES="-I$tk_xmin_prefix/include"
-+	XLIBSW="-L$tk_xmin_prefix/lib -Wl,-rpath,$tk_xmin_prefix/lib -lXminClient"
++	XLIBSW="-L$tk_xmin_libdir -Wl,-rpath,$tk_xmin_libdir -lXminClient"
 +	x_includes="$tk_xmin_prefix/include"
-+	x_libraries="$tk_xmin_prefix/lib"
++	x_libraries="$tk_xmin_libdir"
 +	tk_xmin=yes
 +    else
 +	SC_PATH_X

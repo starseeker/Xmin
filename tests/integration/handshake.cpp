@@ -1644,7 +1644,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
 
     request.assign(28, 0);
     request[0] = 72;
-    request[1] = 2;
+    request[1] = 1; // XYPixmap
     put16(request, 2, 7, little);
     put32(request, 4, pixmap, little);
     put32(request, 8, graphics, little);

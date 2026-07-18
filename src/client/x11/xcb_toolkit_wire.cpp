@@ -154,4 +154,28 @@ xcb_void_cookie_t xcb_no_operation(xcb_connection_t *connection)
         connection, nullptr, XCB_NO_OPERATION, true, 0, request);
 }
 
+xcb_query_keymap_cookie_t xcb_query_keymap(xcb_connection_t *connection)
+{
+    xcb_query_keymap_request_t request{};
+    return xmin::client::x11::send_request<xcb_query_keymap_cookie_t>(
+        connection, nullptr, XCB_QUERY_KEYMAP, false,
+        XCB_REQUEST_CHECKED, request);
+}
+
+xcb_query_keymap_cookie_t xcb_query_keymap_unchecked(
+    xcb_connection_t *connection)
+{
+    xcb_query_keymap_request_t request{};
+    return xmin::client::x11::send_request<xcb_query_keymap_cookie_t>(
+        connection, nullptr, XCB_QUERY_KEYMAP, false, 0, request);
+}
+
+xcb_query_keymap_reply_t *xcb_query_keymap_reply(
+    xcb_connection_t *connection, xcb_query_keymap_cookie_t cookie,
+    xcb_generic_error_t **error)
+{
+    return xmin::client::x11::wait_for_reply<xcb_query_keymap_reply_t>(
+        connection, cookie, error);
+}
+
 } // extern "C"

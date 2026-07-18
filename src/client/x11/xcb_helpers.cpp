@@ -472,12 +472,45 @@ xcb_create_pixmap_from_bitmap_data(
     xcb_gcontext_t *returned_gc)
 {
     xcb_image_t *image = xcb_image_create_from_bitmap_data(data, width, height);
-    if (image == nullptr || depth > std::numeric_limits<std::uint8_t>::max()) {
+    const xcb_setup_t *setup = connection == nullptr
+        ? nullptr
+        : xcb_get_setup(connection);
+    if (image == nullptr || setup == nullptr || depth == 0 ||
+        depth > std::numeric_limits<std::uint8_t>::max()) {
         xcb_image_destroy(image);
         return XCB_NONE;
     }
-    if (depth > 1)
-        image->format = XCB_IMAGE_FORMAT_XY_BITMAP;
+    const std::uint32_t native_stride = round_up_bits(
+        static_cast<std::uint32_t>(image->width),
+        setup->bitmap_format_scanline_pad) / 8U;
+    const std::uint64_t native_size =
+        static_cast<std::uint64_t>(native_stride) * image->height;
+    if (native_size > std::numeric_limits<std::uint32_t>::max()) {
+        xcb_image_destroy(image);
+        return XCB_NONE;
+    }
+    std::vector<std::uint8_t> native;
+    try {
+        native.assign(static_cast<std::size_t>(native_size), 0);
+    }
+    catch (...) {
+        xcb_image_destroy(image);
+        return XCB_NONE;
+    }
+    for (std::uint32_t row = 0; row < image->height; ++row) {
+        for (std::uint32_t column = 0; column < image->width; ++column) {
+            const auto source = image->data +
+                static_cast<std::size_t>(row) * image->stride;
+            if (((source[column / 8U] >> (column & 7U)) & 1U) == 0)
+                continue;
+            auto &destination = native[
+                static_cast<std::size_t>(row) * native_stride + column / 8U];
+            destination |= static_cast<std::uint8_t>(
+                setup->bitmap_format_bit_order == XCB_IMAGE_ORDER_LSB_FIRST
+                    ? 1U << (column & 7U)
+                    : 0x80U >> (column & 7U));
+        }
+    }
 
     const xcb_pixmap_t pixmap = xcb_generate_id(connection);
     xcb_create_pixmap(
@@ -488,7 +521,11 @@ xcb_create_pixmap_from_bitmap_data(
     xcb_create_gc(
         connection, gc, pixmap, XCB_GC_FOREGROUND | XCB_GC_BACKGROUND,
         values.data());
-    xcb_image_put(connection, pixmap, gc, image, 0, 0, 0);
+    xcb_put_image(
+        connection,
+        depth > 1 ? XCB_IMAGE_FORMAT_XY_BITMAP : XCB_IMAGE_FORMAT_XY_PIXMAP,
+        pixmap, gc, image->width, image->height, 0, 0, 0, 1,
+        static_cast<std::uint32_t>(native.size()), native.data());
     xcb_image_destroy(image);
     if (returned_gc != nullptr)
         *returned_gc = gc;

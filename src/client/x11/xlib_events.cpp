@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <limits>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -30,6 +31,20 @@ using EventQueue = std::deque<xcb_generic_event_t *>;
 std::mutex queue_mutex;
 std::unordered_map<Display *, EventQueue> queues;
 
+int queue_length(const EventQueue &queue) noexcept
+{
+    const auto maximum =
+        static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(queue.size(), maximum));
+}
+
+void update_queue_length(Display *display, const EventQueue &queue) noexcept
+{
+    if (display != nullptr)
+        reinterpret_cast<_XPrivDisplay>(display)->qlen =
+            queue_length(queue);
+}
+
 xcb_connection_t *connection(Display *display)
 {
     return xmin::client::x11::xlib_connection(display);
@@ -40,14 +55,32 @@ int event_type(const xcb_generic_event_t *event)
     return event == nullptr ? 0 : event->response_type & 0x7f;
 }
 
-long event_mask(int type)
+long event_mask(const xcb_generic_event_t *generic)
 {
+    const int type = event_type(generic);
     switch (type) {
     case KeyPress: return KeyPressMask;
     case KeyRelease: return KeyReleaseMask;
     case ButtonPress: return ButtonPressMask;
     case ButtonRelease: return ButtonReleaseMask;
-    case MotionNotify: return PointerMotionMask | ButtonMotionMask;
+    case MotionNotify: {
+        const auto state = reinterpret_cast<
+            const xcb_motion_notify_event_t *>(generic)->state;
+        long mask = PointerMotionMask;
+        const struct {
+            unsigned int state;
+            long motion;
+        } buttons[]{{Button1Mask, Button1MotionMask},
+                    {Button2Mask, Button2MotionMask},
+                    {Button3Mask, Button3MotionMask},
+                    {Button4Mask, Button4MotionMask},
+                    {Button5Mask, Button5MotionMask}};
+        for (const auto &button : buttons) {
+            if ((state & button.state) != 0)
+                mask |= ButtonMotionMask | button.motion;
+        }
+        return mask;
+    }
     case EnterNotify: return EnterWindowMask;
     case LeaveNotify: return LeaveWindowMask;
     case FocusIn:
@@ -55,13 +88,60 @@ long event_mask(int type)
     case Expose: return ExposureMask;
     case VisibilityNotify: return VisibilityChangeMask;
     case CreateNotify:
-    case DestroyNotify:
-    case UnmapNotify:
-    case MapNotify:
-    case ReparentNotify:
-    case ConfigureNotify:
-    case GravityNotify:
-    case CirculateNotify: return StructureNotifyMask | SubstructureNotifyMask;
+        return SubstructureNotifyMask;
+    case DestroyNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_destroy_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case UnmapNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_unmap_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case MapNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_map_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case ReparentNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_reparent_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case ConfigureNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_configure_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case GravityNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_gravity_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case CirculateNotify: {
+        const auto *event = reinterpret_cast<
+            const xcb_circulate_notify_event_t *>(generic);
+        return event->event == event->window
+            ? StructureNotifyMask
+            : SubstructureNotifyMask;
+    }
+    case ResizeRequest: return ResizeRedirectMask;
+    case MapRequest:
+    case ConfigureRequest:
+    case CirculateRequest: return SubstructureRedirectMask;
     case PropertyNotify: return PropertyChangeMask;
     case ColormapNotify: return ColormapChangeMask;
     default: return 0;
@@ -89,16 +169,40 @@ Window event_window(const xcb_generic_event_t *generic)
         return reinterpret_cast<const xcb_focus_in_event_t *>(generic)->event;
     case Expose:
         return reinterpret_cast<const xcb_expose_event_t *>(generic)->window;
+    case VisibilityNotify:
+        return reinterpret_cast<
+            const xcb_visibility_notify_event_t *>(generic)->window;
+    case CreateNotify:
+        return reinterpret_cast<const xcb_create_notify_event_t *>(generic)->parent;
     case ConfigureNotify:
-        return reinterpret_cast<const xcb_configure_notify_event_t *>(generic)->window;
+        return reinterpret_cast<const xcb_configure_notify_event_t *>(generic)->event;
     case MapNotify:
-        return reinterpret_cast<const xcb_map_notify_event_t *>(generic)->window;
+        return reinterpret_cast<const xcb_map_notify_event_t *>(generic)->event;
     case UnmapNotify:
-        return reinterpret_cast<const xcb_unmap_notify_event_t *>(generic)->window;
+        return reinterpret_cast<const xcb_unmap_notify_event_t *>(generic)->event;
     case DestroyNotify:
-        return reinterpret_cast<const xcb_destroy_notify_event_t *>(generic)->window;
+        return reinterpret_cast<const xcb_destroy_notify_event_t *>(generic)->event;
+    case ReparentNotify:
+        return reinterpret_cast<const xcb_reparent_notify_event_t *>(generic)->event;
+    case GravityNotify:
+        return reinterpret_cast<const xcb_gravity_notify_event_t *>(generic)->event;
+    case CirculateNotify:
+        return reinterpret_cast<const xcb_circulate_notify_event_t *>(generic)->event;
+    case ResizeRequest:
+        return reinterpret_cast<const xcb_resize_request_event_t *>(generic)->window;
+    case MapRequest:
+        return reinterpret_cast<const xcb_map_request_event_t *>(generic)->parent;
+    case ConfigureRequest:
+        return reinterpret_cast<
+            const xcb_configure_request_event_t *>(generic)->parent;
+    case CirculateRequest:
+        return reinterpret_cast<
+            const xcb_circulate_request_event_t *>(generic)->event;
     case PropertyNotify:
         return reinterpret_cast<const xcb_property_notify_event_t *>(generic)->window;
+    case ColormapNotify:
+        return reinterpret_cast<
+            const xcb_colormap_notify_event_t *>(generic)->window;
     case ClientMessage:
         return reinterpret_cast<const xcb_client_message_event_t *>(generic)->window;
     case SelectionClear:
@@ -193,6 +297,26 @@ bool convert(Display *display, const xcb_generic_event_t *generic, XEvent *event
         event->xexpose.count = source.count;
         break;
     }
+    case VisibilityNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_visibility_notify_event_t *>(generic);
+        event->xvisibility.window = source.window;
+        event->xvisibility.state = source.state;
+        break;
+    }
+    case CreateNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_create_notify_event_t *>(generic);
+        event->xcreatewindow.parent = source.parent;
+        event->xcreatewindow.window = source.window;
+        event->xcreatewindow.x = source.x;
+        event->xcreatewindow.y = source.y;
+        event->xcreatewindow.width = source.width;
+        event->xcreatewindow.height = source.height;
+        event->xcreatewindow.border_width = source.border_width;
+        event->xcreatewindow.override_redirect = source.override_redirect;
+        break;
+    }
     case ConfigureNotify: {
         const auto &source = *reinterpret_cast<const xcb_configure_notify_event_t *>(generic);
         event->xconfigure.event = source.event;
@@ -226,12 +350,87 @@ bool convert(Display *display, const xcb_generic_event_t *generic, XEvent *event
         event->xdestroywindow.window = source.window;
         break;
     }
+    case ReparentNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_reparent_notify_event_t *>(generic);
+        event->xreparent.event = source.event;
+        event->xreparent.window = source.window;
+        event->xreparent.parent = source.parent;
+        event->xreparent.x = source.x;
+        event->xreparent.y = source.y;
+        event->xreparent.override_redirect = source.override_redirect;
+        break;
+    }
+    case GravityNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_gravity_notify_event_t *>(generic);
+        event->xgravity.event = source.event;
+        event->xgravity.window = source.window;
+        event->xgravity.x = source.x;
+        event->xgravity.y = source.y;
+        break;
+    }
+    case CirculateNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_circulate_notify_event_t *>(generic);
+        event->xcirculate.event = source.event;
+        event->xcirculate.window = source.window;
+        event->xcirculate.place = source.place;
+        break;
+    }
+    case ResizeRequest: {
+        const auto &source = *reinterpret_cast<
+            const xcb_resize_request_event_t *>(generic);
+        event->xresizerequest.window = source.window;
+        event->xresizerequest.width = source.width;
+        event->xresizerequest.height = source.height;
+        break;
+    }
+    case MapRequest: {
+        const auto &source = *reinterpret_cast<
+            const xcb_map_request_event_t *>(generic);
+        event->xmaprequest.parent = source.parent;
+        event->xmaprequest.window = source.window;
+        break;
+    }
+    case ConfigureRequest: {
+        const auto &source = *reinterpret_cast<
+            const xcb_configure_request_event_t *>(generic);
+        event->xconfigurerequest.parent = source.parent;
+        event->xconfigurerequest.window = source.window;
+        event->xconfigurerequest.x = source.x;
+        event->xconfigurerequest.y = source.y;
+        event->xconfigurerequest.width = source.width;
+        event->xconfigurerequest.height = source.height;
+        event->xconfigurerequest.border_width = source.border_width;
+        event->xconfigurerequest.above = source.sibling;
+        event->xconfigurerequest.detail = source.stack_mode;
+        event->xconfigurerequest.value_mask = source.value_mask;
+        break;
+    }
+    case CirculateRequest: {
+        const auto &source = *reinterpret_cast<
+            const xcb_circulate_request_event_t *>(generic);
+        event->xcirculaterequest.parent = source.event;
+        event->xcirculaterequest.window = source.window;
+        event->xcirculaterequest.place = source.place;
+        break;
+    }
     case PropertyNotify: {
         const auto &source = *reinterpret_cast<const xcb_property_notify_event_t *>(generic);
         event->xproperty.window = source.window;
         event->xproperty.atom = source.atom;
         event->xproperty.time = source.time;
         event->xproperty.state = source.state;
+        break;
+    }
+    case ColormapNotify: {
+        const auto &source = *reinterpret_cast<
+            const xcb_colormap_notify_event_t *>(generic);
+        event->xcolormap.window = source.window;
+        event->xcolormap.colormap = source.colormap;
+        event->xcolormap.c_new = source._new;
+        event->xcolormap.state = source.state;
         break;
     }
     case ClientMessage: {
@@ -295,26 +494,94 @@ void pump(Display *display)
     auto *xcb = connection(display);
     if (xcb == nullptr)
         return;
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    auto &queue = queues[display];
-    while (auto *event = xcb_poll_for_event(xcb))
-        queue.push_back(event);
+    while (auto *event = xcb_poll_for_event(xcb)) {
+        if (event->response_type == 0) {
+            xmin::client::x11::xlib_dispatch_error(
+                display,
+                reinterpret_cast<const xcb_generic_error_t *>(event));
+            std::free(event);
+            continue;
+        }
+        try {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            auto &queue = queues[display];
+            queue.push_back(event);
+            update_queue_length(display, queue);
+        }
+        catch (...) {
+            std::free(event);
+            xmin::client::x11::xlib_dispatch_io_error(display);
+            return;
+        }
+    }
 }
 
 xcb_generic_event_t *next_raw(Display *display, bool block)
 {
     {
         std::lock_guard<std::mutex> lock(queue_mutex);
-        auto &queue = queues[display];
-        if (!queue.empty()) {
-            auto *result = queue.front();
-            queue.pop_front();
+        const auto found = queues.find(display);
+        if (found != queues.end() && !found->second.empty()) {
+            auto *result = found->second.front();
+            found->second.pop_front();
+            update_queue_length(display, found->second);
             return result;
         }
     }
     auto *xcb = connection(display);
-    return xcb == nullptr ? nullptr :
-        (block ? xcb_wait_for_event(xcb) : xcb_poll_for_event(xcb));
+    if (xcb == nullptr)
+        return nullptr;
+    for (;;) {
+        auto *result = block
+            ? xcb_wait_for_event(xcb)
+            : xcb_poll_for_event(xcb);
+        if (result == nullptr) {
+            if (xcb_connection_has_error(xcb) != 0)
+                xmin::client::x11::xlib_dispatch_io_error(display);
+            return nullptr;
+        }
+        if (result->response_type != 0)
+            return result;
+        xmin::client::x11::xlib_dispatch_error(
+            display,
+            reinterpret_cast<const xcb_generic_error_t *>(result));
+        std::free(result);
+    }
+}
+
+xcb_generic_event_t *take_queued_window_event(
+    Display *display, Window window, long mask)
+{
+    std::lock_guard<std::mutex> lock(queue_mutex);
+    auto found_queue = queues.find(display);
+    if (found_queue == queues.end())
+        return nullptr;
+    auto &queue = found_queue->second;
+    const auto found = std::find_if(
+        queue.begin(), queue.end(), [window, mask](const auto *event) {
+            return event_window(event) == window &&
+                (event_mask(event) & mask) != 0;
+        });
+    if (found == queue.end())
+        return nullptr;
+    auto *result = *found;
+    queue.erase(found);
+    update_queue_length(display, queue);
+    return result;
+}
+
+bool enqueue_raw(Display *display, xcb_generic_event_t *event)
+{
+    try {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        auto &queue = queues[display];
+        queue.push_back(event);
+        update_queue_length(display, queue);
+        return true;
+    }
+    catch (...) {
+        return false;
+    }
 }
 
 KeySym keycode_to_keysym(Display *display, KeyCode code, int column)
@@ -441,15 +708,22 @@ KeySym named_keysym(std::string_view name)
 
 namespace xmin::client::x11 {
 
+void xlib_pump_events(Display *display) noexcept
+{
+    pump(display);
+}
+
 void xlib_forget_events(Display *display) noexcept
 {
     std::lock_guard<std::mutex> lock(queue_mutex);
     auto found = queues.find(display);
-    if (found == queues.end())
-        return;
-    for (auto *event : found->second)
-        std::free(event);
-    queues.erase(found);
+    if (found != queues.end()) {
+        for (auto *event : found->second)
+            std::free(event);
+        queues.erase(found);
+    }
+    if (display != nullptr)
+        reinterpret_cast<_XPrivDisplay>(display)->qlen = 0;
 }
 
 } // namespace xmin::client::x11
@@ -459,7 +733,8 @@ extern "C" {
 int XQLength(Display *display)
 {
     std::lock_guard<std::mutex> lock(queue_mutex);
-    return static_cast<int>(queues[display].size());
+    const auto found = queues.find(display);
+    return found == queues.end() ? 0 : queue_length(found->second);
 }
 
 int XPending(Display *display)
@@ -490,24 +765,50 @@ int XPeekEvent(Display *display, XEvent *event)
     if (raw == nullptr)
         return -1;
     const bool converted = convert(display, raw, event);
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    queues[display].push_front(raw);
+    try {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        auto &queue = queues[display];
+        queue.push_front(raw);
+        update_queue_length(display, queue);
+    }
+    catch (...) {
+        std::free(raw);
+        return -1;
+    }
     return converted ? 0 : -1;
 }
 
 int XWindowEvent(Display *display, Window window, long mask, XEvent *event)
 {
     for (;;) {
-        auto *raw = next_raw(display, true);
+        auto *raw = take_queued_window_event(display, window, mask);
+        if (raw == nullptr) {
+            auto *xcb = connection(display);
+            if (xcb == nullptr)
+                return -1;
+            raw = xcb_wait_for_event(xcb);
+            while (raw != nullptr && raw->response_type == 0) {
+                xmin::client::x11::xlib_dispatch_error(
+                    display,
+                    reinterpret_cast<const xcb_generic_error_t *>(raw));
+                std::free(raw);
+                raw = xcb_wait_for_event(xcb);
+            }
+            if (raw == nullptr && xcb_connection_has_error(xcb) != 0)
+                xmin::client::x11::xlib_dispatch_io_error(display);
+        }
         if (raw == nullptr)
             return -1;
-        if (event_window(raw) == window && (event_mask(event_type(raw)) & mask) != 0) {
+        if (event_window(raw) == window && (event_mask(raw) & mask) != 0) {
             const bool converted = convert(display, raw, event);
             std::free(raw);
             return converted ? 0 : -1;
         }
-        std::lock_guard<std::mutex> lock(queue_mutex);
-        queues[display].push_back(raw);
+        if (!enqueue_raw(display, raw)) {
+            std::free(raw);
+            xmin::client::x11::xlib_dispatch_io_error(display);
+            return -1;
+        }
     }
 }
 
@@ -611,9 +912,17 @@ int XUngrabKeyboard(Display *display, Time time)
     return xcb != nullptr;
 }
 
-int XQueryKeymap(Display *, char keys[32])
+int XQueryKeymap(Display *display, char keys[32])
 {
-    std::memset(keys, 0, 32);
+    auto *xcb = connection(display);
+    if (xcb == nullptr || keys == nullptr)
+        return 0;
+    std::unique_ptr<xcb_query_keymap_reply_t, decltype(&std::free)> reply(
+        xcb_query_keymap_reply(xcb, xcb_query_keymap(xcb), nullptr),
+        std::free);
+    if (reply == nullptr)
+        return 0;
+    std::memcpy(keys, reply->keys, 32);
     return 1;
 }
 

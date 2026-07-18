@@ -52,6 +52,35 @@ bool valid(const BOX &box)
     return box.x1 < box.x2 && box.y1 < box.y2;
 }
 
+std::vector<BOX> subtract_box(
+    const std::vector<BOX> &sources, const BOX &cut)
+{
+    std::vector<BOX> result;
+    result.reserve(sources.size() * 4U);
+    for (const BOX &source : sources) {
+        const BOX overlap{
+            std::max(source.x1, cut.x1), std::min(source.x2, cut.x2),
+            std::max(source.y1, cut.y1), std::min(source.y2, cut.y2)};
+        if (!valid(overlap)) {
+            result.push_back(source);
+            continue;
+        }
+        const BOX fragments[]{{source.x1, source.x2,
+                               source.y1, overlap.y1},
+                              {source.x1, source.x2,
+                               overlap.y2, source.y2},
+                              {source.x1, overlap.x1,
+                               overlap.y1, overlap.y2},
+                              {overlap.x2, source.x2,
+                               overlap.y1, overlap.y2}};
+        for (const BOX &fragment : fragments) {
+            if (valid(fragment))
+                result.push_back(fragment);
+        }
+    }
+    return result;
+}
+
 } // namespace
 
 extern "C" {
@@ -142,30 +171,8 @@ int XSubtractRegion(Region first, Region second, Region destination)
     if (destination == nullptr)
         return 0;
     std::vector<BOX> result = boxes(first);
-    for (const BOX &cut : boxes(second)) {
-        std::vector<BOX> remainder;
-        for (const BOX &source : result) {
-            const BOX overlap{
-                std::max(source.x1, cut.x1), std::min(source.x2, cut.x2),
-                std::max(source.y1, cut.y1), std::min(source.y2, cut.y2)};
-            if (!valid(overlap)) {
-                remainder.push_back(source);
-                continue;
-            }
-            const BOX fragments[]{{source.x1, source.x2,
-                                   source.y1, overlap.y1},
-                                  {source.x1, source.x2,
-                                   overlap.y2, source.y2},
-                                  {source.x1, overlap.x1,
-                                   overlap.y1, overlap.y2},
-                                  {overlap.x2, source.x2,
-                                   overlap.y1, overlap.y2}};
-            for (const BOX &fragment : fragments)
-                if (valid(fragment))
-                    remainder.push_back(fragment);
-        }
-        result = std::move(remainder);
-    }
+    for (const BOX &cut : boxes(second))
+        result = subtract_box(result, cut);
     return replace(destination, result);
 }
 
@@ -177,12 +184,17 @@ int XRectInRegion(Region region, int x, int y,
     const BOX wanted{
         static_cast<short>(x), static_cast<short>(x + width),
         static_cast<short>(y), static_cast<short>(y + height)};
+    if (!valid(wanted))
+        return RectangleOut;
     bool intersects = false;
+    std::vector<BOX> uncovered{wanted};
     for (const BOX &box : boxes(region)) {
-        if (box.x1 <= wanted.x1 && box.y1 <= wanted.y1 &&
-            box.x2 >= wanted.x2 && box.y2 >= wanted.y2)
+        intersects = intersects || valid({
+            std::max(box.x1, wanted.x1), std::min(box.x2, wanted.x2),
+            std::max(box.y1, wanted.y1), std::min(box.y2, wanted.y2)});
+        uncovered = subtract_box(uncovered, box);
+        if (uncovered.empty())
             return RectangleIn;
-        intersects = intersects || EXTENTCHECK(&box, &wanted);
     }
     return intersects ? RectanglePart : RectangleOut;
 }

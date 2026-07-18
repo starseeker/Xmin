@@ -130,6 +130,7 @@ unlink_if_same(const std::string &path, dev_t device, ino_t inode) noexcept
 
 DisplaySocket::DisplaySocket(DisplaySocket &&other) noexcept
     : listener_(std::move(other.listener_)),
+      lock_descriptor_(std::move(other.lock_descriptor_)),
       display_(other.display_),
       socket_path_(std::move(other.socket_path_)),
       lock_path_(std::move(other.lock_path_)),
@@ -147,6 +148,7 @@ DisplaySocket::operator=(DisplaySocket &&other) noexcept
     if (this != &other) {
         cleanup();
         listener_ = std::move(other.listener_);
+        lock_descriptor_ = std::move(other.lock_descriptor_);
         display_ = other.display_;
         socket_path_ = std::move(other.socket_path_);
         lock_path_ = std::move(other.lock_path_);
@@ -173,6 +175,7 @@ DisplaySocket::cleanup() noexcept
         unlink_if_same(socket_path_, socket_device_, socket_inode_);
     if (owns_lock_ && !lock_path_.empty())
         unlink_if_same(lock_path_, lock_device_, lock_inode_);
+    lock_descriptor_.reset();
     owns_socket_ = false;
     owns_lock_ = false;
 }
@@ -262,7 +265,7 @@ DisplaySocket::acquire_lock(const std::string &root)
         }
 
         if (::link(temporary_path.c_str(), lock_path_.c_str()) == 0) {
-            temporary.reset();
+            lock_descriptor_ = std::move(temporary);
             static_cast<void>(::unlink(temporary_path.c_str()));
             lock_device_ = temporary_status.st_dev;
             lock_inode_ = temporary_status.st_ino;

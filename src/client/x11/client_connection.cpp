@@ -658,7 +658,7 @@ Connection::request_check(std::uint64_t target)
     const auto sync = send_core_reply_request(XCB_GET_INPUT_FOCUS, 0, {});
     if (sync == 0)
         return nullptr;
-    (void) wait_for_reply(sync, nullptr);
+    std::free(wait_for_reply(sync, nullptr));
     std::lock_guard<std::mutex> lock(state_mutex_);
     checked_requests_.erase(target);
     auto found = errors_.find(target);

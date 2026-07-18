@@ -1,5 +1,5 @@
 diff --git a/CMake/options.cmake b/CMake/options.cmake
-index ee08a589..c3973687 100644
+index ee08a589..43261f04 100644
 --- a/CMake/options.cmake
 +++ b/CMake/options.cmake
 @@ -398,10 +398,29 @@ endif()
@@ -27,7 +27,7 @@ index ee08a589..c3973687 100644
      set(FLTK_USE_X11 1)
 -    list(APPEND FLTK_LDLIBS -lX11)
 +    if(FLTK_USE_XMIN)
-+      list(APPEND FLTK_LDLIBS Xmin::ToolkitX11)
++      list(APPEND FLTK_LDLIBS ${FLTK_XMIN_LINK_FLAGS})
 +    else()
 +      list(APPEND FLTK_LDLIBS -lX11)
 +    endif()
@@ -40,7 +40,7 @@ index ee08a589..c3973687 100644
    set(USE_XFT X11_Xft_FOUND)
 -  list(APPEND FLTK_LDLIBS -lXft)
 +  if(FLTK_USE_XMIN)
-+    list(APPEND FLTK_LDLIBS Xmin::ToolkitX11)
++    list(APPEND FLTK_LDLIBS ${FLTK_XMIN_LINK_FLAGS})
 +  else()
 +    list(APPEND FLTK_LDLIBS -lXft)
 +  endif()
@@ -48,10 +48,10 @@ index ee08a589..c3973687 100644
    if(APPLE AND FLTK_BACKEND_X11)
      find_library(LIB_fontconfig fontconfig "/opt/X11/lib")
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index cf44b1c2..e1803f3b 100644
+index cf44b1c2..d67a4127 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -67,10 +67,26 @@ set(FLTK_VERSION ${FLTK_VERSION} CACHE STRING "FLTK version" FORCE)
+@@ -67,10 +67,47 @@ set(FLTK_VERSION ${FLTK_VERSION} CACHE STRING "FLTK version" FORCE)
  #######################################################################
  include(CMake/setup.cmake)
  
@@ -63,6 +63,27 @@ index cf44b1c2..e1803f3b 100644
 +  endif()
 +  get_target_property(FLTK_XMIN_INCLUDE_DIRECTORIES
 +    Xmin::ToolkitX11 INTERFACE_INCLUDE_DIRECTORIES)
++  get_target_property(FLTK_XMIN_CLIENT_LIBRARY
++    Xmin::ClientX11 IMPORTED_LOCATION)
++  if(NOT FLTK_XMIN_CLIENT_LIBRARY)
++    get_target_property(_xmin_configurations
++      Xmin::ClientX11 IMPORTED_CONFIGURATIONS)
++    foreach(_xmin_configuration IN LISTS _xmin_configurations)
++      string(TOUPPER "${_xmin_configuration}" _xmin_configuration_upper)
++      get_target_property(FLTK_XMIN_CLIENT_LIBRARY Xmin::ClientX11
++        "IMPORTED_LOCATION_${_xmin_configuration_upper}")
++      if(FLTK_XMIN_CLIENT_LIBRARY)
++        break()
++      endif()
++    endforeach()
++  endif()
++  if(NOT FLTK_XMIN_CLIENT_LIBRARY)
++    message(FATAL_ERROR "Cannot locate the Xmin client library")
++  endif()
++  get_filename_component(FLTK_XMIN_LIBRARY_DIRECTORY
++    "${FLTK_XMIN_CLIENT_LIBRARY}" DIRECTORY)
++  set(FLTK_XMIN_LINK_FLAGS
++    "-L${FLTK_XMIN_LIBRARY_DIRECTORY}" -lXminClient)
 +  list(APPEND CMAKE_REQUIRED_INCLUDES ${FLTK_XMIN_INCLUDE_DIRECTORIES})
 +endif()
 +
@@ -78,3 +99,14 @@ index cf44b1c2..e1803f3b 100644
  
  #######################################################################
  # options
+diff --git a/CMake/FLTKConfig.cmake.in b/CMake/FLTKConfig.cmake.in
+index bbda8fe6..72599524 100644
+--- a/CMake/FLTKConfig.cmake.in
++++ b/CMake/FLTKConfig.cmake.in
+@@ -39 +39,6 @@ set(FLTK_VERSION @FLTK_VERSION@)
++if(@FLTK_USE_XMIN@)
++  include(CMakeFindDependencyMacro)
++  find_dependency(Xmin CONFIG)
++endif()
++
+ include(${CMAKE_CURRENT_LIST_DIR}/FLTK-Targets.cmake)

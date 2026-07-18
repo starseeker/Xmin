@@ -36,6 +36,8 @@ constexpr std::size_t maximum_buffered_input =
     maximum_extended_request_bytes + 16384U;
 constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::size_t maximum_pending_descriptors = 16;
+constexpr std::uint8_t bitmap_scanline_unit = 32;
+constexpr std::uint8_t bitmap_scanline_pad = 32;
 // SCM_RIGHTS payloads use the socket ABI's word alignment.  In particular,
 // FreeBSD's cmsghdr type itself has four-byte alignment on 64-bit systems,
 // while CMSG_DATA is still aligned to an eight-byte machine word.
@@ -1094,8 +1096,8 @@ Connection::send_setup_success(ByteOrder order)
     const auto image_order = host_byte_order() == ByteOrder::little ? 0U : 1U;
     payload.u8(static_cast<std::uint8_t>(image_order));
     payload.u8(static_cast<std::uint8_t>(image_order));
-    payload.u8(32);  // bitmap scanline unit
-    payload.u8(32);  // bitmap scanline pad
+    payload.u8(bitmap_scanline_unit);
+    payload.u8(bitmap_scanline_pad);
     payload.u8(minimum_keycode);
     payload.u8(maximum_keycode);
     payload.pad(4);
@@ -4377,12 +4379,19 @@ Connection::handle_put_image(const RequestContext &context)
         !reader.skip(2)) {
         return malformed("truncated PutImage request");
     }
-    if (context.data != 2)
+    if (context.data > 2)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, context.data);
-    if (*left_pad != 0)
+    if (context.data == 2 && *left_pad != 0)
         return send_error(context.order, bad_match, context.opcode,
                           context.sequence);
+    if (context.data != 2) {
+        return draw_xy_image(
+            context, *drawable_id, *graphics_id, *width, *height,
+            signed_word(*destination_x), signed_word(*destination_y),
+            *left_pad, *depth, context.request.data() + 24,
+            context.request.size() - 24, context.data == 0);
+    }
     return draw_zpixmap(
         context, *drawable_id, *graphics_id, *width, *height, 0, 0,
         *width, *height, signed_word(*destination_x),
@@ -4480,6 +4489,92 @@ Connection::draw_zpixmap(
                                 destination_y + static_cast<std::int32_t>(row),
                                 pixel, graphics->function,
                                 graphics->plane_mask, graphics->clip());
+        }
+    }
+    return finish_draw(context, drawable);
+}
+
+Result<void>
+Connection::draw_xy_image(
+    const RequestContext &context, std::uint32_t drawable,
+    std::uint32_t graphics_id, std::uint16_t width,
+    std::uint16_t height, std::int16_t destination_x,
+    std::int16_t destination_y, std::uint8_t left_pad,
+    std::uint8_t depth, const std::uint8_t *image,
+    std::size_t image_size, bool bitmap)
+{
+    auto *surface = server_.drawable_surface(drawable);
+    if (surface == nullptr) {
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, drawable);
+    }
+    const auto *graphics = server_.graphics_context(graphics_id);
+    if (graphics == nullptr) {
+        return send_error(context.order, bad_graphics_context,
+                          context.opcode, context.sequence, graphics_id);
+    }
+    if (width == 0 || height == 0)
+        return send_error(context.order, bad_value, context.opcode,
+                          context.sequence);
+    if (graphics->depth != surface->depth() ||
+        (bitmap ? depth != 1 : depth != surface->depth())) {
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence);
+    }
+    if (left_pad >= bitmap_scanline_pad)
+        return send_error(context.order, bad_match, context.opcode,
+                          context.sequence, left_pad);
+
+    const auto row_bits = checked_add(
+        static_cast<std::size_t>(left_pad),
+        static_cast<std::size_t>(width));
+    const auto rounded_bits = row_bits
+        ? checked_add(*row_bits, std::size_t{7})
+        : std::optional<std::size_t>{};
+    const auto stride = rounded_bits
+        ? padded_to_four(*rounded_bits / 8)
+        : std::optional<std::size_t>{};
+    const auto plane_size = stride
+        ? checked_multiply(*stride, static_cast<std::size_t>(height))
+        : std::optional<std::size_t>{};
+    const auto expected_size = plane_size
+        ? checked_multiply(*plane_size,
+              static_cast<std::size_t>(bitmap ? 1 : depth))
+        : std::optional<std::size_t>{};
+    if (!expected_size || image == nullptr || image_size != *expected_size) {
+        return send_error(context.order, bad_length, context.opcode,
+                          context.sequence);
+    }
+
+    const bool least_significant_bit_first =
+        host_byte_order() == ByteOrder::little;
+    const auto image_bit = [=](std::size_t plane, std::size_t row,
+                               std::size_t column) {
+        const auto *row_data = image + plane * *plane_size + row * *stride;
+        const std::size_t bit_index = left_pad + column;
+        const unsigned bit = least_significant_bit_first
+            ? bit_index & 7U
+            : 7U - (bit_index & 7U);
+        return (row_data[bit_index / 8] >> bit) & 1U;
+    };
+    for (std::size_t row = 0; row < height; ++row) {
+        for (std::size_t column = 0; column < width; ++column) {
+            std::uint32_t pixel = 0;
+            if (bitmap) {
+                pixel = image_bit(0, row, column) != 0
+                    ? graphics->foreground
+                    : graphics->background;
+            }
+            else {
+                for (std::size_t plane = 0; plane < depth; ++plane) {
+                    if (image_bit(plane, row, column) != 0)
+                        pixel |= std::uint32_t{1} << (depth - plane - 1U);
+                }
+            }
+            surface->draw_pixel(
+                destination_x + static_cast<std::int32_t>(column),
+                destination_y + static_cast<std::int32_t>(row), pixel,
+                graphics->function, graphics->plane_mask, graphics->clip());
         }
     }
     return finish_draw(context, drawable);

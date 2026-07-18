@@ -212,11 +212,16 @@ test_replacement_paths_are_preserved(const std::string &root)
         }
     }
 
-    const bool preserved = exists(socket_path) && exists(lock_path);
+    const bool socket_preserved = exists(socket_path);
+    const bool lock_preserved = exists(lock_path);
+    if (!socket_preserved || !lock_preserved) {
+        std::cerr << "replacement preservation failed: socket="
+                  << socket_preserved << " lock=" << lock_preserved << '\n';
+    }
     static_cast<void>(::unlink(socket_path.c_str()));
     static_cast<void>(::unlink(lock_path.c_str()));
     static_cast<void>(::rmdir((root + "/.X11-unix").c_str()));
-    return preserved;
+    return socket_preserved && lock_preserved;
 }
 
 } // namespace
@@ -233,11 +238,15 @@ main()
         return 1;
     }
     const std::string root(created);
-    const bool passed = test_xauthority(root) && test_display_reservation(root) &&
+    const bool authority_passed = test_xauthority(root);
+    const bool reservation_passed = test_display_reservation(root);
+    const bool replacement_passed =
         test_replacement_paths_are_preserved(root);
     static_cast<void>(::rmdir(root.c_str()));
-    if (!passed) {
-        std::cerr << "next platform ownership/authentication test failed\n";
+    if (!authority_passed || !reservation_passed || !replacement_passed) {
+        std::cerr << "platform test failed: xauthority=" << authority_passed
+                  << " reservation=" << reservation_passed
+                  << " replacement=" << replacement_passed << '\n';
         return 1;
     }
     return 0;

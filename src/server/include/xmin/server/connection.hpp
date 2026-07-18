@@ -233,6 +233,13 @@ private:
         std::int16_t destination_x, std::int16_t destination_y,
         std::uint8_t depth, const std::uint8_t *image,
         std::size_t image_size, bool exact_image_size);
+    Result<void> draw_xy_image(
+        const RequestContext &context, std::uint32_t drawable,
+        std::uint32_t graphics, std::uint16_t width,
+        std::uint16_t height, std::int16_t destination_x,
+        std::int16_t destination_y, std::uint8_t left_pad,
+        std::uint8_t depth, const std::uint8_t *image,
+        std::size_t image_size, bool bitmap);
     Result<void> paint_text(
         const RequestContext &context, std::uint32_t drawable,
         std::uint32_t graphics, const EmbeddedFont &font,

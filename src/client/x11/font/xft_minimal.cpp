@@ -23,6 +23,8 @@ namespace {
 using xmin::client::font::EmbeddedFace;
 using xmin::client::font::RenderFont;
 
+constexpr std::size_t maximum_cached_color_sources = 64;
+
 struct FreeDeleter {
     void operator()(void *pointer) const noexcept
     {
@@ -317,6 +319,11 @@ Picture source_picture(XftDraw *draw, const XftColor *color)
             connection,
             xcb_render_create_solid_fill_checked(connection, picture, value))) {
         return None;
+    }
+    if (draw->sources.size() >= maximum_cached_color_sources) {
+        const auto evicted = draw->sources.begin();
+        xcb_render_free_picture(connection, evicted->second);
+        draw->sources.erase(evicted);
     }
     try {
         draw->sources.emplace(key, picture);

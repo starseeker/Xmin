@@ -8,8 +8,10 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cctype>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -149,10 +151,69 @@ std::string lower(std::string value)
     return value;
 }
 
-XErrorHandler error_handler = nullptr;
-XIOErrorHandler io_error_handler = nullptr;
+int default_error_handler(Display *, XErrorEvent *event) noexcept
+{
+    if (event != nullptr) {
+        std::fprintf(
+            stderr,
+            "XminClient: X11 error %u on request %u.%u "
+            "(resource 0x%lx, serial %lu)\n",
+            event->error_code, event->request_code, event->minor_code,
+            event->resourceid, event->serial);
+    }
+    return 0;
+}
+
+int default_io_error_handler(Display *) noexcept
+{
+    std::fprintf(stderr, "XminClient: X11 connection lost\n");
+    return 0;
+}
+
+std::atomic<XErrorHandler> error_handler{default_error_handler};
+std::atomic<XIOErrorHandler> io_error_handler{default_io_error_handler};
 
 } // namespace
+
+namespace xmin::client::x11 {
+
+void xlib_dispatch_error(
+    Display *display, const xcb_generic_error_t *error) noexcept
+{
+    if (error == nullptr)
+        return;
+    XErrorEvent event{};
+    event.type = 0;
+    event.display = display;
+    event.resourceid = error->resource_id;
+    event.serial = error->full_sequence != 0
+        ? error->full_sequence
+        : error->sequence;
+    event.error_code = error->error_code;
+    event.request_code = error->major_code;
+    event.minor_code = error->minor_code;
+    const XErrorHandler handler = error_handler.load();
+    try {
+        static_cast<void>((handler != nullptr ? handler : default_error_handler)(
+            display, &event));
+    }
+    catch (...) {
+    }
+}
+
+void xlib_dispatch_io_error(Display *display) noexcept
+{
+    const XIOErrorHandler handler = io_error_handler.load();
+    try {
+        static_cast<void>((handler != nullptr
+            ? handler
+            : default_io_error_handler)(display));
+    }
+    catch (...) {
+    }
+}
+
+} // namespace xmin::client::x11
 
 extern "C" {
 
@@ -1667,16 +1728,14 @@ int XGetErrorDatabaseText(
 
 XErrorHandler XSetErrorHandler(XErrorHandler handler)
 {
-    const XErrorHandler previous = error_handler;
-    error_handler = handler;
-    return previous;
+    return error_handler.exchange(
+        handler == nullptr ? default_error_handler : handler);
 }
 
 XIOErrorHandler XSetIOErrorHandler(XIOErrorHandler handler)
 {
-    const XIOErrorHandler previous = io_error_handler;
-    io_error_handler = handler;
-    return previous;
+    return io_error_handler.exchange(
+        handler == nullptr ? default_io_error_handler : handler);
 }
 
 void XFreeStringList(char **list)

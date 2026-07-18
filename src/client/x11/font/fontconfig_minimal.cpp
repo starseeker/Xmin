@@ -63,6 +63,44 @@ EmbeddedFace pattern_face(const _FcPattern *pattern) noexcept;
 
 std::shared_ptr<_FcCharSet> make_charset(EmbeddedFace face);
 
+const FontEngine &coverage_font(EmbeddedFace face)
+{
+    switch (face) {
+    case EmbeddedFace::sans_bold: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::sans_italic: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::sans_bold_italic: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::mono_regular: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::mono_bold: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::mono_italic: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::mono_bold_italic: {
+        static const FontEngine font(face, 12.0F);
+        return font;
+    }
+    case EmbeddedFace::sans_regular:
+        break;
+    }
+    static const FontEngine font(EmbeddedFace::sans_regular, 12.0F);
+    return font;
+}
+
 FcPattern *catalog_pattern(
     const char *family, const char *style, bool monospace, bool bold,
     bool italic);
@@ -614,7 +652,7 @@ FcBool FcCharSetHasChar(const FcCharSet *charset, FcChar32 codepoint)
     if (charset == nullptr || codepoint > 0x10ffffU) {
         return FcFalse;
     }
-    const FontEngine font(charset->face, 12.0F);
+    const FontEngine &font = coverage_font(charset->face);
     return font.valid() && font.glyph_index(codepoint) != 0 ? FcTrue : FcFalse;
 }
 
