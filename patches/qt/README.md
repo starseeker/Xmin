@@ -7,19 +7,26 @@ option is absent.
 
 The option supports two profiles:
 
-- raster qxcb uses the existing no-Xlib path with `-no-opengl`;
-- desktop OpenGL uses `Xmin::GL` and the added `xcb_xmin` GL integration.
-  Rendering stays in Xmin's OSMesa-backed client `libGL` and pixels are
-  presented over qxcb's existing XCB connection. It does not enable Xlib,
-  server-side GLX, EGL, DRI, DRM, GBM, Vulkan, or hardware rendering.
+- raster qxcb uses Xmin's focused Xlib/XCB compatibility target with
+  `-no-opengl`;
+- desktop OpenGL uses `Xmin::GL` and Qt's stock `xcb_glx` integration.
+  Rendering stays in Xmin's OSMesa-backed client `libGL`; MIT-SHM shared
+  pixmaps and Present are used when available, with the portable X image
+  upload retained as a fallback. It does not enable indirect GLX rendering,
+  EGL, DRI, DRM, GBM, Vulkan, or hardware rendering.
 
 The patch also corrects qxcb's shutdown helper to use `CopyFromParent` as the
 visual for its `InputOnly` window, as required by the core X11 protocol. That
 one-line correction is neutral and can be submitted to Qt independently.
 
+When Qt is built without fontconfig, the patch deploys Xmin's pinned Go font
+family into Qt's standard `lib/fonts` directory. Regular, bold, italic, and
+bold-italic faces (plus their monospaced variants) are therefore available in
+both the Qt build tree and an installed Qt without host font discovery.
+
 ## Validated source
 
-The patch was made and build-tested on 2026-07-17 against this `qtbase` tree:
+The patch was made and build-tested on 2026-07-18 against this `qtbase` tree:
 
 - Qt module version: 6.10.2 (`alpha1` prerelease segment)
 - commit: `0c0a85eb92267bbd7e8c3cbd18590735871dc687`
@@ -32,8 +39,12 @@ patch -p1 < /path/to/Xmin/patches/qt/qt_xmin.patch
 ```
 
 Forward and reverse dry runs should be checked when moving to a new Qt
-snapshot. The Xmin-specific code uses qxcb private interfaces and therefore
-must be rebuilt for each Qt version.
+snapshot. The patch now changes feature detection and target selection only;
+it does not add an Xmin-specific qxcb GL implementation.
+
+The validated desktop profile builds QtGui, the stock qxcb platform plugin,
+and the stock `xcb_glx` integration plugin, then creates, makes current,
+clears, and swaps a `QOpenGLContext` window on a launched Xmin server.
 
 ## Xmin SDK
 
@@ -60,7 +71,7 @@ The common tested profile is:
 
 ```text
 -release -qpa xcb -default-qpa xcb -xcb -xmin-x11
--no-xcb-xlib -no-feature-xlib -no-sm
+-xcb-xlib -feature-xlib -no-sm
 -no-egl -no-eglfs -no-vulkan
 -no-feature-gbm -no-feature-kms
 -no-feature-wayland -no-feature-wayland-client -no-feature-wayland-server
@@ -73,7 +84,6 @@ Add `-no-opengl` for the raster-only build or `-opengl desktop` for Xmin
 software OpenGL. After `--`, pass the installed SDK with
 `-DCMAKE_PREFIX_PATH=/path/to/xmin-sdk`.
 
-Both profiles were built successfully. Runtime acceptance verified qxcb
-backing-store rendering and capture for raster, plus an OpenGL 2.0 GLSL draw,
-readback, swap, and X-window capture for OpenGL. The resulting Qt GUI/qxcb
-libraries had no dependency on a host Xlib, XCB, xkbcommon, GLX, or EGL DSO.
+The resulting Qt GUI/qxcb libraries have no dependency on a host Xlib, XCB,
+xkbcommon, GLX, or EGL DSO: those standard ABI calls resolve to Xmin's client
+target and its OSMesa-backed `libGL`.

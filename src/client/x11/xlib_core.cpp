@@ -10,6 +10,7 @@
 #include <array>
 #include <atomic>
 #include <cctype>
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -17,6 +18,7 @@
 #include <limits>
 #include <memory>
 #include <string>
+#include <string_view>
 #include <vector>
 
 struct _XGC {
@@ -149,6 +151,76 @@ std::string lower(std::string value)
     std::transform(value.begin(), value.end(), value.begin(),
                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return value;
+}
+
+std::string normalized_color_name(std::string_view value)
+{
+    std::string result;
+    result.reserve(value.size());
+    for (const unsigned char character : value) {
+        if (!std::isspace(character))
+            result.push_back(static_cast<char>(std::tolower(character)));
+    }
+    return result;
+}
+
+bool parse_rgb_hex(
+    std::string_view value, std::array<unsigned short, 3> &components)
+{
+    std::size_t begin = 0;
+    for (std::size_t index = 0; index < components.size(); ++index) {
+        const std::size_t end = value.find('/', begin);
+        const bool last = index + 1 == components.size();
+        if ((last && end != std::string_view::npos) ||
+            (!last && end == std::string_view::npos)) {
+            return false;
+        }
+        const std::size_t length =
+            (end == std::string_view::npos ? value.size() : end) - begin;
+        if (length == 0 || length > 4)
+            return false;
+        const std::string part(value.substr(begin, length));
+        char *parsed_end = nullptr;
+        const unsigned long parsed =
+            std::strtoul(part.c_str(), &parsed_end, 16);
+        if (parsed_end != part.c_str() + part.size())
+            return false;
+        const unsigned long maximum =
+            (1UL << static_cast<unsigned>(length * 4U)) - 1UL;
+        components[index] = static_cast<unsigned short>(
+            (parsed * 65535UL + maximum / 2UL) / maximum);
+        begin = end == std::string_view::npos ? value.size() : end + 1;
+    }
+    return begin == value.size();
+}
+
+bool parse_rgb_intensity(
+    std::string_view value, std::array<unsigned short, 3> &components)
+{
+    std::size_t begin = 0;
+    for (std::size_t index = 0; index < components.size(); ++index) {
+        const std::size_t end = value.find('/', begin);
+        const bool last = index + 1 == components.size();
+        if ((last && end != std::string_view::npos) ||
+            (!last && end == std::string_view::npos)) {
+            return false;
+        }
+        const std::size_t length =
+            (end == std::string_view::npos ? value.size() : end) - begin;
+        if (length == 0)
+            return false;
+        const std::string part(value.substr(begin, length));
+        char *parsed_end = nullptr;
+        const double parsed = std::strtod(part.c_str(), &parsed_end);
+        if (parsed_end != part.c_str() + part.size() ||
+            !std::isfinite(parsed) || parsed < 0.0 || parsed > 1.0) {
+            return false;
+        }
+        components[index] = static_cast<unsigned short>(
+            std::lround(parsed * 65535.0));
+        begin = end == std::string_view::npos ? value.size() : end + 1;
+    }
+    return begin == value.size();
 }
 
 int default_error_handler(Display *, XErrorEvent *event) noexcept
@@ -597,8 +669,28 @@ int XPutImage(
         if (upload == nullptr)
             return 0;
     }
-    const std::uint32_t length = static_cast<std::uint32_t>(
-        static_cast<std::size_t>(upload->bytes_per_line) * height);
+    if (upload->bytes_per_line < 0 ||
+        (upload->format == XYPixmap && upload->depth <= 0)) {
+        if (upload != image)
+            XDestroyImage(upload);
+        return 0;
+    }
+    const std::size_t planes =
+        upload->format == XYPixmap
+        ? static_cast<std::size_t>(upload->depth)
+        : 1U;
+    const auto maximum_upload =
+        static_cast<std::size_t>(std::numeric_limits<std::uint32_t>::max());
+    const std::size_t stride =
+        static_cast<std::size_t>(upload->bytes_per_line);
+    if ((height != 0 && stride > maximum_upload / height) ||
+        (planes != 0 && stride * height > maximum_upload / planes)) {
+        if (upload != image)
+            XDestroyImage(upload);
+        return 0;
+    }
+    const std::size_t upload_size = stride * height * planes;
+    const auto length = static_cast<std::uint32_t>(upload_size);
     xcb_put_image(
         xcb, static_cast<std::uint8_t>(upload->format), drawable, gc_id(gc),
         static_cast<std::uint16_t>(width), static_cast<std::uint16_t>(height),
@@ -1056,14 +1148,12 @@ Status XParseColor(Display *, Colormap, const char *specification, XColor *color
     if (specification == nullptr || color == nullptr)
         return 0;
     const std::string text = lower(specification);
+    std::array<unsigned short, 3> components{};
     if (!text.empty() && text.front() == '#') {
         const std::string digits = text.substr(1);
         if (digits.size() % 3 != 0 || digits.empty() || digits.size() > 12)
             return 0;
         const std::size_t component_digits = digits.size() / 3;
-        const unsigned long maximum =
-            (1UL << static_cast<unsigned int>(component_digits * 4)) - 1UL;
-        unsigned short components[3]{};
         for (std::size_t component = 0; component < 3; ++component) {
             const std::string part = digits.substr(
                 component * component_digits, component_digits);
@@ -1072,28 +1162,44 @@ Status XParseColor(Display *, Colormap, const char *specification, XColor *color
             if (end != part.c_str() + part.size())
                 return 0;
             components[component] = static_cast<unsigned short>(
-                (value * 65535UL + maximum / 2UL) / maximum);
-        }
-        color->red = components[0];
-        color->green = components[1];
-        color->blue = components[2];
-        color->flags = DoRed | DoGreen | DoBlue;
-        return 1;
-    }
-    struct Named { const char *name; unsigned short r, g, b; };
-    static constexpr Named named[]{{"black", 0, 0, 0},
-        {"white", 65535, 65535, 65535}, {"red", 65535, 0, 0},
-        {"green", 0, 65535, 0}, {"blue", 0, 0, 65535},
-        {"yellow", 65535, 65535, 0}, {"gray", 32896, 32896, 32896},
-        {"grey", 32896, 32896, 32896}};
-    for (const auto &entry : named) {
-        if (text == entry.name) {
-            color->red = entry.r; color->green = entry.g; color->blue = entry.b;
-            color->flags = DoRed | DoGreen | DoBlue;
-            return 1;
+                value << static_cast<unsigned int>(
+                    16U - component_digits * 4U));
         }
     }
-    return 0;
+    else if (text.rfind("rgb:", 0) == 0) {
+        if (!parse_rgb_hex(std::string_view(text).substr(4), components))
+            return 0;
+    }
+    else if (text.rfind("rgbi:", 0) == 0) {
+        if (!parse_rgb_intensity(std::string_view(text).substr(5), components))
+            return 0;
+    }
+    else {
+        struct NamedColor {
+            const char *name;
+            std::uint32_t rgb;
+        };
+        static constexpr NamedColor named_colors[]{
+#include "x11_colors.inc"
+        };
+        const std::string name = normalized_color_name(text);
+        const auto found = std::lower_bound(
+            std::begin(named_colors), std::end(named_colors), name,
+            [](const NamedColor &candidate, const std::string &wanted) {
+                return std::string_view(candidate.name) < wanted;
+            });
+        if (found == std::end(named_colors) || found->name != name)
+            return 0;
+        components = {{
+            static_cast<unsigned short>((found->rgb >> 16U) * 257U),
+            static_cast<unsigned short>(((found->rgb >> 8U) & 0xffU) * 257U),
+            static_cast<unsigned short>((found->rgb & 0xffU) * 257U)}};
+    }
+    color->red = components[0];
+    color->green = components[1];
+    color->blue = components[2];
+    color->flags = DoRed | DoGreen | DoBlue;
+    return 1;
 }
 
 Status XLookupColor(
@@ -1191,8 +1297,15 @@ int XDefineCursor(Display *display, Window window, Cursor cursor)
     return xcb != nullptr;
 }
 
-int XRecolorCursor(Display *, Cursor, XColor *, XColor *)
+int XRecolorCursor(
+    Display *display, Cursor cursor, XColor *foreground, XColor *background)
 {
+    auto *xcb = connection(display);
+    if (xcb == nullptr || foreground == nullptr || background == nullptr)
+        return 0;
+    xcb_recolor_cursor(
+        xcb, cursor, foreground->red, foreground->green, foreground->blue,
+        background->red, background->green, background->blue);
     return 1;
 }
 
@@ -1505,6 +1618,88 @@ Status XStringListToTextProperty(
     property->format = 8;
     property->nitems = value.size();
     return 1;
+}
+
+static int xmin_text_list_to_property(
+    Display *display, char **list, int count, XICCEncodingStyle style,
+    XTextProperty *property)
+{
+    if (property == nullptr || count < 0)
+        return XConverterNotFound;
+    if (style < XStringStyle || style > XUTF8StringStyle)
+        return XConverterNotFound;
+    if (!XStringListToTextProperty(list, count, property))
+        return XNoMemory;
+
+    if (style == XStringStyle) {
+        property->encoding = XA_STRING;
+        return 0;
+    }
+
+    const bool ascii = std::all_of(
+        property->value, property->value + property->nitems,
+        [](unsigned char value) { return value < 0x80; });
+    if (style == XStdICCTextStyle && ascii) {
+        property->encoding = XA_STRING;
+        return 0;
+    }
+
+    if (style == XCompoundTextStyle && !ascii) {
+        XFree(property->value);
+        property->value = nullptr;
+        property->nitems = 0;
+        return XConverterNotFound;
+    }
+
+    const char *encoding = style == XCompoundTextStyle
+        ? "COMPOUND_TEXT"
+        : "UTF8_STRING";
+    property->encoding = XInternAtom(display, encoding, False);
+    if (property->encoding == None) {
+        XFree(property->value);
+        property->value = nullptr;
+        property->nitems = 0;
+        return XConverterNotFound;
+    }
+    return 0;
+}
+
+int XmbTextListToTextProperty(
+    Display *display, char **list, int count, XICCEncodingStyle style,
+    XTextProperty *property)
+{
+    return xmin_text_list_to_property(display, list, count, style, property);
+}
+
+int Xutf8TextListToTextProperty(
+    Display *display, char **list, int count, XICCEncodingStyle,
+    XTextProperty *property)
+{
+    return xmin_text_list_to_property(
+        display, list, count, XUTF8StringStyle, property);
+}
+
+void XSetTextProperty(
+    Display *display, Window window, XTextProperty *property, Atom atom)
+{
+    if (property != nullptr) {
+        XChangeProperty(
+            display, window, atom, property->encoding, property->format,
+            PropModeReplace, property->value,
+            static_cast<int>(property->nitems));
+    }
+}
+
+void XSetWMName(
+    Display *display, Window window, XTextProperty *property)
+{
+    XSetTextProperty(display, window, property, XA_WM_NAME);
+}
+
+void XSetWMIconName(
+    Display *display, Window window, XTextProperty *property)
+{
+    XSetTextProperty(display, window, property, XA_WM_ICON_NAME);
 }
 
 void XSetWMClientMachine(

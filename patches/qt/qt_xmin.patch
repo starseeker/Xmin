@@ -1,7 +1,33 @@
 diff --git a/src/gui/CMakeLists.txt b/src/gui/CMakeLists.txt
 --- a/src/gui/CMakeLists.txt
 +++ b/src/gui/CMakeLists.txt
-@@ -371,6 +371,8 @@ if(QT_FEATURE_opengl)
+@@ -9,3 +9,25 @@
++if(QT_FEATURE_xmin_x11)
++    get_target_property(qt_xmin_font_files Xmin::QtX11 XMIN_FONT_FILES)
++    if(NOT qt_xmin_font_files)
++        message(FATAL_ERROR "The Xmin package did not provide its client font files")
++    endif()
++    foreach(qt_xmin_font_file IN LISTS qt_xmin_font_files)
++        if(NOT EXISTS "${qt_xmin_font_file}")
++            message(FATAL_ERROR "Xmin client font file not found: ${qt_xmin_font_file}")
++        endif()
++    endforeach()
++
++    qt_path_join(qt_xmin_font_build_dir
++        "${QT_BUILD_DIR}" "${INSTALL_LIBDIR}" "fonts")
++    qt_path_join(qt_xmin_font_install_dir
++        "${QT_INSTALL_DIR}" "${INSTALL_LIBDIR}" "fonts")
++    qt_copy_or_install(FILES ${qt_xmin_font_files}
++        DESTINATION "${qt_xmin_font_install_dir}")
++    if(QT_WILL_INSTALL)
++        file(COPY ${qt_xmin_font_files} DESTINATION "${qt_xmin_font_build_dir}")
++    endif()
++endif()
++
+ if (QT_FEATURE_gui)
+     if(QT_QPA_PLATFORMS)
+         list(GET QT_QPA_PLATFORMS 0 _default_platform)
+@@ -371,6 +393,8 @@ if(QT_FEATURE_opengl)
                      PlatformGraphics::PlatformGraphics
              )
          endif()
@@ -10,7 +36,28 @@ diff --git a/src/gui/CMakeLists.txt b/src/gui/CMakeLists.txt
      elseif(NOT QT_FEATURE_opengl_dynamic)
          target_link_libraries(Gui PUBLIC WrapOpenGL::WrapOpenGL)
      endif()
-@@ -1082,14 +1084,20 @@ qt_internal_extend_target(Gui CONDITION QT_FEATURE_dbus AND QT_FEATURE_systemtra
+@@ -900,11 +924,17 @@ qt_internal_extend_target(Gui CONDITION NOT QT_FEATURE_system_zlib
+         Qt::Core
+ )
+-
++
++if(QT_FEATURE_xmin_x11)
++    set(qt_glx_xlib_target Xmin::QtX11)
++else()
++    set(qt_glx_xlib_target X11::X11)
++endif()
++
+ qt_internal_extend_target(Gui CONDITION QT_FEATURE_opengl AND QT_FEATURE_xlib AND NOT QT_FEATURE_opengles2
+     SOURCES
+         opengl/platform/unix/qglxconvenience.cpp opengl/platform/unix/qglxconvenience_p.h
+     LIBRARIES
+-        X11::X11
++        ${qt_glx_xlib_target}
+ )
+-
++
+ qt_internal_extend_target(Gui CONDITION QT_FEATURE_opengles2
+@@ -1082,14 +1112,20 @@ qt_internal_extend_target(Gui CONDITION QT_FEATURE_dbus AND QT_FEATURE_systemtra
          platform/unix/dbustray/qxdgnotificationproxy.cpp platform/unix/dbustray/qxdgnotificationproxy_p.h
  )
  
@@ -73,7 +120,7 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
  
  # qt wayland client
  if(LINUX OR FREEBSD OR QT_FIND_ALL_PACKAGES_ALWAYS)
-@@ -581,6 +594,48 @@ int main(void)
+@@ -581,6 +594,53 @@ int main(void)
  }
  ")
  
@@ -84,7 +131,10 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
 +        LIBRARIES
 +            Xmin::QtX11
 +        CODE
-+"#include <xcb/xcb.h>
++"#include <X11/Xlib.h>
++#include <X11/Xlib-xcb.h>
++#include <xcb/glx.h>
++#include <xcb/xcb.h>
 +#include <xcb/xcb_cursor.h>
 +#include <xcb/xcb_icccm.h>
 +#include <xcb/xcb_image.h>
@@ -103,7 +153,9 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
 +int main(void)
 +{
 +    int screen = 0;
-+    xcb_connection_t *connection = xcb_connect(nullptr, &screen);
++    Display *display = XOpenDisplay(nullptr);
++    xcb_connection_t *connection = XGetXCBConnection(display);
++    xcb_glx_query_version(connection, 1, 4);
 +    xcb_render_query_pict_formats(connection);
 +    xcb_render_util_find_standard_format(nullptr, XCB_PICT_STANDARD_ARGB_32);
 +    xkb_context *context = xkb_context_new(XKB_CONTEXT_NO_DEFAULT_INCLUDES);
@@ -114,15 +166,15 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
 +        XKB_X11_SETUP_XKB_EXTENSION_NO_FLAGS,
 +        nullptr, nullptr, nullptr, nullptr);
 +    xkb_context_unref(context);
-+    xcb_disconnect(connection);
-+    return 0;
++    XCloseDisplay(display);
++    return screen;
 +}")
 +endif()
 +
  # xcb_syslibs
  qt_config_compile_test(xcb_syslibs
      LABEL "XCB (extensions)"
-@@ -1199,17 +1254,27 @@ qt_feature("tuiotouch" PRIVATE
+@@ -1199,19 +1258,29 @@ qt_feature("tuiotouch" PRIVATE
      PURPOSE "Provides the TuioTouch input plugin."
      CONDITION QT_FEATURE_network AND QT_FEATURE_udpsocket
  )
@@ -150,8 +202,19 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
 +)
  qt_feature("xcb-glx" PRIVATE
      LABEL "  XCB GLX"
-     CONDITION XCB_GLX_FOUND
-@@ -1250,11 +1315,11 @@ qt_feature("system-xcb-xinput" PRIVATE SYSTEM_LIBRARY
+-    CONDITION XCB_GLX_FOUND
++    CONDITION XCB_GLX_FOUND OR QT_FEATURE_xmin_opengl
+     EMIT_IF QT_FEATURE_xcb AND QT_FEATURE_xcb_glx_plugin
+ )
+@@ -1234,6 +1303,6 @@ qt_feature("xrender" PRIVATE
+ qt_feature("xcb-xlib" PRIVATE
+     LABEL "XCB Xlib"
+-    CONDITION QT_FEATURE_xlib AND X11_XCB_FOUND
++    CONDITION QT_FEATURE_xlib AND (X11_XCB_FOUND OR QT_FEATURE_xmin_x11)
+ )
+ qt_feature("xcb-sm" PRIVATE
+     LABEL "xcb-sm"
+@@ -1250,14 +1319,14 @@ qt_feature("system-xcb-xinput" PRIVATE SYSTEM_LIBRARY
  )
  qt_feature("xkbcommon" PRIVATE
      LABEL "xkbcommon"
@@ -165,11 +228,10 @@ diff --git a/src/gui/configure.cmake b/src/gui/configure.cmake
  )
  qt_feature("xlib" PRIVATE
      LABEL "XLib"
-@@ -1789,4 +1854,3 @@
- 
- 
- #### Features
--
+     AUTODETECT NOT APPLE OR QT_FEATURE_xcb
+-    CONDITION X11_FOUND
++    CONDITION X11_FOUND OR QT_FEATURE_xmin_x11
+ )
 diff --git a/src/gui/qt_cmdline.cmake b/src/gui/qt_cmdline.cmake
 --- a/src/gui/qt_cmdline.cmake
 +++ b/src/gui/qt_cmdline.cmake
@@ -241,7 +303,7 @@ diff --git a/src/plugins/platforms/xcb/CMakeLists.txt b/src/plugins/platforms/xc
  qt_internal_add_module(XcbQpaPrivate
      CONFIG_MODULE_NAME xcb_qpa_lib
      INTERNAL_MODULE
-@@ -47,29 +70,19 @@ qt_internal_add_module(XcbQpaPrivate
+@@ -47,23 +70,8 @@ qt_internal_add_module(XcbQpaPrivate
      INCLUDE_DIRECTORIES
          gl_integrations
      PUBLIC_LIBRARIES
@@ -266,333 +328,69 @@ diff --git a/src/plugins/platforms/xcb/CMakeLists.txt b/src/plugins/platforms/xc
 +        ${qt_xcb_client_libraries}
      NO_UNITY_BUILD # X11 define clashes
  )
+@@ -98,12 +111,17 @@ qt_internal_extend_target(XcbQpaPrivate CONDITION QT_FEATURE_draganddrop
+         GLIB2::GLIB2
+ )
  
- qt_disable_apple_app_extension_api_only(XcbQpaPrivate)
- 
-+qt_internal_extend_target(XcbQpaPrivate CONDITION QT_FEATURE_xmin_opengl
-+    DEFINES
-+        QT_XCB_XMIN_OPENGL
-+)
++if(QT_FEATURE_xmin_x11)
++    set(qt_xcb_xlib_libraries Xmin::QtX11)
++else()
++    set(qt_xcb_xlib_libraries X11::XCB X11::X11)
++endif()
 +
+ qt_internal_extend_target(XcbQpaPrivate CONDITION QT_FEATURE_xcb_xlib
+     SOURCES
+         qt_xlib_wrapper.c qt_xlib_wrapper.h
+     PUBLIC_LIBRARIES
+-        X11::XCB
+-        X11::X11
++        ${qt_xcb_xlib_libraries}
+ )
+-
++
+ qt_internal_extend_target(XcbQpaPrivate CONDITION NOT QT_FEATURE_xcb_xlib
+diff --git a/src/plugins/platforms/offscreen/CMakeLists.txt b/src/plugins/platforms/offscreen/CMakeLists.txt
+--- a/src/plugins/platforms/offscreen/CMakeLists.txt
++++ b/src/plugins/platforms/offscreen/CMakeLists.txt
+@@ -26,9 +26,15 @@ qt_internal_add_plugin(QOffscreenIntegrationPlugin
  ## Scopes:
  #####################################################################
- 
-diff --git a/src/plugins/platforms/xcb/gl_integrations/CMakeLists.txt b/src/plugins/platforms/xcb/gl_integrations/CMakeLists.txt
---- a/src/plugins/platforms/xcb/gl_integrations/CMakeLists.txt
-+++ b/src/plugins/platforms/xcb/gl_integrations/CMakeLists.txt
-@@ -7,3 +7,6 @@ endif()
- if(QT_FEATURE_xcb_glx_plugin)
-     add_subdirectory(xcb_glx)
- endif()
-+if(QT_FEATURE_xmin_opengl)
-+    add_subdirectory(xcb_xmin)
+-
++
++if(QT_FEATURE_xmin_x11)
++    set(qt_offscreen_xlib_target Xmin::QtX11)
++else()
++    set(qt_offscreen_xlib_target X11::X11)
 +endif()
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/CMakeLists.txt b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/CMakeLists.txt
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/CMakeLists.txt
-@@ -0,0 +1,21 @@
-+# Copyright (C) 2026 Xmin Project
-+# SPDX-License-Identifier: BSD-3-Clause
 +
-+qt_internal_add_plugin(QXcbXminIntegrationPlugin
-+    OUTPUT_NAME qxcb-xmin-integration
-+    PLUGIN_TYPE xcbglintegrations
-+    SOURCES
-+        qxcbxmincontext.cpp qxcbxmincontext.h
-+        qxcbxminintegration.cpp qxcbxminintegration.h
-+        qxcbxminmain.cpp
-+    INCLUDE_DIRECTORIES
-+        ..
-+        ../..
-+    LIBRARIES
-+        Qt::Core
-+        Qt::CorePrivate
-+        Qt::Gui
-+        Qt::GuiPrivate
-+        Qt::XcbQpaPrivate
-+        Xmin::GL
-+)
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.cpp b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.cpp
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.cpp
-@@ -0,0 +1,109 @@
-+// Copyright (C) 2026 Xmin Project
-+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
+ qt_internal_extend_target(QOffscreenIntegrationPlugin CONDITION QT_FEATURE_opengl AND QT_FEATURE_xlib AND NOT QT_FEATURE_opengles2
+     SOURCES
+         qoffscreenintegration_x11.cpp qoffscreenintegration_x11.h
+     LIBRARIES
+-        X11::X11
++        ${qt_offscreen_xlib_target}
+ )
+diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_glx/CMakeLists.txt b/src/plugins/platforms/xcb/gl_integrations/xcb_glx/CMakeLists.txt
+--- a/src/plugins/platforms/xcb/gl_integrations/xcb_glx/CMakeLists.txt
++++ b/src/plugins/platforms/xcb/gl_integrations/xcb_glx/CMakeLists.txt
+@@ -29,9 +29,15 @@ qt_internal_add_plugin(QXcbGlxIntegrationPlugin
+ ## Scopes:
+ #####################################################################
+-
 +
-+#include "qxcbxmincontext.h"
++if(QT_FEATURE_xmin_x11)
++    set(qt_xcb_glx_library Xmin::QtX11)
++else()
++    set(qt_xcb_glx_library XCB::GLX)
++endif()
 +
-+#include "qxcbconnection.h"
-+#include "qxcbscreen.h"
-+#include "qxcbwindow.h"
-+
-+#include <QtGui/QOpenGLContext>
-+#include <Xmin/GLXxcb.h>
-+
-+#include <cstdlib>
-+
-+QT_BEGIN_NAMESPACE
-+
-+QXcbXminContext::QXcbXminContext(QXcbConnection *connection,
-+                                 QOpenGLContext *context)
-+{
-+    auto *screen = static_cast<QXcbScreen *>(context->screen()->handle());
-+    m_format = screen->surfaceFormatFor(context->format());
-+    m_format.setRenderableType(QSurfaceFormat::OpenGL);
-+    m_format.setVersion(2, 0);
-+    m_format.setProfile(QSurfaceFormat::NoProfile);
-+
-+    m_display = xminGlxCreateXcbDisplay(connection->xcb_connection());
-+    if (!m_display)
-+        return;
-+
-+    if (context->shareHandle()) {
-+        const auto *share =
-+            static_cast<const QXcbXminContext *>(context->shareHandle());
-+        m_shareContext = share->m_context;
-+    }
-+
-+    const int attributes[] = {
-+        GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
-+        GLX_RENDER_TYPE, GLX_RGBA_BIT,
-+        GLX_DOUBLEBUFFER,
-+            m_format.swapBehavior() == QSurfaceFormat::SingleBuffer
-+                ? False : True,
-+        GLX_RED_SIZE, qMax(1, m_format.redBufferSize()),
-+        GLX_GREEN_SIZE, qMax(1, m_format.greenBufferSize()),
-+        GLX_BLUE_SIZE, qMax(1, m_format.blueBufferSize()),
-+        GLX_ALPHA_SIZE, qMax(0, m_format.alphaBufferSize()),
-+        GLX_DEPTH_SIZE, qMax(0, m_format.depthBufferSize()),
-+        GLX_STENCIL_SIZE, qMax(0, m_format.stencilBufferSize()),
-+        0
-+    };
-+    int count = 0;
-+    GLXFBConfig *configs = glXChooseFBConfig(
-+        m_display, screen->screenNumber(), attributes, &count);
-+    if (configs && count > 0) {
-+        const int contextAttributes[] = {
-+            GLX_CONTEXT_MAJOR_VERSION_ARB, 2,
-+            GLX_CONTEXT_MINOR_VERSION_ARB, 0,
-+            0
-+        };
-+        m_context = glXCreateContextAttribsARB(
-+            m_display, configs[0], m_shareContext, True, contextAttributes);
-+        if (!m_context && m_shareContext) {
-+            m_shareContext = nullptr;
-+            m_context = glXCreateContextAttribsARB(
-+                m_display, configs[0], nullptr, True, contextAttributes);
-+        }
-+    }
-+    std::free(configs);
-+}
-+
-+QXcbXminContext::~QXcbXminContext()
-+{
-+    if (m_context)
-+        glXDestroyContext(m_display, m_context);
-+    xminGlxDestroyXcbDisplay(m_display);
-+}
-+
-+bool QXcbXminContext::makeCurrent(QPlatformSurface *surface)
-+{
-+    if (!m_context || !surface ||
-+        surface->surface()->surfaceClass() != QSurface::Window) {
-+        return false;
-+    }
-+    auto *window = static_cast<QXcbWindow *>(surface);
-+    return glXMakeCurrent(m_display, window->xcb_window(), m_context);
-+}
-+
-+void QXcbXminContext::doneCurrent()
-+{
-+    if (m_display)
-+        glXMakeCurrent(m_display, 0, nullptr);
-+}
-+
-+void QXcbXminContext::swapBuffers(QPlatformSurface *surface)
-+{
-+    if (!surface || surface->surface()->surfaceClass() != QSurface::Window)
-+        return;
-+    auto *window = static_cast<QXcbWindow *>(surface);
-+    glXSwapBuffers(m_display, window->xcb_window());
-+    if (window->needsSync())
-+        window->postSyncWindowRequest();
-+}
-+
-+QFunctionPointer QXcbXminContext::getProcAddress(const char *procName)
-+{
-+    return reinterpret_cast<QFunctionPointer>(
-+        glXGetProcAddress(reinterpret_cast<const GLubyte *>(procName)));
-+}
-+
-+QT_END_NAMESPACE
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.h b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.h
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxmincontext.h
-@@ -0,0 +1,38 @@
-+// Copyright (C) 2026 Xmin Project
-+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
-+
-+#pragma once
-+
-+#include <qpa/qplatformopenglcontext.h>
-+#include <QtGui/QSurfaceFormat>
-+
-+#include <GL/glx.h>
-+
-+QT_BEGIN_NAMESPACE
-+
-+class QOpenGLContext;
-+class QXcbConnection;
-+
-+class QXcbXminContext : public QPlatformOpenGLContext
-+{
-+public:
-+    QXcbXminContext(QXcbConnection *connection, QOpenGLContext *context);
-+    ~QXcbXminContext() override;
-+
-+    bool makeCurrent(QPlatformSurface *surface) override;
-+    void doneCurrent() override;
-+    void swapBuffers(QPlatformSurface *surface) override;
-+    QFunctionPointer getProcAddress(const char *procName) override;
-+
-+    QSurfaceFormat format() const override { return m_format; }
-+    bool isSharing() const override { return m_shareContext != nullptr; }
-+    bool isValid() const override { return m_context != nullptr; }
-+
-+private:
-+    Display *m_display = nullptr;
-+    GLXContext m_context = nullptr;
-+    GLXContext m_shareContext = nullptr;
-+    QSurfaceFormat m_format;
-+};
-+
-+QT_END_NAMESPACE
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.cpp b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.cpp
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.cpp
-@@ -0,0 +1,38 @@
-+// Copyright (C) 2026 Xmin Project
-+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
-+
-+#include "qxcbxminintegration.h"
-+
-+#include "qxcbxmincontext.h"
-+#include "qxcbconnection.h"
-+#include "qxcbwindow.h"
-+
-+QT_BEGIN_NAMESPACE
-+
-+bool QXcbXminIntegration::initialize(QXcbConnection *connection)
-+{
-+    m_connection = connection;
-+    qCDebug(lcQpaGl) << "Xmin software-direct xcb GL integration initialized";
-+    return connection && connection->xcb_connection();
-+}
-+
-+QXcbWindow *QXcbXminIntegration::createWindow(QWindow *window) const
-+{
-+    return new QXcbWindow(window);
-+}
-+
-+#ifndef QT_NO_OPENGL
-+QPlatformOpenGLContext *QXcbXminIntegration::createPlatformOpenGLContext(
-+    QOpenGLContext *context) const
-+{
-+    return new QXcbXminContext(m_connection, context);
-+}
-+#endif
-+
-+QPlatformOffscreenSurface *
-+QXcbXminIntegration::createPlatformOffscreenSurface(QOffscreenSurface *) const
-+{
-+    return nullptr;
-+}
-+
-+QT_END_NAMESPACE
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.h b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.h
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminintegration.h
-@@ -0,0 +1,27 @@
-+// Copyright (C) 2026 Xmin Project
-+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
-+
-+#pragma once
-+
-+#include "qxcbglintegration.h"
-+
-+QT_BEGIN_NAMESPACE
-+
-+class QXcbXminIntegration : public QXcbGlIntegration
-+{
-+public:
-+    bool initialize(QXcbConnection *connection) override;
-+    QXcbWindow *createWindow(QWindow *window) const override;
-+#ifndef QT_NO_OPENGL
-+    QPlatformOpenGLContext *createPlatformOpenGLContext(
-+        QOpenGLContext *context) const override;
-+#endif
-+    QPlatformOffscreenSurface *createPlatformOffscreenSurface(
-+        QOffscreenSurface *) const override;
-+    bool supportsThreadedOpenGL() const override { return false; }
-+
-+private:
-+    QXcbConnection *m_connection = nullptr;
-+};
-+
-+QT_END_NAMESPACE
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminmain.cpp b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminmain.cpp
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/qxcbxminmain.cpp
-@@ -0,0 +1,22 @@
-+// Copyright (C) 2026 Xmin Project
-+// SPDX-License-Identifier: LicenseRef-Qt-Commercial OR LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only
-+
-+#include "qxcbglintegrationplugin.h"
-+#include "qxcbxminintegration.h"
-+
-+QT_BEGIN_NAMESPACE
-+
-+class QXcbXminIntegrationPlugin : public QXcbGlIntegrationPlugin
-+{
-+    Q_OBJECT
-+    Q_PLUGIN_METADATA(IID QXcbGlIntegrationFactoryInterface_iid FILE "xcb_xmin.json")
-+public:
-+    QXcbGlIntegration *create() override
-+    {
-+        return new QXcbXminIntegration;
-+    }
-+};
-+
-+QT_END_NAMESPACE
-+
-+#include "qxcbxminmain.moc"
-diff --git a/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/xcb_xmin.json b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/xcb_xmin.json
-new file mode 100644
---- /dev/null
-+++ b/src/plugins/platforms/xcb/gl_integrations/xcb_xmin/xcb_xmin.json
-@@ -0,0 +1,3 @@
-+{
-+    "Keys": [ "xcb_xmin" ]
-+}
-diff --git a/src/plugins/platforms/xcb/qxcbconnection.cpp b/src/plugins/platforms/xcb/qxcbconnection.cpp
---- a/src/plugins/platforms/xcb/qxcbconnection.cpp
-+++ b/src/plugins/platforms/xcb/qxcbconnection.cpp
-@@ -1148,6 +1148,9 @@ QXcbGlIntegration *QXcbConnection::glIntegration() const
-         return m_glIntegration;
+ qt_internal_extend_target(QXcbGlxIntegrationPlugin CONDITION QT_FEATURE_xcb_glx
+     LIBRARIES
+-        XCB::GLX
++        ${qt_xcb_glx_library}
+ )
  
-     QStringList glIntegrationNames;
-+#ifdef QT_XCB_XMIN_OPENGL
-+    glIntegrationNames << QStringLiteral("xcb_xmin");
-+#endif
-     glIntegrationNames << QStringLiteral("xcb_glx") << QStringLiteral("xcb_egl");
-     QString glIntegrationName = QString::fromLocal8Bit(qgetenv("QT_XCB_GL_INTEGRATION"));
-     if (!glIntegrationName.isEmpty()) {
+ qt_internal_extend_target(QXcbGlxIntegrationPlugin
 diff --git a/src/plugins/platforms/xcb/qxcbeventqueue.cpp b/src/plugins/platforms/xcb/qxcbeventqueue.cpp
 --- a/src/plugins/platforms/xcb/qxcbeventqueue.cpp
 +++ b/src/plugins/platforms/xcb/qxcbeventqueue.cpp

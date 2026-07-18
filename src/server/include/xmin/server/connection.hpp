@@ -11,6 +11,7 @@
 #include <deque>
 #include <optional>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace xmin::server {
@@ -225,6 +226,7 @@ private:
     Result<void> handle_xinerama(const RequestContext &context);
     Result<void> handle_screensaver(const RequestContext &context);
     Result<void> handle_dbe(const RequestContext &context);
+    Result<void> handle_glx(const RequestContext &context);
     Result<void> draw_zpixmap(
         const RequestContext &context, std::uint32_t drawable,
         std::uint32_t graphics, std::uint16_t total_width,
@@ -278,6 +280,32 @@ private:
     std::uint16_t sequence_ = 0;
     bool big_requests_enabled_ = false;
     std::uint8_t xfixes_major_version_ = 0;
+    struct GlxContextRecord {
+        std::uint32_t id = 0;
+        std::uint32_t fbconfig = 0;
+        std::uint32_t screen = 0;
+        std::uint32_t render_type = 0x8014;
+        std::uint32_t share = 0;
+    };
+    struct GlxDrawableRecord {
+        enum class Kind : std::uint8_t { pixmap, pbuffer, window };
+        std::uint32_t id = 0;
+        std::uint32_t source = 0;
+        std::uint32_t fbconfig = 0;
+        std::uint32_t width = 0;
+        std::uint32_t height = 0;
+        std::uint32_t event_mask = 0;
+        Kind kind = Kind::window;
+    };
+    struct GlxBinding {
+        std::uint32_t context = 0;
+        std::uint32_t draw = 0;
+        std::uint32_t read = 0;
+    };
+    std::unordered_map<std::uint32_t, GlxContextRecord> glx_contexts_;
+    std::unordered_map<std::uint32_t, GlxDrawableRecord> glx_drawables_;
+    std::unordered_map<std::uint32_t, GlxBinding> glx_bindings_;
+    std::uint32_t next_glx_context_tag_ = 1;
     std::uint32_t randr_major_version_ = 1;
     std::uint16_t randr_minor_version_ = 0;
     std::uint32_t damage_major_version_ = 0;

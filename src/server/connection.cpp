@@ -7206,6 +7206,8 @@ Connection::dispatch(const RequestContext &context)
             return handle_screensaver(context);
         case ExtensionKind::dbe:
             return handle_dbe(context);
+        case ExtensionKind::glx:
+            return handle_glx(context);
         }
     }
     static const std::array<RequestHandler, 128> handlers = [] {

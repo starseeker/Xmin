@@ -749,6 +749,21 @@ ServerState::add_pixmap(PixmapRecord added, std::uint32_t owner)
 }
 
 bool
+ServerState::reserve_resource(std::uint32_t id, ResourceKind kind,
+                              std::uint32_t owner)
+{
+    return !resource_limit_reached(owner) && resources_.insert(id, kind, owner);
+}
+
+bool
+ServerState::release_resource(std::uint32_t id, ResourceKind kind)
+{
+    if (!resources_.is(id, kind))
+        return false;
+    return resources_.erase(id);
+}
+
+bool
 ServerState::erase_pixmap(std::uint32_t id)
 {
     const auto found = pixmaps_.find(id);
@@ -1691,14 +1706,21 @@ SharedMemory *
 ServerState::shared_memory(std::uint32_t id)
 {
     const auto found = shared_memory_.find(id);
-    return found == shared_memory_.end() ? nullptr : &found->second;
+    return found == shared_memory_.end() ? nullptr : found->second.get();
 }
 
 const SharedMemory *
 ServerState::shared_memory(std::uint32_t id) const
 {
     const auto found = shared_memory_.find(id);
-    return found == shared_memory_.end() ? nullptr : &found->second;
+    return found == shared_memory_.end() ? nullptr : found->second.get();
+}
+
+std::shared_ptr<SharedMemory>
+ServerState::shared_memory_storage(std::uint32_t id) const
+{
+    const auto found = shared_memory_.find(id);
+    return found == shared_memory_.end() ? nullptr : found->second;
 }
 
 bool
@@ -1710,7 +1732,15 @@ ServerState::add_shared_memory(std::uint32_t id, SharedMemory memory,
         !resources_.insert(id, ResourceKind::shared_memory, owner)) {
         return false;
     }
-    if (!shared_memory_.emplace(id, std::move(memory)).second) {
+    std::shared_ptr<SharedMemory> stored;
+    try {
+        stored = std::make_shared<SharedMemory>(std::move(memory));
+    }
+    catch (const std::bad_alloc &) {
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
+    if (!shared_memory_.emplace(id, std::move(stored)).second) {
         static_cast<void>(resources_.erase(id));
         return false;
     }
@@ -5982,19 +6012,6 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
         }
         static_cast<void>(resources_.erase(damage->first));
         damage = damages_.erase(damage);
-    }
-    for (auto picture = render_pictures_.begin();
-         picture != render_pictures_.end();) {
-        const auto *drawable = std::get_if<RenderDrawableSource>(
-            &picture->second->source);
-        if (drawable != nullptr && !drawable->pixmap &&
-            drawable->drawable == id) {
-            static_cast<void>(resources_.erase(picture->first));
-            picture = render_pictures_.erase(picture);
-        }
-        else {
-            ++picture;
-        }
     }
     if (auto *parent = window(parent_id)) {
         parent->children.erase(

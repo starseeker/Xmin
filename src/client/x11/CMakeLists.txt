@@ -1,19 +1,20 @@
 find_package(Threads REQUIRED)
 
+set(xmin_go_font_directory "${PROJECT_SOURCE_DIR}/third_party/fonts/go")
+set(xmin_go_font_files
+  "${xmin_go_font_directory}/Go-Regular.ttf"
+  "${xmin_go_font_directory}/Go-Bold.ttf"
+  "${xmin_go_font_directory}/Go-Italic.ttf"
+  "${xmin_go_font_directory}/Go-Bold-Italic.ttf"
+  "${xmin_go_font_directory}/Go-Mono.ttf"
+  "${xmin_go_font_directory}/Go-Mono-Bold.ttf"
+  "${xmin_go_font_directory}/Go-Mono-Italic.ttf"
+  "${xmin_go_font_directory}/Go-Mono-Bold-Italic.ttf"
+)
+
 if(XMIN_BUILD_TOOLKIT_CLIENT)
   set(xmin_embedded_fonts
     "${PROJECT_BINARY_DIR}/generated/client/x11/embedded_go_fonts.cpp"
-  )
-  set(xmin_go_font_directory "${PROJECT_SOURCE_DIR}/third_party/fonts/go")
-  set(xmin_go_font_files
-    "${xmin_go_font_directory}/Go-Regular.ttf"
-    "${xmin_go_font_directory}/Go-Bold.ttf"
-    "${xmin_go_font_directory}/Go-Italic.ttf"
-    "${xmin_go_font_directory}/Go-Bold-Italic.ttf"
-    "${xmin_go_font_directory}/Go-Mono.ttf"
-    "${xmin_go_font_directory}/Go-Mono-Bold.ttf"
-    "${xmin_go_font_directory}/Go-Mono-Italic.ttf"
-    "${xmin_go_font_directory}/Go-Mono-Bold-Italic.ttf"
   )
   add_custom_command(
     OUTPUT "${xmin_embedded_fonts}"
@@ -86,16 +87,20 @@ target_include_directories(xmin_qt_x11
     "${PROJECT_SOURCE_DIR}/src/server/include"
 )
 target_link_libraries(xmin_qt_x11 PRIVATE Xmin::platform Threads::Threads)
+if(XMIN_BUILD_QT_CLIENT OR XMIN_BUILD_TOOLKIT_CLIENT)
+  target_sources(xmin_qt_x11 PRIVATE
+    xlib_core.cpp
+    xlib_events.cpp
+    xlib_region.cpp
+    xlib_minimal.cpp
+  )
+endif()
 if(TARGET Xmin::FontEngine)
   target_sources(xmin_qt_x11 PRIVATE
     font/fontconfig_minimal.cpp
     font/render_font.cpp
     font/xft_minimal.cpp
     xcb_toolkit_wire.cpp
-    xlib_core.cpp
-    xlib_events.cpp
-    xlib_region.cpp
-    xlib_minimal.cpp
   )
   target_include_directories(xmin_qt_x11 PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/font"
@@ -146,14 +151,22 @@ if(XMIN_ENABLE_INSTALL)
     COMPONENT QtClientDevelopment
     FILES_MATCHING PATTERN "*.h"
   )
+  if(XMIN_BUILD_QT_CLIENT OR XMIN_BUILD_TOOLKIT_CLIENT)
+    install(FILES ${xmin_go_font_files}
+      DESTINATION "${XMIN_INSTALL_FONTDIR}"
+      COMPONENT ClientFontData
+    )
+  endif()
+  if(XMIN_BUILD_QT_CLIENT OR TARGET xmin_toolkit_x11)
+    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/X11"
+      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+      COMPONENT QtClientDevelopment
+      FILES_MATCHING PATTERN "*.h"
+    )
+  endif()
   if(TARGET xmin_toolkit_x11)
     install(TARGETS xmin_toolkit_x11 EXPORT XminTargets
       COMPONENT ToolkitClientDevelopment
-    )
-    install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/X11"
-      DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
-      COMPONENT ToolkitClientDevelopment
-      FILES_MATCHING PATTERN "*.h"
     )
     install(DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/include/fontconfig"
       DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"

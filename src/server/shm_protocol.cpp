@@ -81,7 +81,7 @@ Connection::handle_shm(const RequestContext &context)
             return error(bad_length);
         WireWriter reply(context.order);
         reply.u8(1);
-        reply.u8(0); // shared pixmaps are deliberately unsupported
+        reply.u8(1);
         reply.u16(context.sequence);
         reply.u32(0);
         reply.u16(1);
@@ -278,9 +278,53 @@ Connection::handle_shm(const RequestContext &context)
     case 5: { // CreatePixmap
         if (context.request.size() != 28)
             return error(bad_length);
-        // QueryVersion reports shared_pixmaps=false, so this defined request
-        // has one deterministic outcome without creating an aliasing Surface.
-        return error(bad_match);
+        WireReader reader(context.request.data() + 4, 24, context.order);
+        const auto pixmap = reader.u32();
+        const auto drawable = reader.u32();
+        const auto width = reader.u16();
+        const auto height = reader.u16();
+        const auto depth = reader.u8();
+        const bool padding_ok = reader.skip(3);
+        const auto segment = reader.u32();
+        const auto offset = reader.u32();
+        if (!pixmap || !drawable || !width || !height || !depth ||
+            !padding_ok || !segment || !offset) {
+            return malformed_shm("truncated MIT-SHM CreatePixmap request");
+        }
+        const auto *reference = server_.readable_surface(*drawable);
+        if (reference == nullptr)
+            return error(bad_drawable, *drawable);
+        if (*width == 0 || *height == 0 ||
+            (*depth != 24 && *depth != 32) ||
+            *depth != reference->depth()) {
+            return error(bad_match);
+        }
+        if (!server_.valid_client_resource(*pixmap, config_.resource_base))
+            return error(bad_id_choice, *pixmap);
+        if (server_.resource_limit_reached(config_.resource_base))
+            return error(bad_alloc);
+        auto memory = server_.shared_memory_storage(*segment);
+        if (!memory)
+            return error(bad_segment, *segment);
+        auto surface = Surface::create_shared(
+            *width, *height, *depth, std::move(memory), *offset);
+        if (!surface)
+            return error(bad_access, *offset);
+        // Shared pixmaps do not allocate their pixels from the server heap,
+        // but retaining their mappings still consumes address space and file
+        // descriptors.  Account their logical surface size against the same
+        // aggregate budget as ordinary pixmaps so Detach/CreatePixmap cycles
+        // cannot retain an unbounded number of mappings.
+        auto stored = server_.adopt_surface(std::move(*surface));
+        if (!stored)
+            return error(bad_alloc);
+        if (!server_.add_pixmap({*pixmap, std::move(stored)},
+                                config_.resource_base)) {
+            return error(server_.resource_exists(*pixmap)
+                    ? bad_id_choice
+                    : bad_alloc, *pixmap);
+        }
+        return Result<void>::success();
     }
     case 6: { // AttachFd
         UniqueFd descriptor = take_received_fd();

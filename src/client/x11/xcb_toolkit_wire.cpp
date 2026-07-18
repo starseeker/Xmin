@@ -154,6 +154,43 @@ xcb_void_cookie_t xcb_no_operation(xcb_connection_t *connection)
         connection, nullptr, XCB_NO_OPERATION, true, 0, request);
 }
 
+xcb_void_cookie_t xcb_recolor_cursor_checked(
+    xcb_connection_t *connection, xcb_cursor_t cursor,
+    std::uint16_t foreground_red, std::uint16_t foreground_green,
+    std::uint16_t foreground_blue, std::uint16_t background_red,
+    std::uint16_t background_green, std::uint16_t background_blue)
+{
+    xcb_recolor_cursor_request_t request{};
+    request.cursor = cursor;
+    request.fore_red = foreground_red;
+    request.fore_green = foreground_green;
+    request.fore_blue = foreground_blue;
+    request.back_red = background_red;
+    request.back_green = background_green;
+    request.back_blue = background_blue;
+    return xmin::client::x11::send_request<xcb_void_cookie_t>(
+        connection, nullptr, XCB_RECOLOR_CURSOR, true,
+        XCB_REQUEST_CHECKED, request);
+}
+
+xcb_void_cookie_t xcb_recolor_cursor(
+    xcb_connection_t *connection, xcb_cursor_t cursor,
+    std::uint16_t foreground_red, std::uint16_t foreground_green,
+    std::uint16_t foreground_blue, std::uint16_t background_red,
+    std::uint16_t background_green, std::uint16_t background_blue)
+{
+    xcb_recolor_cursor_request_t request{};
+    request.cursor = cursor;
+    request.fore_red = foreground_red;
+    request.fore_green = foreground_green;
+    request.fore_blue = foreground_blue;
+    request.back_red = background_red;
+    request.back_green = background_green;
+    request.back_blue = background_blue;
+    return xmin::client::x11::send_request<xcb_void_cookie_t>(
+        connection, nullptr, XCB_RECOLOR_CURSOR, true, 0, request);
+}
+
 xcb_query_keymap_cookie_t xcb_query_keymap(xcb_connection_t *connection)
 {
     xcb_query_keymap_request_t request{};

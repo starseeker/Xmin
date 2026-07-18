@@ -25,9 +25,9 @@ constexpr std::uint32_t pointer_root = 1;
 constexpr std::uint32_t root_window = 0x00000100;
 constexpr std::uint8_t extension_count =
 #if XMIN_HAVE_MITSHM
-    18;
+    19;
 #else
-    17;
+    18;
 #endif
 
 struct Child {
@@ -303,9 +303,9 @@ extension_list_payload()
 {
     constexpr std::array<std::string_view,
 #if XMIN_HAVE_MITSHM
-                         18
+                         19
 #else
-                         17
+                         18
 #endif
                          > extensions{{
         "BIG-REQUESTS",
@@ -328,6 +328,7 @@ extension_list_payload()
         "XINERAMA",
         "MIT-SCREEN-SAVER",
         "DOUBLE-BUFFER",
+        "GLX",
     }};
     std::vector<std::uint8_t> payload;
     for (const auto name : extensions) {
@@ -4255,7 +4256,7 @@ check_shm(int descriptor, bool little)
     request[1] = 0; // QueryVersion
     put16(request, 2, 1, little);
     if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 1 || reply[1] != 0 ||
+        reply[0] != 1 || reply[1] != 1 ||
         get16(reply, 2, little) != 2 ||
         get16(reply, 8, little) != 1 ||
         get16(reply, 10, little) < 1 || reply[16] != 2) {
@@ -4275,6 +4276,99 @@ check_shm(int descriptor, bool little)
         get16(reply, 8, little) == 2 && reply[10] == opcode;
 }
 #endif
+
+bool
+check_glx(int descriptor, bool little, std::uint32_t resource_base)
+{
+    constexpr std::uint8_t opcode = 146;
+    constexpr std::uint8_t first_event = 75;
+    constexpr std::uint8_t first_error = 151;
+    std::vector<std::uint8_t> request;
+    std::vector<std::uint8_t> reply;
+    if (!query_extension(descriptor, little, "GLX", 1, opcode, reply,
+                         first_event, first_error))
+        return false;
+
+    request.assign(12, 0);
+    request[0] = opcode; request[1] = 7; // QueryVersion
+    put16(request, 2, 3, little);
+    put32(request, 4, 1, little); put32(request, 8, 4, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 2 ||
+        get32(reply, 8, little) != 1 || get32(reply, 12, little) != 4)
+        return false;
+
+    const std::uint32_t context = resource_base + 1;
+    request.assign(24, 0);
+    request[0] = opcode; request[1] = 3; // CreateContext
+    put16(request, 2, 6, little); put32(request, 4, context, little);
+    put32(request, 8, 3, little); // root visual
+    request[20] = 1; // direct
+    if (!write_all(descriptor, request)) return false;
+
+    request.assign(8, 0);
+    request[0] = opcode; request[1] = 6; // IsDirect
+    put16(request, 2, 2, little); put32(request, 4, context, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || reply[8] != 1 || get16(reply, 2, little) != 4)
+        return false;
+
+    request.assign(24, 0);
+    request[0] = opcode; request[1] = 3; // reject indirect context
+    put16(request, 2, 6, little); put32(request, 4, resource_base + 2, little);
+    put32(request, 8, 3, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != 2 || get16(reply, 2, little) != 5)
+        return false;
+
+    request.assign(8, 0);
+    request[0] = opcode; request[1] = 1; // reject indirect Render
+    put16(request, 2, 2, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != first_error + 6 ||
+        get16(reply, 2, little) != 6)
+        return false;
+
+    request.assign(16, 0);
+    request[0] = opcode; request[1] = 5; // MakeCurrent on the root window
+    put16(request, 2, 4, little); put32(request, 4, root_window, little);
+    put32(request, 8, context, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 7 ||
+        get32(reply, 8, little) != 1)
+        return false;
+
+    request.assign(8, 0);
+    request[0] = opcode; request[1] = 8; // WaitGL accepts the current tag
+    put16(request, 2, 2, little); put32(request, 4, 1, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request[1] = 4; // destruction is deferred while the context is current
+    put32(request, 4, context, little);
+    if (!write_all(descriptor, request))
+        return false;
+
+    request.assign(16, 0);
+    request[0] = opcode; request[1] = 5; // release the current context
+    put16(request, 2, 4, little); put32(request, 12, 1, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 1 || get16(reply, 2, little) != 10 ||
+        get32(reply, 8, little) != 0)
+        return false;
+
+    request.assign(8, 0);
+    request[0] = opcode; request[1] = 6; // the public context ID is gone
+    put16(request, 2, 2, little); put32(request, 4, context, little);
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 0 || reply[1] != first_error ||
+        get16(reply, 2, little) != 11 || get32(reply, 4, little) != context)
+        return false;
+    request.assign(4, 0); request[0] = 43; // GetInputFocus sync
+    put16(request, 2, 1, little);
+    return write_all(descriptor, request) && read_reply(descriptor, reply) &&
+        reply[0] == 1 && get16(reply, 2, little) == 12;
+}
 
 bool
 run_randr_case(const char *server, bool little)
@@ -4471,6 +4565,22 @@ run_foundation_case(const char *server, bool little)
 }
 
 bool
+run_glx_case(const char *server, bool little)
+{
+    Child child = spawn_server(server);
+    if (child.process < 0 || child.socket < 0)
+        return false;
+    std::uint32_t resource_base = 0;
+    const bool passed = send_setup(child.socket, little, true, 11) &&
+        check_setup_success(child.socket, little, resource_base) &&
+        check_glx(child.socket, little, resource_base);
+    static_cast<void>(::shutdown(child.socket, SHUT_WR));
+    ::close(child.socket);
+    const bool exited = wait_for_success(child.process);
+    return passed && exited;
+}
+
+bool
 run_xtest_case(const char *server, bool little)
 {
     Child child = spawn_server(server);
@@ -4612,6 +4722,11 @@ main(int argc, char **argv)
     if (!run_xinput_case(argv[1], native) ||
         !run_xinput_case(argv[1], !native)) {
         std::cerr << "XI2 extension case failed\n";
+        return 1;
+    }
+    if (!run_glx_case(argv[1], native) ||
+        !run_glx_case(argv[1], !native)) {
+        std::cerr << "GLX direct-control extension case failed\n";
         return 1;
     }
 #if XMIN_HAVE_MITSHM

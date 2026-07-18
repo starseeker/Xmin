@@ -23,6 +23,8 @@ include(XminComponent)
 include(XminPlatform)
 include(XminProtocolProfile)
 
+set(XMIN_INSTALL_FONTDIR "${CMAKE_INSTALL_DATADIR}/Xmin/fonts")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -108,6 +110,7 @@ if(XMIN_ENABLE_INSTALL)
     "${PROJECT_SOURCE_DIR}/cmake/XminConfig.cmake.in"
     "${PROJECT_BINARY_DIR}/XminConfig.cmake"
     INSTALL_DESTINATION "${CMAKE_INSTALL_LIBDIR}/cmake/Xmin"
+    PATH_VARS XMIN_INSTALL_FONTDIR
   )
   install(EXPORT XminTargets
     FILE XminTargets.cmake

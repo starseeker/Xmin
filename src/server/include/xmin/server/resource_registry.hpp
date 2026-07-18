@@ -26,6 +26,8 @@ enum class ResourceKind {
     shared_memory,
     font,
     dbe_buffer,
+    glx_context,
+    glx_drawable,
 };
 
 struct ResourceRecord {

@@ -3,6 +3,7 @@
     Fc*;
     X*;
     _XInitImageFuncPtrs;
+    _XDefaultIOError;
     xcb_*;
     xkb_*;
   local:

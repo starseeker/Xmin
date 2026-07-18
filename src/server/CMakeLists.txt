@@ -30,6 +30,7 @@ add_library(xmin_server_core STATIC
   font.cpp
   font_protocol.cpp
   present_protocol.cpp
+  glx_protocol.cpp
   property_data.cpp
   randr_protocol.cpp
   raster_protocol.cpp
@@ -59,7 +60,10 @@ target_link_libraries(xmin_server_core PUBLIC Xmin::platform Xmin::pixman)
 
 add_executable(xmin_server main.cpp)
 add_executable(Xmin::server ALIAS xmin_server)
-set_target_properties(xmin_server PROPERTIES OUTPUT_NAME Xmin)
+set_target_properties(xmin_server PROPERTIES
+  EXPORT_NAME server
+  OUTPUT_NAME Xmin
+)
 target_compile_features(xmin_server PRIVATE cxx_std_17)
 target_compile_definitions(xmin_server PRIVATE _POSIX_C_SOURCE=200809L)
 target_link_libraries(xmin_server PRIVATE Xmin::server_core)
@@ -68,6 +72,7 @@ xmin_enable_warnings(xmin_server)
 if(XMIN_ENABLE_INSTALL)
   install(
     TARGETS xmin_server
+    EXPORT XminTargets
     RUNTIME DESTINATION "${CMAKE_INSTALL_BINDIR}"
     COMPONENT Runtime
   )

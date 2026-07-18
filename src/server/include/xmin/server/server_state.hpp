@@ -765,6 +765,9 @@ public:
     [[nodiscard]] WindowRecord *window(std::uint32_t id);
     [[nodiscard]] const WindowRecord *window(std::uint32_t id) const;
     [[nodiscard]] bool resource_exists(std::uint32_t id) const;
+    [[nodiscard]] bool reserve_resource(std::uint32_t id, ResourceKind kind,
+                                        std::uint32_t owner);
+    [[nodiscard]] bool release_resource(std::uint32_t id, ResourceKind kind);
     [[nodiscard]] std::optional<std::uint32_t>
     resource_owner(std::uint32_t id) const;
     [[nodiscard]] bool valid_client_resource(std::uint32_t id,
@@ -836,6 +839,8 @@ public:
     [[nodiscard]] bool erase_font(std::uint32_t id);
     [[nodiscard]] SharedMemory *shared_memory(std::uint32_t id);
     [[nodiscard]] const SharedMemory *shared_memory(std::uint32_t id) const;
+    [[nodiscard]] std::shared_ptr<SharedMemory>
+    shared_memory_storage(std::uint32_t id) const;
     [[nodiscard]] bool add_shared_memory(
         std::uint32_t id, SharedMemory memory, std::uint32_t owner);
     [[nodiscard]] bool erase_shared_memory(std::uint32_t id);
@@ -1109,7 +1114,8 @@ private:
         graphics_contexts_;
     std::unordered_map<std::uint32_t, FontRecord> fonts_;
     std::unordered_map<std::uint32_t, DbeBufferRecord> dbe_buffers_;
-    std::unordered_map<std::uint32_t, SharedMemory> shared_memory_;
+    std::unordered_map<std::uint32_t, std::shared_ptr<SharedMemory>>
+        shared_memory_;
     std::unordered_map<std::uint32_t, SyncCounterRecord> sync_counters_;
     std::unordered_map<std::uint32_t, SyncAlarmRecord> sync_alarms_;
     std::unordered_map<std::uint32_t, SyncFenceRecord> sync_fences_;

@@ -3,6 +3,7 @@
 #include <X11/Xlib.h>
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
+#include <X11/cursorfont.h>
 #include <X11/keysym.h>
 
 #include <algorithm>
@@ -52,6 +53,125 @@ int main()
         return fail(display, "color or keysym compatibility failed", 2);
     }
 
+    const auto color_matches = [display](
+        const char *name, unsigned short red, unsigned short green,
+        unsigned short blue) {
+        XColor parsed{};
+        return XParseColor(
+                   display, DefaultColormap(display, 0), name, &parsed) &&
+            parsed.red == red && parsed.green == green &&
+            parsed.blue == blue;
+    };
+    if (!color_matches("Steel Blue", 0x4646, 0x8282, 0xb4b4) ||
+        !color_matches("orchid4", 0x8b8b, 0x4747, 0x8989) ||
+        !color_matches("Rebecca Purple", 0x6666, 0x3333, 0x9999) ||
+        !color_matches("aqua", 0x0000, 0xffff, 0xffff) ||
+        !color_matches("#f08", 0xf000, 0x0000, 0x8000) ||
+        !color_matches("rgb:f/00/80", 0xffff, 0x0000, 0x8080) ||
+        !color_matches("rgbi:1/0.5/0", 0xffff, 0x8000, 0x0000) ||
+        XParseColor(
+            display, DefaultColormap(display, 0), "not-a-color", &color)) {
+        return fail(display, "named or functional color parsing failed", 2);
+    }
+
+    const KeyCode a_keycode = XKeysymToKeycode(display, XK_a);
+    XKeyEvent key_event{};
+    key_event.display = display;
+    key_event.keycode = a_keycode;
+    char key_text[8]{};
+    KeySym key_symbol = NoSymbol;
+    key_event.state = 0;
+    const bool lowercase_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == 'a' && key_symbol == XK_a;
+    key_event.state = ShiftMask;
+    const bool shifted_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == 'A' && key_symbol == XK_A;
+    key_event.state = LockMask;
+    const bool locked_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == 'A' && key_symbol == XK_A;
+    key_event.state = ShiftMask | LockMask;
+    const bool shifted_locked_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == 'a' && key_symbol == XK_a;
+    key_event.state = ControlMask;
+    const bool control_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == '\x01' && key_symbol == XK_a;
+    const KeyCode keypad_zero_keycode = XKeysymToKeycode(display, XK_KP_0);
+    key_event.keycode = keypad_zero_keycode;
+    key_event.state = Mod2Mask;
+    const bool keypad_num_lock_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 1 &&
+        key_text[0] == '0' && key_symbol == XK_KP_0;
+    key_event.state = Mod2Mask | ShiftMask;
+    const bool keypad_shift_ok =
+        XLookupString(&key_event, key_text, sizeof(key_text), &key_symbol,
+                      nullptr) == 0 &&
+        key_symbol == XK_KP_Insert;
+    if (a_keycode == 0 || !lowercase_ok || !shifted_ok || !locked_ok ||
+        !shifted_locked_ok || !control_ok || keypad_zero_keycode == 0 ||
+        !keypad_num_lock_ok || !keypad_shift_ok) {
+        return fail(display, "modifier-aware key translation failed", 2);
+    }
+
+    XIM input_method = XOpenIM(display, nullptr, nullptr, nullptr);
+    XIMStyles *styles = nullptr;
+    const XIMStyle fallback_style =
+        XIMPreeditNothing | XIMStatusNothing;
+    if (input_method == nullptr ||
+        XGetIMValues(input_method, XNQueryInputStyle, &styles, nullptr) !=
+            nullptr ||
+        styles == nullptr || styles->count_styles != 1 ||
+        styles->supported_styles[0] != fallback_style) {
+        XFree(styles);
+        if (input_method != nullptr)
+            XCloseIM(input_method);
+        return fail(display, "input-method style discovery failed", 2);
+    }
+    XFree(styles);
+    const Window input_window = DefaultRootWindow(display);
+    XIC input_context = XCreateIC(
+        input_method, XNInputStyle, fallback_style, XNClientWindow,
+        input_window, XNFocusWindow, input_window, nullptr);
+    XIMStyle reported_style = 0;
+    Window reported_client = None;
+    Window reported_focus = None;
+    long filter_events = -1;
+    const bool input_context_ok = input_context != nullptr &&
+        XGetICValues(
+            input_context, XNInputStyle, &reported_style, XNClientWindow,
+            &reported_client, XNFocusWindow, &reported_focus,
+            XNFilterEvents, &filter_events, nullptr) == nullptr &&
+        reported_style == fallback_style && reported_client == input_window &&
+        reported_focus == input_window && filter_events == 0;
+    Status lookup_status = XLookupNone;
+    key_event.keycode = a_keycode;
+    key_event.state = 0;
+    const bool overflow_ok = input_context != nullptr &&
+        Xutf8LookupString(
+            input_context, &key_event, nullptr, 0, &key_symbol,
+            &lookup_status) == 1 &&
+        lookup_status == XBufferOverflow && key_symbol == XK_a;
+    if (!input_context_ok || !overflow_ok) {
+        if (input_context != nullptr)
+            XDestroyIC(input_context);
+        XCloseIM(input_method);
+        return fail(display, "input-context compatibility failed", 2);
+    }
+    XSetICFocus(input_context);
+    XUnsetICFocus(input_context);
+    XDestroyIC(input_context);
+    XCloseIM(input_method);
+
     Region outer = XCreateRegion();
     Region cut = XCreateRegion();
     Region result = XCreateRegion();
@@ -89,6 +209,25 @@ int main()
         return fail(display, "XImage callbacks were not initialized", 5);
     }
     XDestroyImage(callbacks);
+
+    XImage *planar = XCreateImage(
+        display, nullptr, 4, XYPixmap, 1, nullptr, 3, 2, 8, 0);
+    if (planar != nullptr) {
+        planar->data = static_cast<char *>(std::calloc(
+            static_cast<std::size_t>(planar->bytes_per_line) *
+                planar->height,
+            static_cast<std::size_t>(planar->depth)));
+    }
+    const bool planar_ok = planar != nullptr && planar->data != nullptr &&
+        XPutPixel(planar, 0, 0, 0x0a) &&
+        XPutPixel(planar, 2, 1, 0x05) &&
+        XGetPixel(planar, 0, 0) == 0x0a &&
+        XGetPixel(planar, 2, 1) == 0x05 &&
+        XGetPixel(planar, 1, 0) == 0;
+    if (planar != nullptr)
+        XDestroyImage(planar);
+    if (!planar_ok)
+        return fail(display, "XYPixmap plane handling failed", 5);
 
     Screen *screen = DefaultScreenOfDisplay(display);
 
@@ -158,6 +297,27 @@ int main()
     XErrorHandler previous_handler = XSetErrorHandler(record_protocol_error);
     if (previous_handler == nullptr)
         return fail(display, "default X error handler was not restorable", 10);
+    Cursor cursor = XCreateFontCursor(display, XC_left_ptr);
+    XColor cursor_foreground{};
+    cursor_foreground.red = 0xffff;
+    cursor_foreground.flags = DoRed | DoGreen | DoBlue;
+    XColor cursor_background{};
+    cursor_background.green = 0xffff;
+    cursor_background.flags = DoRed | DoGreen | DoBlue;
+    if (cursor == None ||
+        !XRecolorCursor(
+            display, cursor, &cursor_foreground, &cursor_background)) {
+        if (cursor != None)
+            XFreeCursor(display, cursor);
+        XSetErrorHandler(previous_handler);
+        return fail(display, "cursor recoloring failed", 10);
+    }
+    XFreeCursor(display, cursor);
+    XSync(display, False);
+    if (protocol_error_count != 0) {
+        XSetErrorHandler(previous_handler);
+        return fail(display, "cursor recoloring raised a protocol error", 10);
+    }
     XDestroyWindow(display, static_cast<Window>(0xffffffffUL));
     XSync(display, False);
     XSetErrorHandler(previous_handler);
@@ -184,6 +344,33 @@ int main()
         display, screen->root, 0, 0, 64, 48, 0,
         screen->black_pixel, screen->black_pixel);
     XMapWindow(display, window);
+
+    char title_text[] = "Qt \xce\xa9";
+    char *title_list[]{title_text};
+    XTextProperty title_property{};
+    const int title_conversion = XmbTextListToTextProperty(
+        display, title_list, 1, XStdICCTextStyle, &title_property);
+    if (title_conversion == 0)
+        XSetWMName(display, window, &title_property);
+    XFree(title_property.value);
+    const Atom utf8_string = XInternAtom(display, "UTF8_STRING", False);
+    Atom title_type = None;
+    int title_format = 0;
+    unsigned long title_items = 0;
+    unsigned long title_after = 0;
+    unsigned char *stored_title = nullptr;
+    const int title_status = XGetWindowProperty(
+        display, window, XA_WM_NAME, 0, 64, False, AnyPropertyType,
+        &title_type, &title_format, &title_items, &title_after,
+        &stored_title);
+    const bool title_ok = title_conversion == 0 && title_status == Success &&
+        title_type == utf8_string && title_format == 8 &&
+        title_items == sizeof(title_text) - 1 && title_after == 0 &&
+        stored_title != nullptr &&
+        std::equal(stored_title, stored_title + title_items,
+                   reinterpret_cast<unsigned char *>(title_text));
+    XFree(stored_title);
+
     XGCValues values{};
     values.foreground = 0x00ff0000UL;
     GC gc = XCreateGC(display, window, GCForeground, &values);
@@ -214,8 +401,8 @@ int main()
     XDestroyWindow(display, window);
     XCloseDisplay(display);
 
-    if (!property_value_ok) {
-        std::cerr << "WM_COLORMAP_WINDOWS round trip failed\n";
+    if (!property_value_ok || !title_ok) {
+        std::cerr << "ICCCM text property round trip failed\n";
         return 13;
     }
     if (!clip_ok) {

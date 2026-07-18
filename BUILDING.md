@@ -20,6 +20,10 @@ existing Win32 thread backend. A Windows server port must supply the narrow
 platform layer with Winsock local transport, poll/wakeup, process supervision,
 secure temporary state, and a non-SysV SHM policy; protocol, server state,
 controller codec, and raster semantics should not require redesign.
+The client GL bridge does not require shared memory: where descriptor passing,
+file mappings, MIT-SHM shared pixmaps, or Present are unavailable (including an
+initial Windows port), it retains its heap buffer and `PutImage`/`XPutImage`
+presentation path.
 
 Host XCB, xkbcommon-x11, Qt, GTK, and Xlib are test-only discoveries. Missing
 test packages reduce the applicable acceptance set but do not affect the
@@ -67,8 +71,10 @@ cmake --preset minimal --fresh
 | `XMIN_DEFAULT_WIDTH` | `1280` | Default root width. |
 | `XMIN_DEFAULT_HEIGHT` | `1024` | Default root height. |
 
-The root depth is deliberately fixed at 24. TCP, indirect GLX, alternate DDX
-drivers, and runtime extension selection are not build options.
+The root depth is deliberately fixed at 24. The server provides the GLX 1.4
+context, FBConfig, drawable, and query control plane for direct contexts; GLX
+indirect rendering commands are explicitly rejected. TCP, indirect GLX,
+alternate DDX drivers, and runtime extension selection are not build options.
 
 ## Running
 
@@ -106,8 +112,18 @@ The package installs `Xmin`, `xmin-run`, `xminctl`, documentation, and—when
 enabled—`lib/xmin/libGL` plus its GL/GLX/OSMesa headers. Applications opt into
 the companion GL DSO explicitly; it is not a server dependency. Enabling
 `XMIN_BUILD_QT_CLIENT` also installs `Xmin::QtX11`, its standard ABI headers,
-and the XCB bridge header for `Xmin::GL`. See `patches/qt/README.md` for the
+the XCB bridge header for `Xmin::GL`, and the pinned Go font files exposed by
+the package as `Xmin_FONT_FILES`. The Qt integration deploys those files into
+Qt's normal no-fontconfig font directory. See `patches/qt/README.md` for the
 validated Qt configuration.
+
+On Unix-like hosts with `SCM_RIGHTS`, the XCB client bridge lets `Xmin::GL`
+allocate an MIT-SHM segment, render OSMesa directly into a shared pixmap, and
+submit that pixmap through Present. Xmin copies the completed pixels once into
+the server-owned window surface before acknowledging the checked Present
+request, so the client never owns live window storage. If any capability or
+request is unavailable, the same GL implementation automatically falls back
+to its portable heap buffer and image upload.
 
 `XMIN_BUILD_TOOLKIT_CLIENT` installs `Xmin::ToolkitX11`, focused X11, Xft,
 and Fontconfig public headers, and `libXminClient`. The client embeds Go Sans

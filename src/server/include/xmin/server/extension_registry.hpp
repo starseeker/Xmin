@@ -28,6 +28,7 @@ enum class ExtensionKind : std::uint8_t {
     xinerama,
     screensaver,
     dbe,
+    glx,
 };
 
 struct ExtensionInfo {
@@ -77,12 +78,14 @@ inline constexpr ExtensionInfo screensaver_extension{
     "MIT-SCREEN-SAVER", 144, 74, 0, 1, 1, ExtensionKind::screensaver};
 inline constexpr ExtensionInfo dbe_extension{
     "DOUBLE-BUFFER", 145, 0, 150, 1, 0, ExtensionKind::dbe};
+inline constexpr ExtensionInfo glx_extension{
+    "GLX", 146, 75, 151, 1, 4, ExtensionKind::glx};
 
 inline constexpr std::array<ExtensionInfo,
 #if XMIN_HAVE_MITSHM
-                            18
+                            19
 #else
-                            17
+                            18
 #endif
                             > extension_registry{{
     big_requests_extension,
@@ -105,6 +108,7 @@ inline constexpr std::array<ExtensionInfo,
     xinerama_extension,
     screensaver_extension,
     dbe_extension,
+    glx_extension,
 }};
 
 [[nodiscard]] constexpr const ExtensionInfo *

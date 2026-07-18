@@ -1,4 +1,5 @@
-foreach(required IN ITEMS BINARY_DIR STAGE_DIR BINDIR LIBDIR VERSION)
+foreach(required IN ITEMS
+    BINARY_DIR STAGE_DIR BINDIR LIBDIR VERSION HAVE_CLIENT_FONTS FONTDIR)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "${required} is required")
   endif()
@@ -14,6 +15,22 @@ execute_process(
 if(NOT install_result EQUAL 0)
   message(FATAL_ERROR
     "Staged installation failed:\n${install_output}${install_error}")
+endif()
+
+if(HAVE_CLIENT_FONTS)
+  foreach(face IN ITEMS
+      Go-Regular.ttf
+      Go-Bold.ttf
+      Go-Italic.ttf
+      Go-Bold-Italic.ttf
+      Go-Mono.ttf
+      Go-Mono-Bold.ttf
+      Go-Mono-Italic.ttf
+      Go-Mono-Bold-Italic.ttf)
+    if(NOT EXISTS "${STAGE_DIR}/${FONTDIR}/${face}")
+      message(FATAL_ERROR "Installed client font is missing: ${face}")
+    endif()
+  endforeach()
 endif()
 
 set(server "${STAGE_DIR}/${BINDIR}/Xmin")

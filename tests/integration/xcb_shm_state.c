@@ -1,6 +1,7 @@
 #include "xmin/config.h"
 
 #include <xcb/shm.h>
+#include <xcb/present.h>
 #include <xcb/xcb.h>
 
 #include <fcntl.h>
@@ -122,7 +123,7 @@ main(void)
         connection, xcb_shm_query_version(connection), &error);
     if (extension == NULL || !extension->present || error != NULL ||
         version == NULL || version->major_version != 1 ||
-        version->minor_version < 2 || version->shared_pixmaps != 0) {
+        version->minor_version < 2 || version->shared_pixmaps != 1) {
         fprintf(stderr, "unexpected MIT-SHM discovery/version reply\n");
         free(error);
         free(version);
@@ -187,18 +188,40 @@ main(void)
         result = 0;
     }
     xcb_pixmap_t shared_pixmap = xcb_generate_id(connection);
-    if (!expect_error(
-            connection,
-            xcb_shm_create_pixmap_checked(
-                connection, shared_pixmap, window, WIDTH, HEIGHT, 24,
-                segment, 0),
-            XCB_MATCH, "unsupported MIT-SHM CreatePixmap")) {
+    if (!checked(connection,
+                 xcb_shm_create_pixmap_checked(
+                     connection, shared_pixmap, window, WIDTH, HEIGHT, 24,
+                     segment, 0),
+                 "MIT-SHM CreatePixmap")) {
         result = 0;
     }
+    for (size_t index = 0; index < WIDTH * HEIGHT; ++index)
+        pixels[index] = 0x00ff00ffU;
+    xcb_present_query_version_reply_t *present_version =
+        xcb_present_query_version_reply(
+            connection, xcb_present_query_version(connection, 1, 4), &error);
+    if (error != NULL || present_version == NULL) {
+        fprintf(stderr, "Present QueryVersion failed\n");
+        result = 0;
+    }
+    free(error);
+    error = NULL;
+    free(present_version);
     if (!checked(connection, xcb_shm_detach_checked(connection, segment),
                  "MIT-SHM Detach")) {
         result = 0;
     }
+    if (!checked(connection,
+                 xcb_present_pixmap_checked(
+                     connection, window, shared_pixmap, 1, XCB_NONE,
+                     XCB_NONE, 0, 0, XCB_NONE, XCB_NONE, XCB_NONE,
+                     XCB_PRESENT_OPTION_ASYNC | XCB_PRESENT_OPTION_COPY,
+                     0, 0, 0, 0, NULL),
+                 "Present shared pixmap") ||
+        !read_pixel(connection, window, 0x00ff00ffU)) {
+        result = 0;
+    }
+    xcb_free_pixmap(connection, shared_pixmap);
     if (!expect_error(connection,
                       xcb_shm_detach_checked(connection, segment),
                       extension->first_error + XCB_SHM_BAD_SEG,

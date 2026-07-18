@@ -5,10 +5,13 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <optional>
 #include <vector>
 
 namespace xmin::server {
+
+class SharedMemory;
 
 constexpr std::size_t maximum_surface_bytes = 64U * 1024U * 1024U;
 constexpr std::size_t maximum_server_surface_bytes = 256U * 1024U * 1024U;
@@ -17,13 +20,17 @@ class Surface {
 public:
     static std::optional<Surface>
     create(std::uint16_t width, std::uint16_t height, std::uint8_t depth);
+    static std::optional<Surface> create_shared(
+        std::uint16_t width, std::uint16_t height, std::uint8_t depth,
+        std::shared_ptr<SharedMemory> memory, std::size_t offset);
 
     [[nodiscard]] std::uint16_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint16_t height() const noexcept { return height_; }
     [[nodiscard]] std::uint8_t depth() const noexcept { return depth_; }
     [[nodiscard]] std::size_t storage_bytes() const noexcept
     {
-        return pixels_.size() * sizeof(std::uint32_t);
+        return static_cast<std::size_t>(width_) * height_ *
+            sizeof(std::uint32_t);
     }
 
     bool resize(std::uint16_t width, std::uint16_t height);
@@ -52,10 +59,13 @@ public:
                          ClipView clip = {});
     [[nodiscard]] std::uint32_t pixel(std::uint16_t x,
                                       std::uint16_t y) const noexcept;
-    [[nodiscard]] std::uint32_t *data() noexcept { return pixels_.data(); }
+    [[nodiscard]] std::uint32_t *data() noexcept
+    {
+        return shared_pixels_ != nullptr ? shared_pixels_ : pixels_.data();
+    }
     [[nodiscard]] const std::uint32_t *data() const noexcept
     {
-        return pixels_.data();
+        return shared_pixels_ != nullptr ? shared_pixels_ : pixels_.data();
     }
     [[nodiscard]] std::size_t stride_bytes() const noexcept
     {
@@ -65,6 +75,9 @@ public:
 private:
     Surface(std::uint16_t width, std::uint16_t height, std::uint8_t depth,
             std::vector<std::uint32_t> pixels);
+    Surface(std::uint16_t width, std::uint16_t height, std::uint8_t depth,
+            std::shared_ptr<SharedMemory> memory,
+            std::uint32_t *shared_pixels) noexcept;
 
     [[nodiscard]] std::uint32_t depth_mask() const noexcept;
     void store(std::size_t index, std::uint32_t source, std::uint8_t function,
@@ -74,6 +87,8 @@ private:
     std::uint16_t height_;
     std::uint8_t depth_;
     std::vector<std::uint32_t> pixels_;
+    std::shared_ptr<SharedMemory> shared_memory_;
+    std::uint32_t *shared_pixels_ = nullptr;
 };
 
 } // namespace xmin::server

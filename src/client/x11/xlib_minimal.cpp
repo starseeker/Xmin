@@ -6,13 +6,17 @@
 #include "xlib_internal.hpp"
 
 #include <X11/Xutil.h>
+#include <X11/Xlib-xcb.h>
+#include <X11/Xlibint.h>
 #include <xcb/xproto.h>
 
 #include <algorithm>
+#include <array>
 #include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <new>
 #include <string>
 #include <vector>
@@ -24,6 +28,9 @@ struct DisplayState {
     Visual visual{};
     Depth depth{};
     Screen screen{};
+    std::recursive_mutex mutex;
+    XEventQueueOwner queue_owner = XlibOwnsEventQueue;
+    std::array<XminWireToEventProc, 256> wire_to_event{};
 };
 
 _XPrivDisplay private_display(Display *display) noexcept
@@ -93,8 +100,9 @@ unsigned long image_get_pixel(XImage *image, int x, int y)
         x >= image->width || y >= image->height) {
         return 0;
     }
-    const auto *row = reinterpret_cast<const std::uint8_t *>(image->data) +
-        static_cast<std::size_t>(y) * image->bytes_per_line;
+    const auto *bytes = reinterpret_cast<const std::uint8_t *>(image->data);
+    const auto *row = bytes + static_cast<std::size_t>(y) *
+        image->bytes_per_line;
     if (image->bits_per_pixel == 32) {
         std::uint32_t value = 0;
         std::memcpy(&value, row + static_cast<std::size_t>(x) * 4U, 4);
@@ -108,12 +116,27 @@ unsigned long image_get_pixel(XImage *image, int x, int y)
     if (image->bits_per_pixel == 8) {
         return row[x];
     }
-    const std::uint8_t byte = row[static_cast<unsigned int>(x) / 8U];
-    const std::uint8_t bit = static_cast<std::uint8_t>(
-        image->bitmap_bit_order == LSBFirst
-            ? 1U << (static_cast<unsigned int>(x) & 7U)
-            : 0x80U >> (static_cast<unsigned int>(x) & 7U));
-    return (byte & bit) != 0;
+    const auto bit_at = [image](const std::uint8_t *scanline, int column) {
+        const unsigned int bit_index =
+            static_cast<unsigned int>(column + image->xoffset);
+        const std::uint8_t bit = static_cast<std::uint8_t>(
+            image->bitmap_bit_order == LSBFirst
+                ? 1U << (bit_index & 7U)
+                : 0x80U >> (bit_index & 7U));
+        return (scanline[bit_index / 8U] & bit) != 0;
+    };
+    if (image->format != XYPixmap || image->depth <= 1)
+        return bit_at(row, x);
+    const std::size_t plane_size =
+        static_cast<std::size_t>(image->bytes_per_line) * image->height;
+    unsigned long pixel = 0;
+    for (int plane = 0; plane < image->depth; ++plane) {
+        const auto *plane_row = bytes + static_cast<std::size_t>(plane) *
+            plane_size + static_cast<std::size_t>(y) * image->bytes_per_line;
+        if (bit_at(plane_row, x))
+            pixel |= 1UL << (image->depth - plane - 1);
+    }
+    return pixel;
 }
 
 int image_put_pixel(XImage *image, int x, int y, unsigned long pixel)
@@ -122,7 +145,8 @@ int image_put_pixel(XImage *image, int x, int y, unsigned long pixel)
         x >= image->width || y >= image->height) {
         return 0;
     }
-    auto *row = reinterpret_cast<std::uint8_t *>(image->data) +
+    auto *bytes = reinterpret_cast<std::uint8_t *>(image->data);
+    auto *row = bytes +
         static_cast<std::size_t>(y) * image->bytes_per_line;
     if (image->bits_per_pixel == 32) {
         const std::uint32_t value = static_cast<std::uint32_t>(pixel);
@@ -135,17 +159,38 @@ int image_put_pixel(XImage *image, int x, int y, unsigned long pixel)
     else if (image->bits_per_pixel == 8) {
         row[x] = static_cast<std::uint8_t>(pixel);
     }
-    else {
-        auto &byte = row[static_cast<unsigned int>(x) / 8U];
+    else if (image->format != XYPixmap || image->depth <= 1) {
+        const unsigned int bit_index =
+            static_cast<unsigned int>(x + image->xoffset);
+        auto &byte = row[bit_index / 8U];
         const std::uint8_t bit = static_cast<std::uint8_t>(
             image->bitmap_bit_order == LSBFirst
-                ? 1U << (static_cast<unsigned int>(x) & 7U)
-                : 0x80U >> (static_cast<unsigned int>(x) & 7U));
+                ? 1U << (bit_index & 7U)
+                : 0x80U >> (bit_index & 7U));
         if (pixel != 0) {
             byte |= bit;
         }
         else {
             byte &= static_cast<std::uint8_t>(~bit);
+        }
+    }
+    else {
+        const std::size_t plane_size =
+            static_cast<std::size_t>(image->bytes_per_line) * image->height;
+        const unsigned int bit_index =
+            static_cast<unsigned int>(x + image->xoffset);
+        const std::uint8_t bit = static_cast<std::uint8_t>(
+            image->bitmap_bit_order == LSBFirst
+                ? 1U << (bit_index & 7U)
+                : 0x80U >> (bit_index & 7U));
+        for (int plane = 0; plane < image->depth; ++plane) {
+            auto &byte = bytes[static_cast<std::size_t>(plane) * plane_size +
+                static_cast<std::size_t>(y) * image->bytes_per_line +
+                bit_index / 8U];
+            if ((pixel & (1UL << (image->depth - plane - 1))) != 0)
+                byte |= bit;
+            else
+                byte &= static_cast<std::uint8_t>(~bit);
         }
     }
     return 1;
@@ -172,8 +217,10 @@ XImage *image_sub(
     if (result == nullptr) {
         return nullptr;
     }
-    result->data = static_cast<char *>(
-        std::calloc(static_cast<std::size_t>(result->bytes_per_line), height));
+    const std::size_t planes =
+        result->format == XYPixmap ? result->depth : 1;
+    result->data = static_cast<char *>(std::calloc(
+        static_cast<std::size_t>(result->bytes_per_line) * height, planes));
     if (result->data == nullptr) {
         image_destroy(result);
         return nullptr;
@@ -234,6 +281,69 @@ void xlib_init_image(XImage *image) noexcept
 } // namespace xmin::client::x11
 
 extern "C" {
+
+Status XInitThreads(void)
+{
+    return 1;
+}
+
+Status XFreeThreads(void)
+{
+    return 1;
+}
+
+void XLockDisplay(Display *display)
+{
+    if (auto *display_state = state(display))
+        display_state->mutex.lock();
+}
+
+void XUnlockDisplay(Display *display)
+{
+    if (auto *display_state = state(display))
+        display_state->mutex.unlock();
+}
+
+xcb_connection_t *XGetXCBConnection(Display *display)
+{
+    auto *display_state = state(display);
+    return display_state == nullptr ? nullptr : display_state->connection;
+}
+
+void XSetEventQueueOwner(Display *display, XEventQueueOwner owner)
+{
+    if (auto *display_state = state(display))
+        display_state->queue_owner = owner;
+}
+
+XminWireToEventProc XESetWireToEvent(
+    Display *display, int event_number, XminWireToEventProc procedure)
+{
+    auto *display_state = state(display);
+    if (display_state == nullptr || event_number < 0 || event_number >= 256)
+        return nullptr;
+    auto &slot = display_state->wire_to_event[
+        static_cast<std::size_t>(event_number)];
+    const auto previous = slot;
+    slot = procedure;
+    return previous;
+}
+
+int _XDefaultIOError(Display *display)
+{
+    xmin::client::x11::xlib_dispatch_io_error(display);
+    return -1;
+}
+
+unsigned long XNextRequest(Display *display)
+{
+    return display == nullptr ? 0 : private_display(display)->request + 1;
+}
+
+unsigned long XLastKnownRequestProcessed(Display *display)
+{
+    return display == nullptr ? 0 : private_display(display)->last_request_read;
+}
 
 Display *XOpenDisplay(const char *display_name)
 {
@@ -439,10 +549,17 @@ XImage *XCreateImage(
         display == nullptr ? LSBFirst : BitmapBitOrder(display);
     image->bitmap_pad = bitmap_pad == 0 ? 32 : bitmap_pad;
     image->depth = static_cast<int>(depth);
-    image->bits_per_pixel = depth <= 1 ? 1 : (depth <= 8 ? 8 :
-        (depth <= 16 ? 16 : 32));
+    image->bits_per_pixel = format == XYBitmap || format == XYPixmap
+        ? 1
+        : (depth <= 1 ? 1 : (depth <= 8 ? 8 :
+            (depth <= 16 ? 16 : 32)));
+    const unsigned long row_width =
+        static_cast<unsigned long>(width) +
+        (format == XYBitmap || format == XYPixmap
+            ? static_cast<unsigned long>(std::max(offset, 0))
+            : 0UL);
     const unsigned long bits =
-        static_cast<unsigned long>(width) * image->bits_per_pixel;
+        row_width * static_cast<unsigned long>(image->bits_per_pixel);
     image->bytes_per_line = bytes_per_line != 0
         ? bytes_per_line
         : static_cast<int>(

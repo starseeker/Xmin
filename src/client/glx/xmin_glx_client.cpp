@@ -18,8 +18,16 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
+#include <xcb/glx.h>
+#include <xcb/present.h>
+#include <xcb/shm.h>
 #include <xcb/xcb.h>
+#endif
+
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+#include <sys/mman.h>
+#include <unistd.h>
 #endif
 
 #if XMIN_IS_BIG_ENDIAN
@@ -34,23 +42,24 @@
 #define XMIN_WEAK
 #endif
 
-typedef struct _XGC *GC;
-typedef struct _XImage XImage;
-
 extern "C" {
 XVisualInfo *XGetVisualInfo(Display *, long, XVisualInfo *, int *) XMIN_WEAK;
-Status XGetGeometry(Display *, XID, Window *, int *, int *,
+Status XGetGeometry(Display *, Drawable, Window *, int *, int *,
                     unsigned int *, unsigned int *, unsigned int *,
                     unsigned int *) XMIN_WEAK;
-GC XCreateGC(Display *, XID, unsigned long, void *) XMIN_WEAK;
+GC XCreateGC(Display *, Drawable, unsigned long, XGCValues *) XMIN_WEAK;
 int XFreeGC(Display *, GC) XMIN_WEAK;
 XImage *XCreateImage(Display *, Visual *, unsigned int, int, int, char *,
                      unsigned int, unsigned int, int, int) XMIN_WEAK;
-int XPutImage(Display *, XID, GC, XImage *, int, int, int, int,
+int XPutImage(Display *, Drawable, GC, XImage *, int, int, int, int,
               unsigned int, unsigned int) XMIN_WEAK;
 int XFlush(Display *) XMIN_WEAK;
 int XSync(Display *, Bool) XMIN_WEAK;
 int XFree(void *) XMIN_WEAK;
+Bool XQueryExtension(Display *, const char *, int *, int *, int *) XMIN_WEAK;
+#if XMIN_HAVE_CLIENT_XCB
+xcb_connection_t *XGetXCBConnection(Display *) XMIN_WEAK;
+#endif
 }
 
 enum {
@@ -94,6 +103,12 @@ struct xmin_drawable {
     unsigned int references;
     int destroyed;
     int pbuffer;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    xcb_connection_t *shared_connection;
+    xcb_pixmap_t shared_pixmap;
+    size_t shared_size;
+    uint32_t present_serial;
+#endif
     struct xmin_drawable *next;
 };
 
@@ -108,7 +123,7 @@ static thread_local GLXDrawable xmin_current_read;
 static thread_local Display *xmin_current_display;
 static thread_local unsigned int xmin_swap_interval;
 
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
 struct xmin_xcb_display {
     xcb_connection_t *connection = nullptr;
     xmin_xcb_display *next = nullptr;
@@ -126,14 +141,14 @@ xmin_xcb_connection(Display *display)
         if (reinterpret_cast<Display *>(entry) == display)
             return entry->connection;
     }
-    return nullptr;
+    return XGetXCBConnection != nullptr ? XGetXCBConnection(display) : nullptr;
 }
 #endif
 
 Display *
 xminGlxCreateXcbDisplay(struct xcb_connection_t *connection)
 {
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
     if (connection == nullptr || xcb_connection_has_error(connection) != 0)
         return nullptr;
     auto *entry = new (std::nothrow) xmin_xcb_display;
@@ -155,7 +170,7 @@ xminGlxCreateXcbDisplay(struct xcb_connection_t *connection)
 void
 xminGlxDestroyXcbDisplay(Display *display)
 {
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
     if (display == nullptr)
         return;
     xmin_xcb_display *removed = nullptr;
@@ -399,6 +414,116 @@ xmin_find_drawable(GLXDrawable handle)
     return NULL;
 }
 
+static void
+xmin_release_storage(struct xmin_drawable *surface)
+{
+    if (surface == NULL || surface->pixels == NULL)
+        return;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    if (surface->shared_pixmap != 0) {
+        if (surface->shared_connection != nullptr)
+            xcb_free_pixmap(surface->shared_connection,
+                            surface->shared_pixmap);
+        munmap(surface->pixels, surface->shared_size);
+        surface->shared_connection = nullptr;
+        surface->shared_pixmap = 0;
+        surface->shared_size = 0;
+        surface->pixels = nullptr;
+        return;
+    }
+#endif
+    free(surface->pixels);
+    surface->pixels = nullptr;
+}
+
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+static unsigned char *
+xmin_create_shared_storage(struct xmin_drawable *surface, Display *display,
+                           unsigned int width, unsigned int height,
+                           size_t size, xcb_connection_t **stored_connection,
+                           xcb_pixmap_t *stored_pixmap)
+{
+    if (surface == nullptr || surface->pbuffer)
+        return nullptr;
+    auto *connection = xmin_xcb_connection(display);
+    if (connection == nullptr)
+        return nullptr;
+    auto *geometry = xcb_get_geometry_reply(
+        connection, xcb_get_geometry(
+            connection, static_cast<xcb_drawable_t>(surface->xid)), nullptr);
+    if (geometry == nullptr)
+        return nullptr;
+    const std::uint8_t depth = geometry->depth;
+    free(geometry);
+    if (depth != 24 && depth != 32)
+        return nullptr;
+
+    auto *shm_version = xcb_shm_query_version_reply(
+        connection, xcb_shm_query_version(connection), nullptr);
+    const bool shared_pixmaps = shm_version != nullptr &&
+        shm_version->shared_pixmaps != 0;
+    free(shm_version);
+    if (!shared_pixmaps)
+        return nullptr;
+    auto *present_version = xcb_present_query_version_reply(
+        connection, xcb_present_query_version(
+            connection, XCB_PRESENT_MAJOR_VERSION,
+            XCB_PRESENT_MINOR_VERSION), nullptr);
+    if (present_version == nullptr) return nullptr;
+    free(present_version);
+
+    const xcb_shm_seg_t segment = xcb_generate_id(connection);
+    xcb_generic_error_t *error = nullptr;
+    auto *segment_reply = xcb_shm_create_segment_reply(
+        connection, xcb_shm_create_segment(
+            connection, segment, static_cast<std::uint32_t>(size), 0),
+        &error);
+    free(error);
+    if (segment_reply == nullptr)
+        return nullptr;
+    int *descriptors = xcb_shm_create_segment_reply_fds(
+        connection, segment_reply);
+    const int descriptor = segment_reply->nfd == 1 ? descriptors[0] : -1;
+    if (descriptor < 0) {
+        free(segment_reply);
+        xcb_shm_detach(connection, segment);
+        return nullptr;
+    }
+    void *mapping = mmap(nullptr, size, PROT_READ | PROT_WRITE,
+                         MAP_SHARED, descriptor, 0);
+    close(descriptor);
+    free(segment_reply);
+    if (mapping == MAP_FAILED) {
+        xcb_shm_detach(connection, segment);
+        return nullptr;
+    }
+    memset(mapping, 0, size);
+
+    const xcb_pixmap_t pixmap = xcb_generate_id(connection);
+    error = xcb_request_check(connection, xcb_shm_create_pixmap_checked(
+        connection, pixmap, static_cast<xcb_drawable_t>(surface->xid),
+        static_cast<std::uint16_t>(width),
+        static_cast<std::uint16_t>(height), depth, segment, 0));
+    if (error != nullptr) {
+        free(error);
+        xcb_shm_detach(connection, segment);
+        munmap(mapping, size);
+        return nullptr;
+    }
+    error = xcb_request_check(connection,
+                              xcb_shm_detach_checked(connection, segment));
+    if (error != nullptr) {
+        free(error);
+        xcb_free_pixmap(connection, pixmap);
+        munmap(mapping, size);
+        return nullptr;
+    }
+    *stored_connection = connection;
+    *stored_pixmap = pixmap;
+    return static_cast<unsigned char *>(mapping);
+}
+#endif
+
 static GLXDrawable
 xmin_add_drawable(XID xid, unsigned int width, unsigned int height, int pbuffer)
 {
@@ -432,7 +557,7 @@ xmin_remove_drawable(GLXDrawable handle)
             removed->next = NULL;
             removed->destroyed = 1;
             if (removed->references == 0) {
-                free(removed->pixels);
+                xmin_release_storage(removed);
                 free(removed);
             }
             break;
@@ -477,13 +602,13 @@ xmin_release_surface(struct xmin_drawable *surface)
             free_surface = 1;
     }
     if (free_surface) {
-        free(surface->pixels);
+        xmin_release_storage(surface);
         free(surface);
     }
 }
 
 static int
-xmin_resize_surface(struct xmin_drawable *surface,
+xmin_resize_surface(struct xmin_drawable *surface, Display *display,
                     unsigned int width, unsigned int height)
 {
     unsigned char *pixels;
@@ -491,6 +616,10 @@ xmin_resize_surface(struct xmin_drawable *surface,
     unsigned int copy_height;
     unsigned int row;
     size_t size;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    xcb_connection_t *shared_connection = nullptr;
+    xcb_pixmap_t shared_pixmap = 0;
+#endif
 
     if (surface == NULL || width == 0 || height == 0 ||
         width > XMIN_MAX_PBUFFER || height > XMIN_MAX_PBUFFER ||
@@ -501,7 +630,16 @@ xmin_resize_surface(struct xmin_drawable *surface,
         surface->storage_height == height)
         return 1;
     size = (size_t) width * height * 4;
-    pixels = static_cast<unsigned char *>(calloc(1, size));
+    pixels = nullptr;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    pixels = xmin_create_shared_storage(
+        surface, display, width, height, size,
+        &shared_connection, &shared_pixmap);
+#else
+    (void) display;
+#endif
+    if (pixels == nullptr)
+        pixels = static_cast<unsigned char *>(calloc(1, size));
     if (pixels == NULL)
         return 0;
     copy_width = surface->storage_width < width ?
@@ -514,8 +652,13 @@ xmin_resize_surface(struct xmin_drawable *surface,
                    (size_t) row * surface->storage_width * 4,
                (size_t) copy_width * 4);
     }
-    free(surface->pixels);
+    xmin_release_storage(surface);
     surface->pixels = pixels;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    surface->shared_connection = shared_connection;
+    surface->shared_pixmap = shared_pixmap;
+    surface->shared_size = shared_pixmap != 0 ? size : 0;
+#endif
     surface->storage_width = width;
     surface->storage_height = height;
     return 1;
@@ -549,7 +692,7 @@ xmin_drawable_size(Display *display, GLXDrawable handle,
     }
 
     *pbuffer = 0;
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
     if (auto *connection = xmin_xcb_connection(display)) {
         auto *reply = xcb_get_geometry_reply(
             connection,
@@ -657,8 +800,8 @@ xmin_bind_context_surfaces(GLXContext context, Display *display,
 
     if (xmin_current_context == context)
         glFinish();
-    if (!xmin_resize_surface(draw_surface, draw_width, draw_height) ||
-        !xmin_resize_surface(read_surface, read_width, read_height))
+    if (!xmin_resize_surface(draw_surface, display, draw_width, draw_height) ||
+        !xmin_resize_surface(read_surface, display, read_width, read_height))
         goto failure;
     xmin_surface_storage(draw_surface, &draw_pixels, &draw_width,
                          &draw_height);
@@ -733,6 +876,11 @@ xmin_present(Display *display, GLXDrawable handle,
     Window root;
     int x;
     int y;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+    xcb_connection_t *shared_connection = nullptr;
+    xcb_pixmap_t shared_pixmap = 0;
+    std::uint32_t present_serial = 0;
+#endif
 
     if (surface == NULL)
         return 0;
@@ -744,9 +892,14 @@ xmin_present(Display *display, GLXDrawable handle,
         pixels = surface->pixels;
         storage_width = surface->storage_width;
         storage_height = surface->storage_height;
+#if XMIN_HAVE_CLIENT_XCB && XMIN_HAVE_SCM_RIGHTS
+        shared_connection = surface->shared_connection;
+        shared_pixmap = surface->shared_pixmap;
+        present_serial = ++surface->present_serial;
+#endif
     }
 
-#if XMIN_HAVE_QT_XCB
+#if XMIN_HAVE_CLIENT_XCB
     if (auto *connection = xmin_xcb_connection(display)) {
         auto *geometry = xcb_get_geometry_reply(
             connection,
@@ -765,6 +918,23 @@ xmin_present(Display *display, GLXDrawable handle,
             image_size > UINT32_MAX) {
             return 0;
         }
+#if XMIN_HAVE_SCM_RIGHTS
+        if (shared_connection == connection && shared_pixmap != 0) {
+            /* ASYNC makes this software Present immediately eligible. The
+             * checked request is also the completion barrier: Xmin has copied
+             * the shared pixmap into server-owned window storage before this
+             * buffer can be rendered into again. */
+            auto *present_error = xcb_request_check(
+                connection, xcb_present_pixmap_checked(
+                    connection, static_cast<xcb_window_t>(xid), shared_pixmap,
+                    present_serial, 0, 0, 0, 0, 0, 0, 0,
+                    XCB_PRESENT_OPTION_ASYNC | XCB_PRESENT_OPTION_COPY,
+                    0, 0, 0, 0, nullptr));
+            if (present_error == nullptr)
+                return 1;
+            free(present_error);
+        }
+#endif
         const xcb_gcontext_t xcb_gc = xcb_generate_id(connection);
         xcb_create_gc(connection, xcb_gc,
                       static_cast<xcb_drawable_t>(xid), 0, nullptr);
@@ -925,7 +1095,8 @@ glXCreateContext(Display *display, XVisualInfo *visual, GLXContext share,
     GLXContext context;
     int i;
 
-    (void) direct;
+    if (!direct)
+        return NULL;
     std::call_once(xmin_config_once, xmin_init_configs);
     for (i = 0; i < XMIN_CONFIG_COUNT; ++i) {
         if (xmin_configs[i].double_buffer) {
@@ -1046,18 +1217,57 @@ glXDestroyGLXPixmap(Display *display, GLXPixmap pixmap)
 Bool
 glXQueryExtension(Display *display, int *error_base, int *event_base)
 {
-    (void) display;
+#if XMIN_HAVE_CLIENT_XCB
+    if (auto *connection = xmin_xcb_connection(display)) {
+        const auto *extension = xcb_get_extension_data(connection, &xcb_glx_id);
+        if (extension == nullptr || extension->present == 0)
+            return False;
+        if (error_base != NULL)
+            *error_base = extension->first_error;
+        if (event_base != NULL)
+            *event_base = extension->first_event;
+        return True;
+    }
+#endif
+    if (display != NULL && XQueryExtension != NULL) {
+        int opcode = 0;
+        int first_event = 0;
+        int first_error = 0;
+        if (!XQueryExtension(display, GLX_EXTENSION_NAME, &opcode,
+                             &first_event, &first_error))
+            return False;
+        if (error_base != NULL)
+            *error_base = first_error;
+        if (event_base != NULL)
+            *event_base = first_event;
+        return True;
+    }
     if (error_base != NULL)
-        *error_base = 0;
+        *error_base = 151;
     if (event_base != NULL)
-        *event_base = 0;
+        *event_base = 75;
     return True;
 }
 
 Bool
 glXQueryVersion(Display *display, int *major, int *minor)
 {
+#if XMIN_HAVE_CLIENT_XCB
+    if (auto *connection = xmin_xcb_connection(display)) {
+        auto *reply = xcb_glx_query_version_reply(
+            connection, xcb_glx_query_version(connection, 1, 4), nullptr);
+        if (reply == nullptr)
+            return False;
+        if (major != NULL)
+            *major = static_cast<int>(reply->major_version);
+        if (minor != NULL)
+            *minor = static_cast<int>(reply->minor_version);
+        free(reply);
+        return True;
+    }
+#else
     (void) display;
+#endif
     if (major != NULL)
         *major = 1;
     if (minor != NULL)
@@ -1364,8 +1574,7 @@ glXCreateNewContext(Display *display, GLXFBConfig config, int render_type,
 {
     GLXContext context;
 
-    (void) direct;
-    if (render_type != GLX_RGBA_TYPE)
+    if (!direct || render_type != GLX_RGBA_TYPE)
         return NULL;
     context = xmin_create_context(config, share);
     if (context != NULL)
@@ -1433,11 +1642,13 @@ glXCreateContextAttribsARB(Display *display, GLXFBConfig config,
             else if (attributes[i] == GLX_CONTEXT_MINOR_VERSION_ARB)
                 minor = attributes[i + 1];
             else if (attributes[i] == GLX_CONTEXT_PROFILE_MASK_ARB &&
-                     (attributes[i + 1] & GLX_CONTEXT_CORE_PROFILE_BIT_ARB))
+                     attributes[i + 1] != 0 &&
+                     attributes[i + 1] !=
+                         GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB)
                 return NULL;
         }
     }
-    if (major > 2 || (major == 2 && minor > 0))
+    if (!direct || major > 2 || (major == 2 && minor > 1))
         return NULL;
     return glXCreateNewContext(display, config, GLX_RGBA_TYPE, share, direct);
 }

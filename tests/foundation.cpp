@@ -3587,6 +3587,7 @@ bool
 test_window_tree_mutations()
 {
     constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t picture_id = owner + 2;
     xmin::server::ServerState server(32, 24);
     xmin::server::WindowRecord parent;
     parent.id = owner;
@@ -3595,10 +3596,24 @@ test_window_tree_mutations()
     child.id = owner + 1;
     child.parent = owner;
     child.mapped = true;
+    child.width = 2;
+    child.height = 2;
+    auto child_surface = xmin::server::Surface::create(2, 2, 24);
+    if (!expect(child_surface.has_value(),
+                "tree child surface allocation failed")) {
+        return false;
+    }
+    child.surface = server.adopt_surface(std::move(*child_surface));
+    const auto retained_surface = child.surface;
     if (!expect(server.add_window(std::move(parent), owner),
                 "tree parent insertion failed") ||
         !expect(server.add_window(std::move(child), owner),
-                "tree child insertion failed")) {
+                "tree child insertion failed") ||
+        !expect(server.add_render_picture(
+                    {picture_id, xmin::server::render_xrgb32_format,
+                     xmin::server::RenderDrawableSource{owner + 1}, {}},
+                    owner),
+                "tree child RENDER picture insertion failed")) {
         return false;
     }
     static_cast<void>(server.set_subwindows_mapped(owner, false));
@@ -3625,10 +3640,18 @@ test_window_tree_mutations()
         return false;
     }
     static_cast<void>(server.destroy_subwindows(owner));
+    const auto *picture = server.render_picture(picture_id);
+    const auto *drawable = picture == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::RenderDrawableSource>(&picture->source);
     return expect(server.window(owner + 1) == nullptr,
                   "DestroySubwindows retained a child") &&
         expect(server.window(owner) != nullptr,
-               "DestroySubwindows removed its parent");
+               "DestroySubwindows removed its parent") &&
+        expect(drawable != nullptr && drawable->surface == retained_surface,
+               "window destruction invalidated its live RENDER picture") &&
+        expect(server.erase_render_picture(picture_id),
+               "live RENDER picture could not be freed after window destruction");
 }
 
 bool

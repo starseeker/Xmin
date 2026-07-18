@@ -307,15 +307,23 @@ if(TARGET Xmin::gl_client)
 
   find_path(XMIN_TEST_X11_INCLUDE_DIR X11/Xlib.h)
   find_library(XMIN_TEST_X11_LIBRARY NAMES X11)
-  if(XMIN_TEST_X11_INCLUDE_DIR AND XMIN_TEST_X11_LIBRARY AND TARGET Xmin::run)
+  if(TARGET Xmin::run AND
+      (TARGET Xmin::ToolkitX11 OR
+       (XMIN_TEST_X11_INCLUDE_DIR AND XMIN_TEST_X11_LIBRARY)))
     add_executable(xmin_software_direct_window glx/software_direct_window.c)
     target_compile_features(xmin_software_direct_window PRIVATE c_std_11)
-    target_include_directories(xmin_software_direct_window SYSTEM PRIVATE
-      "${XMIN_TEST_X11_INCLUDE_DIR}"
-    )
-    target_link_libraries(xmin_software_direct_window PRIVATE
-      Xmin::gl_client "${XMIN_TEST_X11_LIBRARY}"
-    )
+    if(TARGET Xmin::ToolkitX11)
+      target_link_libraries(xmin_software_direct_window PRIVATE
+        Xmin::gl_client Xmin::ToolkitX11
+      )
+    else()
+      target_include_directories(xmin_software_direct_window SYSTEM PRIVATE
+        "${XMIN_TEST_X11_INCLUDE_DIR}"
+      )
+      target_link_libraries(xmin_software_direct_window PRIVATE
+        Xmin::gl_client "${XMIN_TEST_X11_LIBRARY}"
+      )
+    endif()
     xmin_enable_warnings(xmin_software_direct_window)
     add_test(NAME xmin.software-direct-window
       COMMAND Xmin::run
@@ -350,7 +358,12 @@ if(TARGET Xmin::run)
     set_tests_properties(xmin.${qt_suffix}-raster PROPERTIES
       ENVIRONMENT "QT_QPA_PLATFORM=xcb" TIMEOUT 30)
 
-    if(TARGET Xmin::gl_client)
+    # An unmodified host Qt may load its Xlib-based qxcb support. Linking that
+    # process to the toolkit facade would mix two different Display ABIs in one
+    # ELF namespace. The patched Xmin-native Qt build has its own OpenGL
+    # acceptance coverage; keep this host-Qt check for the XCB-only client
+    # profile where no Xlib facade is present.
+    if(TARGET Xmin::gl_client AND NOT TARGET Xmin::ToolkitX11)
       add_executable(xmin_${qt_suffix}_opengl qt/opengl.cpp)
       target_compile_features(xmin_${qt_suffix}_opengl PRIVATE cxx_std_17)
       target_compile_definitions(xmin_${qt_suffix}_opengl PRIVATE
@@ -420,6 +433,7 @@ endif()
 if(XMIN_ENABLE_INSTALL)
   set(xmin_install_have_launcher FALSE)
   set(xmin_install_have_gl FALSE)
+  set(xmin_install_have_client_fonts FALSE)
   set(xmin_install_test_arguments
     "-DBINARY_DIR=${PROJECT_BINARY_DIR}"
     "-DSTAGE_DIR=${PROJECT_BINARY_DIR}/install-test/prefix"
@@ -436,9 +450,14 @@ if(XMIN_ENABLE_INSTALL)
   if(TARGET Xmin::gl_client)
     set(xmin_install_have_gl TRUE)
   endif()
+  if(TARGET Xmin::QtX11 OR TARGET Xmin::ToolkitX11)
+    set(xmin_install_have_client_fonts TRUE)
+  endif()
   list(APPEND xmin_install_test_arguments
     "-DHAVE_LAUNCHER=${xmin_install_have_launcher}"
     "-DHAVE_GL=${xmin_install_have_gl}"
+    "-DHAVE_CLIENT_FONTS=${xmin_install_have_client_fonts}"
+    "-DFONTDIR=${XMIN_INSTALL_FONTDIR}"
   )
   add_test(NAME xmin.install-relocation-dependencies
     COMMAND "${CMAKE_COMMAND}" ${xmin_install_test_arguments}

@@ -34,7 +34,29 @@ index ee08a589..43261f04 100644
      if(X11_Xext_FOUND)
        list(APPEND FLTK_LDLIBS -lXext)
      endif(X11_Xext_FOUND)
-@@ -985,7 +1004,11 @@ endif()
+@@ -634,5 +653,10 @@ if(FLTK_BUILD_GL)
+-
++
+-  if(FLTK_BACKEND_X11)
++  if(FLTK_USE_XMIN)
++    set(OPENGL_FOUND TRUE)
++    set(OPENGL_LIBRARIES Xmin::GL Xmin::ToolkitX11)
++    set(OPENGL_INCLUDE_DIR ${FLTK_XMIN_GL_INCLUDE_DIRECTORIES})
++    set(HAVE_GL_GLU_H FALSE)
++  elseif(FLTK_BACKEND_X11)
+     set(OPENGL_FOUND TRUE)
+     find_library(OPENGL_LIB GL)
+     get_filename_component(PATH_TO_GLLIB ${OPENGL_LIB} DIRECTORY)
+@@ -662,7 +686,7 @@ if(FLTK_BUILD_GL)
+     if(APPLE)
+       set(HAVE_GL_GLU_H ${HAVE_OPENGL_GLU_H})
+     endif(APPLE)
+-  endif(FLTK_BACKEND_X11)
++  endif()
+ else(FLTK_BUILD_GL)
+   set(OPENGL_FOUND FALSE)
+   set(HAVE_GL FALSE)
+@@ -985,7 +1009,11 @@ endif()
  
  if(FLTK_USE_XFT)
    set(USE_XFT X11_Xft_FOUND)
@@ -51,7 +73,7 @@ diff --git a/CMakeLists.txt b/CMakeLists.txt
 index cf44b1c2..d67a4127 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -67,10 +67,47 @@ set(FLTK_VERSION ${FLTK_VERSION} CACHE STRING "FLTK version" FORCE)
+@@ -67,10 +67,57 @@ set(FLTK_VERSION ${FLTK_VERSION} CACHE STRING "FLTK version" FORCE)
  #######################################################################
  include(CMake/setup.cmake)
  
@@ -63,6 +85,10 @@ index cf44b1c2..d67a4127 100644
 +  endif()
 +  get_target_property(FLTK_XMIN_INCLUDE_DIRECTORIES
 +    Xmin::ToolkitX11 INTERFACE_INCLUDE_DIRECTORIES)
++  if(TARGET Xmin::GL)
++    get_target_property(FLTK_XMIN_GL_INCLUDE_DIRECTORIES
++      Xmin::GL INTERFACE_INCLUDE_DIRECTORIES)
++  endif()
 +  get_target_property(FLTK_XMIN_CLIENT_LIBRARY
 +    Xmin::ClientX11 IMPORTED_LOCATION)
 +  if(NOT FLTK_XMIN_CLIENT_LIBRARY)
@@ -95,6 +121,12 @@ index cf44b1c2..d67a4127 100644
 +  # Xmin supplies its focused Fontconfig surface and uses embedded fonts.
 +  set(LIB_fontconfig "")
 +  set(LIB_freetype "")
++  if(TARGET Xmin::GL)
++    set(LIB_GL Xmin::GL)
++  else()
++    set(LIB_GL "")
++    set(LIB_MesaGL "")
++  endif()
 +endif()
  
  #######################################################################
@@ -110,3 +142,45 @@ index bbda8fe6..72599524 100644
 +endif()
 +
  include(${CMAKE_CURRENT_LIST_DIR}/FLTK-Targets.cmake)
+diff --git a/configh.cmake.in b/configh.cmake.in
+index b01d4fba6..ed1426cbd 100644
+--- a/configh.cmake.in
++++ b/configh.cmake.in
+@@ -32,7 +32,15 @@
+  */
+-
++
+ #include <FL/fl_config.h>
+-
++
++/*
++ * FLTK_USE_XMIN
++ *
++ * Do we use Xmin's self-contained X11 compatibility client?
++ */
++
++#cmakedefine01 FLTK_USE_XMIN
++
+ /*
+  * Where to find files...
+  */
+diff --git a/src/Fl_x.cxx b/src/Fl_x.cxx
+index 482e26708..de4f472a4 100644
+--- a/src/Fl_x.cxx
++++ b/src/Fl_x.cxx
+@@ -66,2 +66,4 @@
+-#define USE_XRANDR (HAVE_DLSYM && HAVE_DLFCN_H) // means attempt to dynamically load libXrandr.so
++// USE_XRANDR means attempt to dynamically load libXrandr.so.
++#define USE_XRANDR \
++  (!FLTK_USE_XMIN && HAVE_DLSYM && HAVE_DLFCN_H)
+ #if USE_XRANDR
+diff --git a/src/drivers/X11/Fl_X11_Screen_Driver.cxx b/src/drivers/X11/Fl_X11_Screen_Driver.cxx
+index 40401b2b5..29168481c 100644
+--- a/src/drivers/X11/Fl_X11_Screen_Driver.cxx
++++ b/src/drivers/X11/Fl_X11_Screen_Driver.cxx
+@@ -275,2 +275,4 @@
+-#define USE_XRANDR (HAVE_DLSYM && HAVE_DLFCN_H) // means attempt to dynamically load libXrandr.so
++// USE_XRANDR means attempt to dynamically load libXrandr.so.
++#define USE_XRANDR \
++  (!FLTK_USE_XMIN && HAVE_DLSYM && HAVE_DLFCN_H)
+ #if USE_XRANDR

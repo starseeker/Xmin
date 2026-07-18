@@ -17,12 +17,20 @@
 #include <limits>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <unordered_map>
 
 struct _XIM { Display *display = nullptr; };
-struct _XIC { XIM input_method = nullptr; Window window = None; };
+struct _XIC {
+    XIM input_method = nullptr;
+    XIMStyle input_style = XIMPreeditNothing | XIMStatusNothing;
+    Window client_window = None;
+    Window focus_window = None;
+    long filter_events = 0;
+    bool focused = false;
+};
 struct _XOC { int unused = 0; };
 
 namespace {
@@ -601,26 +609,108 @@ KeySym keycode_to_keysym(Display *display, KeyCode code, int column)
     return xcb_get_keyboard_mapping_keysyms(reply.get())[selected];
 }
 
+KeySym event_keysym(const XKeyEvent *event)
+{
+    if (event == nullptr)
+        return NoSymbol;
+    const bool shifted = (event->state & ShiftMask) != 0;
+    const KeySym base =
+        keycode_to_keysym(event->display, event->keycode, 0);
+    const KeySym upper =
+        keycode_to_keysym(event->display, event->keycode, 1);
+    const bool keypad_pair = base >= XK_KP_Space && base <= XK_KP_Delete &&
+        upper >= XK_KP_0 && upper <= XK_KP_9;
+    if (keypad_pair) {
+        const bool num_lock = (event->state & Mod2Mask) != 0;
+        return num_lock != shifted ? upper : base;
+    }
+    if ((event->state & LockMask) != 0 && base >= XK_a && base <= XK_z &&
+        upper >= XK_A && upper <= XK_Z) {
+        return shifted ? base : upper;
+    }
+    return shifted ? upper : base;
+}
+
+std::optional<std::uint32_t> keysym_codepoint(
+    KeySym symbol, unsigned int state)
+{
+    std::optional<std::uint32_t> codepoint;
+    if ((symbol >= 0x20 && symbol <= 0x7e) ||
+        (symbol >= 0xa0 && symbol <= 0xff)) {
+        codepoint = static_cast<std::uint32_t>(symbol);
+    }
+    else if ((symbol & 0xff000000UL) == 0x01000000UL) {
+        codepoint = static_cast<std::uint32_t>(symbol & 0x00ffffffUL);
+    }
+    else if (symbol >= XK_KP_0 && symbol <= XK_KP_9) {
+        codepoint = static_cast<std::uint32_t>('0' + symbol - XK_KP_0);
+    }
+    else {
+        switch (symbol) {
+        case XK_BackSpace: codepoint = '\b'; break;
+        case XK_Tab:
+        case XK_KP_Tab: codepoint = '\t'; break;
+        case XK_Return:
+        case XK_KP_Enter: codepoint = '\r'; break;
+        case XK_Escape: codepoint = 0x1b; break;
+        case XK_Delete:
+        case XK_KP_Delete: codepoint = 0x7f; break;
+        case XK_KP_Space: codepoint = ' '; break;
+        case XK_KP_Equal: codepoint = '='; break;
+        case XK_KP_Multiply: codepoint = '*'; break;
+        case XK_KP_Add: codepoint = '+'; break;
+        case XK_KP_Separator: codepoint = ','; break;
+        case XK_KP_Subtract: codepoint = '-'; break;
+        case XK_KP_Decimal: codepoint = '.'; break;
+        case XK_KP_Divide: codepoint = '/'; break;
+        default: break;
+        }
+    }
+    if (codepoint && (state & ControlMask) != 0) {
+        if ((*codepoint >= '@' && *codepoint <= '_') ||
+            (*codepoint >= 'a' && *codepoint <= 'z')) {
+            *codepoint &= 0x1fU;
+        }
+        else if (*codepoint == ' ')
+            *codepoint = 0;
+    }
+    return codepoint;
+}
+
+int utf8_length(std::uint32_t codepoint) noexcept
+{
+    if (codepoint <= 0x7f)
+        return 1;
+    if (codepoint <= 0x7ff)
+        return 2;
+    if (codepoint >= 0xd800 && codepoint <= 0xdfff)
+        return 0;
+    if (codepoint <= 0xffff)
+        return 3;
+    return codepoint <= 0x10ffff ? 4 : 0;
+}
+
 int utf8_encode(std::uint32_t codepoint, char *buffer, int capacity)
 {
-    if (buffer == nullptr || capacity <= 0)
+    const int needed = utf8_length(codepoint);
+    if (buffer == nullptr || capacity < needed || needed == 0)
         return 0;
-    if (codepoint <= 0x7f && capacity >= 1) {
+    if (needed == 1) {
         buffer[0] = static_cast<char>(codepoint);
         return 1;
     }
-    if (codepoint <= 0x7ff && capacity >= 2) {
+    if (needed == 2) {
         buffer[0] = static_cast<char>(0xc0 | (codepoint >> 6));
         buffer[1] = static_cast<char>(0x80 | (codepoint & 0x3f));
         return 2;
     }
-    if (codepoint <= 0xffff && capacity >= 3) {
+    if (needed == 3) {
         buffer[0] = static_cast<char>(0xe0 | (codepoint >> 12));
         buffer[1] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
         buffer[2] = static_cast<char>(0x80 | (codepoint & 0x3f));
         return 3;
     }
-    if (codepoint <= 0x10ffff && capacity >= 4) {
+    if (needed == 4) {
         buffer[0] = static_cast<char>(0xf0 | (codepoint >> 18));
         buffer[1] = static_cast<char>(0x80 | ((codepoint >> 12) & 0x3f));
         buffer[2] = static_cast<char>(0x80 | ((codepoint >> 6) & 0x3f));
@@ -1005,12 +1095,12 @@ int XLookupString(
 {
     if (event == nullptr)
         return 0;
-    const int column = (event->state & ShiftMask) != 0 ? 1 : 0;
-    const KeySym symbol = keycode_to_keysym(event->display, event->keycode, column);
+    const KeySym symbol = event_keysym(event);
     if (keysym != nullptr)
         *keysym = symbol;
-    if (symbol >= 0x20 && symbol <= 0xff && capacity > 0 && buffer != nullptr) {
-        buffer[0] = static_cast<char>(symbol);
+    const auto codepoint = keysym_codepoint(symbol, event->state);
+    if (codepoint && *codepoint <= 0xff && capacity > 0 && buffer != nullptr) {
+        buffer[0] = static_cast<char>(*codepoint);
         return 1;
     }
     return 0;
@@ -1096,6 +1186,8 @@ Bool XUnregisterIMInstantiateCallback(
 
 XIC XCreateIC(XIM input_method, ...)
 {
+    if (input_method == nullptr)
+        return nullptr;
     auto *context = new (std::nothrow) _XIC;
     if (context == nullptr)
         return nullptr;
@@ -1105,12 +1197,28 @@ XIC XCreateIC(XIM input_method, ...)
     const char *name = va_arg(arguments, const char *);
     while (name != nullptr) {
         const auto value = va_arg(arguments, XPointer);
-        if (std::strcmp(name, XNClientWindow) == 0 ||
-            std::strcmp(name, XNFocusWindow) == 0)
-            context->window = reinterpret_cast<std::uintptr_t>(value);
+        if (std::strcmp(name, XNInputStyle) == 0) {
+            context->input_style = static_cast<XIMStyle>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
+        else if (std::strcmp(name, XNClientWindow) == 0) {
+            context->client_window = static_cast<Window>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
+        else if (std::strcmp(name, XNFocusWindow) == 0) {
+            context->focus_window = static_cast<Window>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
         name = va_arg(arguments, const char *);
     }
     va_end(arguments);
+    if (context->input_style !=
+        (XIMPreeditNothing | XIMStatusNothing)) {
+        delete context;
+        return nullptr;
+    }
+    if (context->focus_window == None)
+        context->focus_window = context->client_window;
     return context;
 }
 
@@ -1119,18 +1227,87 @@ void XDestroyIC(XIC context)
     delete context;
 }
 
-char *XGetICValues(XIC, ...)
+char *XGetICValues(XIC context, ...)
 {
-    return nullptr;
+    if (context == nullptr)
+        return const_cast<char *>("");
+    char *unsupported = nullptr;
+    va_list arguments;
+    va_start(arguments, context);
+    const char *name = va_arg(arguments, const char *);
+    while (name != nullptr) {
+        void *destination = va_arg(arguments, void *);
+        if (destination == nullptr) {
+            unsupported = const_cast<char *>(name);
+            break;
+        }
+        if (std::strcmp(name, XNInputStyle) == 0) {
+            *static_cast<XIMStyle *>(destination) = context->input_style;
+        }
+        else if (std::strcmp(name, XNClientWindow) == 0) {
+            *static_cast<Window *>(destination) = context->client_window;
+        }
+        else if (std::strcmp(name, XNFocusWindow) == 0) {
+            *static_cast<Window *>(destination) = context->focus_window;
+        }
+        else if (std::strcmp(name, XNFilterEvents) == 0) {
+            *static_cast<long *>(destination) = context->filter_events;
+        }
+        else if (std::strcmp(name, XNPreeditAttributes) != 0 &&
+                 std::strcmp(name, XNStatusAttributes) != 0) {
+            unsupported = const_cast<char *>(name);
+            break;
+        }
+        name = va_arg(arguments, const char *);
+    }
+    va_end(arguments);
+    return unsupported;
 }
 
-char *XSetICValues(XIC, ...)
+char *XSetICValues(XIC context, ...)
 {
-    return nullptr;
+    if (context == nullptr)
+        return const_cast<char *>("");
+    char *unsupported = nullptr;
+    va_list arguments;
+    va_start(arguments, context);
+    const char *name = va_arg(arguments, const char *);
+    while (name != nullptr) {
+        const auto value = va_arg(arguments, XPointer);
+        if (std::strcmp(name, XNInputStyle) == 0) {
+            context->input_style = static_cast<XIMStyle>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
+        else if (std::strcmp(name, XNClientWindow) == 0) {
+            context->client_window = static_cast<Window>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
+        else if (std::strcmp(name, XNFocusWindow) == 0) {
+            context->focus_window = static_cast<Window>(
+                reinterpret_cast<std::uintptr_t>(value));
+        }
+        else if (std::strcmp(name, XNPreeditAttributes) != 0 &&
+                 std::strcmp(name, XNStatusAttributes) != 0) {
+            unsupported = const_cast<char *>(name);
+            break;
+        }
+        name = va_arg(arguments, const char *);
+    }
+    va_end(arguments);
+    return unsupported;
 }
 
-void XSetICFocus(XIC) {}
-void XUnsetICFocus(XIC) {}
+void XSetICFocus(XIC context)
+{
+    if (context != nullptr)
+        context->focused = true;
+}
+
+void XUnsetICFocus(XIC context)
+{
+    if (context != nullptr)
+        context->focused = false;
+}
 
 char *XmbResetIC(XIC)
 {
@@ -1141,18 +1318,31 @@ int Xutf8LookupString(
     XIC, XKeyPressedEvent *event, char *buffer, int capacity,
     KeySym *keysym, Status *status)
 {
-    KeySym symbol = NoSymbol;
-    XLookupString(event, nullptr, 0, &symbol, nullptr);
+    const KeySym symbol = event_keysym(event);
     if (keysym != nullptr)
         *keysym = symbol;
-    std::uint32_t codepoint = 0;
-    if (symbol <= 0xff)
-        codepoint = static_cast<std::uint32_t>(symbol);
-    else if ((symbol & 0xff000000UL) == 0x01000000UL)
-        codepoint = static_cast<std::uint32_t>(symbol & 0x00ffffffUL);
-    const int written = codepoint == 0 ? 0 : utf8_encode(codepoint, buffer, capacity);
-    if (status != nullptr)
-        *status = written != 0 ? XLookupBoth : XLookupKeySym;
+    const auto codepoint = event == nullptr
+        ? std::optional<std::uint32_t>{}
+        : keysym_codepoint(symbol, event->state);
+    const int needed = codepoint ? utf8_length(*codepoint) : 0;
+    if (needed > capacity || (needed != 0 && buffer == nullptr)) {
+        if (status != nullptr)
+            *status = XBufferOverflow;
+        return needed;
+    }
+    const int written = codepoint
+        ? utf8_encode(*codepoint, buffer, capacity)
+        : 0;
+    if (status != nullptr) {
+        if (written != 0 && symbol != NoSymbol)
+            *status = XLookupBoth;
+        else if (written != 0)
+            *status = XLookupChars;
+        else if (symbol != NoSymbol)
+            *status = XLookupKeySym;
+        else
+            *status = XLookupNone;
+    }
     return written;
 }
 

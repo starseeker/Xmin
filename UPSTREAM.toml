@@ -220,6 +220,19 @@ patches = []
 importer = "tools/import-x11-client-headers.sh"
 
 [[source]]
+name = "xorg-rgb-color-data"
+revision = "1.1.1"
+url = "https://www.x.org/releases/individual/app/"
+archive = "rgb-1.1.1.tar.xz"
+sha256 = "c80ff280a02f56c30fadc2dfa210fc6979c4ab968afa315278cb97768b64ecab"
+status = "generated-data"
+local_path = "src/client/x11/x11_colors.inc"
+retained_paths = ["normalized, deduplicated X11 named colors packed as RGB8"]
+license_paths = ["LICENSES/xorg-rgb/COPYING"]
+patches = []
+generator = "tools/generate-x11-colors.py"
+
+[[source]]
 name = "xorgproto-public-headers"
 revision = "2025.1"
 url = "https://www.x.org/releases/individual/proto/"

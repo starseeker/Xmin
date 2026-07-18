@@ -1,5 +1,28 @@
 @PACKAGE_INIT@
 
+if(@XMIN_BUILD_QT_CLIENT@ OR @XMIN_BUILD_TOOLKIT_CLIENT@)
+  set(Xmin_FONT_DIR "@PACKAGE_XMIN_INSTALL_FONTDIR@")
+  set(Xmin_FONT_FILES
+    "${Xmin_FONT_DIR}/Go-Regular.ttf"
+    "${Xmin_FONT_DIR}/Go-Bold.ttf"
+    "${Xmin_FONT_DIR}/Go-Italic.ttf"
+    "${Xmin_FONT_DIR}/Go-Bold-Italic.ttf"
+    "${Xmin_FONT_DIR}/Go-Mono.ttf"
+    "${Xmin_FONT_DIR}/Go-Mono-Bold.ttf"
+    "${Xmin_FONT_DIR}/Go-Mono-Italic.ttf"
+    "${Xmin_FONT_DIR}/Go-Mono-Bold-Italic.ttf"
+  )
+else()
+  set(Xmin_FONT_DIR "")
+  set(Xmin_FONT_FILES "")
+endif()
+
 include("${CMAKE_CURRENT_LIST_DIR}/XminTargets.cmake")
+
+if(TARGET Xmin::QtX11)
+  set_property(TARGET Xmin::QtX11 PROPERTY
+    XMIN_FONT_FILES "${Xmin_FONT_FILES}"
+  )
+endif()
 
 check_required_components(Xmin)

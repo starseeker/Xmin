@@ -7,6 +7,8 @@
  * layouts come from the pinned xcb-proto interface material.
  */
 #include <xcb/randr.h>
+#include <xcb/glx.h>
+#include <xcb/present.h>
 #include <xcb/render.h>
 #include <xcb/shape.h>
 #include <xcb/shm.h>
@@ -26,6 +28,8 @@
 
 extern "C" {
 xcb_extension_t xcb_randr_id = {"RANDR", 0};
+xcb_extension_t xcb_glx_id = {"GLX", 0};
+xcb_extension_t xcb_present_id = {"Present", 0};
 xcb_extension_t xcb_render_id = {"RENDER", 0};
 xcb_extension_t xcb_shape_id = {"SHAPE", 0};
 xcb_extension_t xcb_shm_id = {"MIT-SHM", 0};
@@ -2557,6 +2561,53 @@ xcb_shape_rectangles (xcb_connection_t      *c,
 
 /* shm.c: xcb_shm_attach_checked */
 xcb_void_cookie_t
+xcb_shm_create_pixmap_checked (xcb_connection_t *c,
+                               xcb_pixmap_t pid,
+                               xcb_drawable_t drawable,
+                               uint16_t width,
+                               uint16_t height,
+                               uint8_t depth,
+                               xcb_shm_seg_t shmseg,
+                               uint32_t offset)
+{
+    static const xcb_protocol_request_t xcb_req{
+        2, &xcb_shm_id, XCB_SHM_CREATE_PIXMAP, 1
+    };
+    struct iovec parts[4];
+    xcb_shm_create_pixmap_request_t out{};
+    out.pid = pid; out.drawable = drawable; out.width = width;
+    out.height = height; out.depth = depth; out.shmseg = shmseg;
+    out.offset = offset;
+    parts[2].iov_base = &out; parts[2].iov_len = sizeof(out);
+    parts[3].iov_base = nullptr; parts[3].iov_len = 0;
+    return {xcb_send_request(c, XCB_REQUEST_CHECKED, parts + 2, &xcb_req)};
+}
+
+xcb_void_cookie_t
+xcb_shm_create_pixmap (xcb_connection_t *c,
+                       xcb_pixmap_t pid,
+                       xcb_drawable_t drawable,
+                       uint16_t width,
+                       uint16_t height,
+                       uint8_t depth,
+                       xcb_shm_seg_t shmseg,
+                       uint32_t offset)
+{
+    static const xcb_protocol_request_t xcb_req{
+        2, &xcb_shm_id, XCB_SHM_CREATE_PIXMAP, 1
+    };
+    struct iovec parts[4];
+    xcb_shm_create_pixmap_request_t out{};
+    out.pid = pid; out.drawable = drawable; out.width = width;
+    out.height = height; out.depth = depth; out.shmseg = shmseg;
+    out.offset = offset;
+    parts[2].iov_base = &out; parts[2].iov_len = sizeof(out);
+    parts[3].iov_base = nullptr; parts[3].iov_len = 0;
+    return {xcb_send_request(c, 0, parts + 2, &xcb_req)};
+}
+
+/* shm.c: xcb_shm_attach_checked */
+xcb_void_cookie_t
 xcb_shm_attach_checked (xcb_connection_t *c,
                         xcb_shm_seg_t     shmseg,
                         uint32_t          shmid,
@@ -2760,6 +2811,84 @@ xcb_shm_query_version_reply (xcb_connection_t                *c,
                              xcb_generic_error_t            **e)
 {
     return (xcb_shm_query_version_reply_t *) xcb_wait_for_reply(c, cookie.sequence, e);
+}
+
+/* glx.c: focused QueryVersion request */
+xcb_glx_query_version_cookie_t
+xcb_glx_query_version (xcb_connection_t *c, uint32_t major, uint32_t minor)
+{
+    static const xcb_protocol_request_t req{
+        2, &xcb_glx_id, XCB_GLX_QUERY_VERSION, 0
+    };
+    struct iovec parts[4];
+    xcb_glx_query_version_request_t out{};
+    out.major_version = major; out.minor_version = minor;
+    parts[2].iov_base = &out; parts[2].iov_len = sizeof(out);
+    parts[3].iov_base = nullptr; parts[3].iov_len = 0;
+    return {xcb_send_request(c, XCB_REQUEST_CHECKED, parts + 2, &req)};
+}
+
+xcb_glx_query_version_reply_t *
+xcb_glx_query_version_reply (xcb_connection_t *c,
+                             xcb_glx_query_version_cookie_t cookie,
+                             xcb_generic_error_t **error)
+{
+    return static_cast<xcb_glx_query_version_reply_t *>(
+        xcb_wait_for_reply(c, cookie.sequence, error));
+}
+
+/* present.c: focused QueryVersion and Pixmap requests */
+xcb_present_query_version_cookie_t
+xcb_present_query_version (xcb_connection_t *c, uint32_t major,
+                           uint32_t minor)
+{
+    static const xcb_protocol_request_t req{
+        2, &xcb_present_id, XCB_PRESENT_QUERY_VERSION, 0
+    };
+    struct iovec parts[4];
+    xcb_present_query_version_request_t out{};
+    out.major_version = major; out.minor_version = minor;
+    parts[2].iov_base = &out; parts[2].iov_len = sizeof(out);
+    parts[3].iov_base = nullptr; parts[3].iov_len = 0;
+    return {xcb_send_request(c, XCB_REQUEST_CHECKED, parts + 2, &req)};
+}
+
+xcb_present_query_version_reply_t *
+xcb_present_query_version_reply (xcb_connection_t *c,
+                                 xcb_present_query_version_cookie_t cookie,
+                                 xcb_generic_error_t **error)
+{
+    return static_cast<xcb_present_query_version_reply_t *>(
+        xcb_wait_for_reply(c, cookie.sequence, error));
+}
+
+xcb_void_cookie_t
+xcb_present_pixmap_checked (xcb_connection_t *c, xcb_window_t window,
+                            xcb_pixmap_t pixmap, uint32_t serial,
+                            uint32_t valid, uint32_t update, int16_t x_off,
+                            int16_t y_off, uint32_t target_crtc,
+                            uint32_t wait_fence, uint32_t idle_fence,
+                            uint32_t options, uint64_t target_msc,
+                            uint64_t divisor, uint64_t remainder,
+                            uint32_t notifies_len, const void *notifies)
+{
+    static const xcb_protocol_request_t req{
+        4, &xcb_present_id, XCB_PRESENT_PIXMAP, 1
+    };
+    struct iovec parts[6];
+    xcb_present_pixmap_request_t out{};
+    out.window = window; out.pixmap = pixmap; out.serial = serial;
+    out.valid = valid; out.update = update; out.x_off = x_off;
+    out.y_off = y_off; out.target_crtc = target_crtc;
+    out.wait_fence = wait_fence; out.idle_fence = idle_fence;
+    out.options = options; out.target_msc = target_msc;
+    out.divisor = divisor; out.remainder = remainder;
+    parts[2].iov_base = &out; parts[2].iov_len = sizeof(out);
+    parts[3].iov_base = nullptr; parts[3].iov_len = 0;
+    parts[4].iov_base = const_cast<void *>(notifies);
+    parts[4].iov_len = static_cast<std::size_t>(notifies_len) * 8U;
+    parts[5].iov_base = nullptr; parts[5].iov_len = 0;
+    return {xcb_send_request(c, XCB_REQUEST_CHECKED, parts + 2, &req)};
 }
 
 /* sync.c: xcb_sync_create_counter */

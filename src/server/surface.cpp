@@ -1,6 +1,7 @@
 #include "xmin/server/surface.hpp"
 
 #include "xmin/server/checked.hpp"
+#include "xmin/server/shared_memory.hpp"
 
 #include <algorithm>
 #include <cstdint>
@@ -168,6 +169,13 @@ Surface::Surface(std::uint16_t width, std::uint16_t height,
     : width_(width), height_(height), depth_(depth), pixels_(std::move(pixels))
 {}
 
+Surface::Surface(std::uint16_t width, std::uint16_t height,
+                 std::uint8_t depth, std::shared_ptr<SharedMemory> memory,
+                 std::uint32_t *shared_pixels) noexcept
+    : width_(width), height_(height), depth_(depth),
+      shared_memory_(std::move(memory)), shared_pixels_(shared_pixels)
+{}
+
 std::optional<Surface>
 Surface::create(std::uint16_t width, std::uint16_t height, std::uint8_t depth)
 {
@@ -185,6 +193,28 @@ Surface::create(std::uint16_t width, std::uint16_t height, std::uint8_t depth)
     }
 }
 
+std::optional<Surface>
+Surface::create_shared(std::uint16_t width, std::uint16_t height,
+                       std::uint8_t depth,
+                       std::shared_ptr<SharedMemory> memory,
+                       std::size_t offset)
+{
+    if ((depth != 24 && depth != 32) || !memory || memory->read_only() ||
+        (offset % alignof(std::uint32_t)) != 0)
+        return std::nullopt;
+    const auto count = pixel_count(width, height);
+    const auto bytes = count
+        ? checked_multiply(*count, sizeof(std::uint32_t))
+        : std::optional<std::size_t>{};
+    const auto end = bytes ? checked_add(offset, *bytes)
+                           : std::optional<std::size_t>{};
+    if (!end || *end > memory->size())
+        return std::nullopt;
+    auto *address = memory->writable_data() + offset;
+    return Surface(width, height, depth, std::move(memory),
+                   reinterpret_cast<std::uint32_t *>(address));
+}
+
 std::uint32_t
 Surface::depth_mask() const noexcept
 {
@@ -198,14 +228,17 @@ Surface::store(std::size_t index, std::uint32_t source,
                std::uint8_t function, std::uint32_t plane_mask) noexcept
 {
     const std::uint32_t mask = plane_mask & depth_mask();
-    const std::uint32_t destination = pixels_[index];
+    auto *pixels = data();
+    const std::uint32_t destination = pixels[index];
     const std::uint32_t result = raster(function, source, destination);
-    pixels_[index] = ((result & mask) | (destination & ~mask)) & depth_mask();
+    pixels[index] = ((result & mask) | (destination & ~mask)) & depth_mask();
 }
 
 bool
 Surface::resize(std::uint16_t width, std::uint16_t height)
 {
+    if (shared_pixels_ != nullptr)
+        return width == width_ && height == height_;
     const auto count = pixel_count(width, height);
     if (!count)
         return false;
@@ -219,7 +252,7 @@ Surface::resize(std::uint16_t width, std::uint16_t height)
     const std::uint16_t copied_width = std::min(width_, width);
     const std::uint16_t copied_height = std::min(height_, height);
     for (std::uint16_t y = 0; y < copied_height; ++y) {
-        std::copy_n(pixels_.begin() + static_cast<std::ptrdiff_t>(y) * width_,
+        std::copy_n(data() + static_cast<std::ptrdiff_t>(y) * width_,
                     copied_width,
                     replacement.begin() +
                         static_cast<std::ptrdiff_t>(y) * width);
@@ -375,7 +408,7 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
                 continue;
             }
             const std::uint32_t source_pixel =
-                source.pixels_[sy * source.width_ + sx];
+                source.data()[sy * source.width_ + sx];
             store(dy * width_ + dx, source_pixel, function, plane_mask);
         }
     }
@@ -436,7 +469,7 @@ Surface::copy_plane_from(const Surface &source, std::int32_t source_x,
                 continue;
             }
             const std::uint32_t source_pixel =
-                source.pixels_[sy * source.width_ + sx];
+                source.data()[sy * source.width_ + sx];
             store(dy * width_ + dx,
                   (source_pixel & bit_plane) != 0 ? foreground : background,
                   function, plane_mask);
@@ -449,7 +482,7 @@ Surface::pixel(std::uint16_t x, std::uint16_t y) const noexcept
 {
     if (x >= width_ || y >= height_)
         return 0;
-    return pixels_[static_cast<std::size_t>(y) * width_ + x];
+    return data()[static_cast<std::size_t>(y) * width_ + x];
 }
 
 } // namespace xmin::server

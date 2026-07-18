@@ -13,20 +13,21 @@ target_compile_definitions(xmin_glx_client_api PRIVATE
 )
 target_include_directories(xmin_glx_client_api PRIVATE
   "${xmin_client_gl_include}"
+  "${PROJECT_SOURCE_DIR}/src/client/x11/include"
   "${PROJECT_BINARY_DIR}/generated"
 )
 target_include_directories(xmin_glx_client_api SYSTEM PRIVATE
   "${PROJECT_SOURCE_DIR}/third_party/osmesa/include"
 )
 target_link_libraries(xmin_glx_client_api PRIVATE Threads::Threads)
-if(XMIN_BUILD_QT_CLIENT AND TARGET Xmin::QtX11)
+if(TARGET Xmin::ClientX11)
   target_compile_definitions(xmin_glx_client_api PRIVATE
-    XMIN_HAVE_QT_XCB=1
+    XMIN_HAVE_CLIENT_XCB=1
   )
-  target_link_libraries(xmin_glx_client_api PRIVATE Xmin::QtX11)
+  target_link_libraries(xmin_glx_client_api PRIVATE Xmin::ClientX11)
 else()
   target_compile_definitions(xmin_glx_client_api PRIVATE
-    XMIN_HAVE_QT_XCB=0
+    XMIN_HAVE_CLIENT_XCB=0
   )
 endif()
 xmin_enable_warnings(xmin_glx_client_api)
@@ -66,6 +67,7 @@ endif()
 target_include_directories(xmin_gl_client
   PUBLIC
     "$<BUILD_INTERFACE:${xmin_client_gl_include}>"
+    "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/src/client/x11/include>"
     "$<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/third_party/osmesa/include>"
     "$<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>"
   PRIVATE
@@ -83,8 +85,8 @@ target_include_directories(xmin_gl_client
     "${CMAKE_CURRENT_SOURCE_DIR}"
 )
 target_link_libraries(xmin_gl_client PRIVATE Threads::Threads ${XMIN_M_LIBRARY})
-if(XMIN_BUILD_QT_CLIENT AND TARGET Xmin::QtX11)
-  target_link_libraries(xmin_gl_client PRIVATE Xmin::QtX11)
+if(TARGET Xmin::ClientX11)
+  target_link_libraries(xmin_gl_client PRIVATE Xmin::ClientX11)
 endif()
 if(CMAKE_C_BYTE_ORDER STREQUAL "LITTLE_ENDIAN")
   target_compile_definitions(xmin_gl_client PRIVATE UTIL_ARCH_LITTLE_ENDIAN=1)
@@ -134,6 +136,12 @@ if(XMIN_ENABLE_INSTALL)
     "${xmin_client_gl_include}/GL/glxext.h"
     DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}/GL"
     COMPONENT Development
+  )
+  install(DIRECTORY
+    "${PROJECT_SOURCE_DIR}/src/client/x11/include/X11"
+    DESTINATION "${CMAKE_INSTALL_INCLUDEDIR}"
+    COMPONENT Development
+    FILES_MATCHING PATTERN "*.h"
   )
   install(FILES
     "${xmin_client_gl_include}/Xmin/GLXxcb.h"

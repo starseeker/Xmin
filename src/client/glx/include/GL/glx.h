@@ -2,60 +2,11 @@
 #define XMIN_CLIENT_GLX_H
 
 #include <GL/gl.h>
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
 
 #ifdef __cplusplus
 extern "C" {
-#endif
-
-#ifndef _X11_XLIB_H_
-typedef int Bool;
-typedef int Status;
-typedef unsigned long XID;
-typedef XID VisualID;
-typedef XID Window;
-typedef XID Pixmap;
-typedef XID Font;
-typedef struct _XDisplay Display;
-typedef struct _XExtData XExtData;
-typedef struct {
-    XExtData *ext_data;
-    VisualID visualid;
-#if defined(__cplusplus) || defined(c_plusplus)
-    int c_class;
-#else
-    int class;
-#endif
-    unsigned long red_mask;
-    unsigned long green_mask;
-    unsigned long blue_mask;
-    int bits_per_rgb;
-    int map_entries;
-} Visual;
-#ifndef False
-#define False 0
-#endif
-#ifndef True
-#define True 1
-#endif
-#endif
-
-#ifndef _X11_XUTIL_H_
-typedef struct {
-    Visual *visual;
-    VisualID visualid;
-    int screen;
-    int depth;
-#if defined(__cplusplus) || defined(c_plusplus)
-    int c_class;
-#else
-    int class;
-#endif
-    unsigned long red_mask;
-    unsigned long green_mask;
-    unsigned long blue_mask;
-    int colormap_size;
-    int bits_per_rgb;
-} XVisualInfo;
 #endif
 
 #define GLX_VERSION_1_1 1
@@ -127,6 +78,8 @@ typedef struct {
 #define GLX_CONTEXT_MAJOR_VERSION_ARB 0x2091
 #define GLX_CONTEXT_MINOR_VERSION_ARB 0x2092
 #define GLX_CONTEXT_FLAGS_ARB 0x2094
+#define GLX_CONTEXT_DEBUG_BIT_ARB 0x00000001
+#define GLX_CONTEXT_FORWARD_COMPATIBLE_BIT_ARB 0x00000002
 #define GLX_CONTEXT_PROFILE_MASK_ARB 0x9126
 #define GLX_CONTEXT_CORE_PROFILE_BIT_ARB 0x00000001
 #define GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB 0x00000002
