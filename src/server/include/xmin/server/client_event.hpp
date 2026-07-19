@@ -56,10 +56,92 @@ struct MappingNotifyEvent {
     std::uint16_t sequence = 0;
 };
 
+struct CreateNotifyEvent {
+    std::uint32_t parent = 0;
+    std::uint32_t window = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t border_width = 0;
+    bool override_redirect = false;
+    std::uint16_t sequence = 0;
+};
+
 struct MapNotifyEvent {
     std::uint32_t event = 0;
     std::uint32_t window = 0;
     bool override_redirect = false;
+    std::uint16_t sequence = 0;
+};
+
+struct MapRequestEvent {
+    std::uint32_t parent = 0;
+    std::uint32_t window = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct VisibilityNotifyEvent {
+    std::uint32_t window = 0;
+    std::uint8_t state = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct ExposeEvent {
+    std::uint32_t window = 0;
+    std::uint16_t x = 0;
+    std::uint16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t count = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct ConfigureNotifyEvent {
+    std::uint32_t event = 0;
+    std::uint32_t window = 0;
+    std::uint32_t above_sibling = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t border_width = 0;
+    bool override_redirect = false;
+    std::uint16_t sequence = 0;
+};
+
+struct ConfigureRequestEvent {
+    std::uint8_t stack_mode = 0;
+    std::uint32_t parent = 0;
+    std::uint32_t window = 0;
+    std::uint32_t sibling = 0;
+    std::int16_t x = 0;
+    std::int16_t y = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t border_width = 0;
+    std::uint16_t value_mask = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct ResizeRequestEvent {
+    std::uint32_t window = 0;
+    std::uint16_t width = 0;
+    std::uint16_t height = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct CirculateNotifyEvent {
+    std::uint32_t event = 0;
+    std::uint32_t window = 0;
+    std::uint8_t place = 0;
+    std::uint16_t sequence = 0;
+};
+
+struct CirculateRequestEvent {
+    std::uint32_t parent = 0;
+    std::uint32_t window = 0;
+    std::uint8_t place = 0;
     std::uint16_t sequence = 0;
 };
 
@@ -371,7 +453,10 @@ struct FocusEvent {
 using ClientEvent = std::variant<
     SelectionClearEvent, SelectionRequestEvent, SelectionNotifyEvent,
     ClientMessageEvent, PropertyNotifyEvent, MappingNotifyEvent,
-    MapNotifyEvent, UnmapNotifyEvent, ShapeNotifyEvent,
+    CreateNotifyEvent, MapNotifyEvent, MapRequestEvent, UnmapNotifyEvent,
+    VisibilityNotifyEvent, ExposeEvent,
+    ConfigureNotifyEvent, ConfigureRequestEvent, ResizeRequestEvent,
+    CirculateNotifyEvent, CirculateRequestEvent, ShapeNotifyEvent,
     SyncCounterNotifyEvent, SyncAlarmNotifyEvent,
     XFixesSelectionNotifyEvent, XFixesCursorNotifyEvent,
     RandrScreenChangeNotifyEvent, RandrNotifyEvent, DamageNotifyEvent,

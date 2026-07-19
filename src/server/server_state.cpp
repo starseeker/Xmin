@@ -31,8 +31,126 @@ struct ServerState::ManagedSurface {
 namespace {
 
 constexpr std::uint32_t structure_notify_mask = 1U << 17;
+constexpr std::uint32_t visibility_change_mask = 1U << 16;
+constexpr std::uint32_t exposure_mask = 1U << 15;
+constexpr std::uint32_t resize_redirect_mask = 1U << 18;
 constexpr std::uint32_t substructure_notify_mask = 1U << 19;
+constexpr std::uint32_t substructure_redirect_mask = 1U << 20;
 constexpr std::uint32_t property_change_mask = 1U << 22;
+constexpr std::uint32_t default_root_background = 0x0020252bU;
+
+struct ResizePreservation {
+    std::int32_t destination_x = 0;
+    std::int32_t destination_y = 0;
+    std::array<Rectangle, 4> exposed{};
+    std::size_t exposed_count = 0;
+};
+
+ResizePreservation
+resize_preservation(
+    std::uint8_t gravity, std::int16_t old_x, std::int16_t old_y,
+    std::uint16_t old_width, std::uint16_t old_height,
+    std::int16_t new_x, std::int16_t new_y,
+    std::uint16_t new_width, std::uint16_t new_height) noexcept
+{
+    ResizePreservation result;
+    const auto add_exposed = [&result](
+        std::int32_t x, std::int32_t y,
+        std::int32_t width, std::int32_t height) {
+        if (width > 0 && height > 0) {
+            result.exposed[result.exposed_count++] = {
+                x, y, static_cast<std::uint32_t>(width),
+                static_cast<std::uint32_t>(height)};
+        }
+    };
+    if (gravity == 0 || gravity > 10) {
+        add_exposed(0, 0, new_width, new_height);
+        return result;
+    }
+
+    const std::int32_t width_delta =
+        static_cast<std::int32_t>(new_width) - old_width;
+    const std::int32_t height_delta =
+        static_cast<std::int32_t>(new_height) - old_height;
+    switch (gravity) {
+    case 2: // NorthGravity
+        result.destination_x = width_delta / 2;
+        break;
+    case 3: // NorthEastGravity
+        result.destination_x = width_delta;
+        break;
+    case 4: // WestGravity
+        result.destination_y = height_delta / 2;
+        break;
+    case 5: // CenterGravity
+        result.destination_x = width_delta / 2;
+        result.destination_y = height_delta / 2;
+        break;
+    case 6: // EastGravity
+        result.destination_x = width_delta;
+        result.destination_y = height_delta / 2;
+        break;
+    case 7: // SouthWestGravity
+        result.destination_y = height_delta;
+        break;
+    case 8: // SouthGravity
+        result.destination_x = width_delta / 2;
+        result.destination_y = height_delta;
+        break;
+    case 9: // SouthEastGravity
+        result.destination_x = width_delta;
+        result.destination_y = height_delta;
+        break;
+    case 10: // StaticGravity
+        result.destination_x =
+            static_cast<std::int32_t>(old_x) - new_x;
+        result.destination_y =
+            static_cast<std::int32_t>(old_y) - new_y;
+        break;
+    default: // NorthWestGravity
+        break;
+    }
+
+    const std::int32_t preserved_left =
+        std::max<std::int32_t>(0, result.destination_x);
+    const std::int32_t preserved_top =
+        std::max<std::int32_t>(0, result.destination_y);
+    const std::int32_t preserved_right = std::min<std::int32_t>(
+        new_width, result.destination_x + old_width);
+    const std::int32_t preserved_bottom = std::min<std::int32_t>(
+        new_height, result.destination_y + old_height);
+    if (preserved_left >= preserved_right ||
+        preserved_top >= preserved_bottom) {
+        add_exposed(0, 0, new_width, new_height);
+        return result;
+    }
+
+    add_exposed(0, 0, new_width, preserved_top);
+    add_exposed(
+        0, preserved_bottom, new_width,
+        static_cast<std::int32_t>(new_height) - preserved_bottom);
+    add_exposed(
+        0, preserved_top, preserved_left,
+        preserved_bottom - preserved_top);
+    add_exposed(
+        preserved_right, preserved_top,
+        static_cast<std::int32_t>(new_width) - preserved_right,
+        preserved_bottom - preserved_top);
+    return result;
+}
+
+std::uint32_t
+redirect_recipient(const WindowRecord &window, std::uint32_t mask,
+                   std::uint32_t requester) noexcept
+{
+    const auto selected = std::find_if(
+        window.event_masks.begin(), window.event_masks.end(),
+        [mask, requester](const auto &selection) {
+            return selection.first != requester &&
+                (selection.second & mask) != 0;
+        });
+    return selected == window.event_masks.end() ? 0 : selected->first;
+}
 
 std::uint32_t
 pack_cursor_color(const RenderColor &color) noexcept
@@ -320,11 +438,16 @@ ServerState::ServerState(std::uint16_t width, std::uint16_t height,
     root.id = root_window_id;
     root.width = width;
     root.height = height;
+    root.background_pixel = default_root_background;
     root.mapped = true;
     auto root_surface = Surface::create(width, height, 24);
     auto composite_surface = Surface::create(width, height, 24);
-    if (root_surface)
+    if (root_surface) {
+        root_surface->fill(
+            Rectangle{0, 0, width, height}, default_root_background,
+            3, 0xffffffffU);
         root.surface = adopt_surface(std::move(*root_surface));
+    }
     if (composite_surface)
         composited_root_ = adopt_surface(std::move(*composite_surface));
     windows_.emplace(root.id, std::move(root));
@@ -507,22 +630,49 @@ ServerState::resource_limit_reached(std::uint32_t owner) const
 bool
 ServerState::add_window(WindowRecord added, std::uint32_t owner)
 {
-    if (window(added.parent) == nullptr || resource_exists(added.id))
+    auto *parent = window(added.parent);
+    if (parent == nullptr || resource_exists(added.id))
         return false;
     if (added.surface &&
         surface_budget_->bytes > maximum_server_surface_bytes)
         return false;
     const std::uint32_t parent_id = added.parent;
     const std::uint32_t id = added.id;
+    std::vector<PlannedEvent> events;
+    try {
+        const CreateNotifyEvent event{
+            parent_id, id, added.x, added.y, added.width, added.height,
+            added.border_width, added.override_redirect};
+        for (const auto &selection : parent->event_masks) {
+            if ((selection.second & substructure_notify_mask) != 0)
+                events.emplace_back(selection.first, event);
+        }
+        parent->children.reserve(parent->children.size() + 1U);
+    }
+    catch (const std::bad_alloc &) {
+        return false;
+    }
     added.owner = owner;
     if (!resources_.insert(id, ResourceKind::window, owner))
         return false;
-    auto inserted = windows_.emplace(id, std::move(added));
-    if (!inserted.second) {
+    try {
+        if (!windows_.emplace(id, std::move(added)).second) {
+            static_cast<void>(resources_.erase(id));
+            return false;
+        }
+    }
+    catch (const std::bad_alloc &) {
         static_cast<void>(resources_.erase(id));
         return false;
     }
-    window(parent_id)->children.push_back(id);
+    parent = window(parent_id);
+    parent->children.push_back(id);
+    if (!queue_events_atomically(events)) {
+        parent->children.pop_back();
+        windows_.erase(id);
+        static_cast<void>(resources_.erase(id));
+        return false;
+    }
     invalidate_scene();
     return true;
 }
@@ -585,13 +735,108 @@ ServerState::resize_window_surface(WindowRecord &candidate,
     return true;
 }
 
+RedirectDelivery
+ServerState::redirect_map_request(std::uint32_t requester,
+                                  const WindowRecord &candidate)
+{
+    if (candidate.override_redirect || candidate.parent == 0)
+        return RedirectDelivery::not_redirected;
+    const auto *parent = window(candidate.parent);
+    if (parent == nullptr)
+        return RedirectDelivery::not_redirected;
+    const std::uint32_t recipient = redirect_recipient(
+        *parent, substructure_redirect_mask, requester);
+    if (recipient == 0)
+        return RedirectDelivery::not_redirected;
+    return queue_event(recipient, MapRequestEvent{
+               parent->id, candidate.id})
+        ? RedirectDelivery::redirected
+        : RedirectDelivery::queue_full;
+}
+
+RedirectDelivery
+ServerState::redirect_configure_request(
+    std::uint32_t requester, const WindowRecord &candidate,
+    std::int16_t x, std::int16_t y,
+    std::uint16_t width, std::uint16_t height,
+    std::uint16_t border_width, std::uint16_t value_mask,
+    std::optional<std::uint32_t> sibling,
+    std::optional<std::uint8_t> stack_mode)
+{
+    if (candidate.override_redirect || candidate.parent == 0)
+        return RedirectDelivery::not_redirected;
+    const auto *parent = window(candidate.parent);
+    if (parent == nullptr)
+        return RedirectDelivery::not_redirected;
+    const std::uint32_t recipient = redirect_recipient(
+        *parent, substructure_redirect_mask, requester);
+    if (recipient == 0)
+        return RedirectDelivery::not_redirected;
+
+    ConfigureRequestEvent event;
+    event.stack_mode = stack_mode.value_or(0);
+    event.parent = parent->id;
+    event.window = candidate.id;
+    event.sibling = sibling.value_or(0);
+    event.x = x;
+    event.y = y;
+    event.width = width;
+    event.height = height;
+    event.border_width = border_width;
+    event.value_mask = value_mask;
+    return queue_event(recipient, ClientEvent{event})
+        ? RedirectDelivery::redirected
+        : RedirectDelivery::queue_full;
+}
+
+RedirectDelivery
+ServerState::redirect_circulate_request(
+    std::uint32_t requester, const WindowRecord &parent,
+    bool raise_lowest)
+{
+    const std::uint32_t recipient = redirect_recipient(
+        parent, substructure_redirect_mask, requester);
+    if (recipient == 0)
+        return RedirectDelivery::not_redirected;
+
+    std::uint32_t candidate_id = 0;
+    if (raise_lowest) {
+        const auto found = std::find_if(
+            parent.children.begin(), parent.children.end(),
+            [this](std::uint32_t id) {
+                const auto *child = window(id);
+                return child != nullptr && child->mapped;
+            });
+        if (found != parent.children.end())
+            candidate_id = *found;
+    }
+    else {
+        const auto found = std::find_if(
+            parent.children.rbegin(), parent.children.rend(),
+            [this](std::uint32_t id) {
+                const auto *child = window(id);
+                return child != nullptr && child->mapped;
+            });
+        if (found != parent.children.rend())
+            candidate_id = *found;
+    }
+    if (candidate_id == 0)
+        return RedirectDelivery::not_redirected;
+    return queue_event(recipient, CirculateRequestEvent{
+               parent.id, candidate_id,
+               static_cast<std::uint8_t>(raise_lowest ? 0 : 1)})
+        ? RedirectDelivery::redirected
+        : RedirectDelivery::queue_full;
+}
+
 EventDelivery
 ServerState::configure_window(
     WindowRecord &candidate, std::int16_t x, std::int16_t y,
     std::uint16_t width, std::uint16_t height,
     std::uint16_t border_width,
     std::optional<std::uint32_t> sibling,
-    std::optional<std::uint8_t> stack_mode)
+    std::optional<std::uint8_t> stack_mode,
+    std::uint32_t requester, std::uint16_t value_mask)
 {
     auto *parent = window(candidate.parent);
     if (candidate.parent == 0 || parent == nullptr)
@@ -599,6 +844,25 @@ ServerState::configure_window(
 
     std::optional<std::vector<std::uint32_t>> children;
     std::vector<PlannedEvent> events;
+    const std::uint16_t requested_width = width;
+    const std::uint16_t requested_height = height;
+    const std::uint32_t resize_recipient = requester == 0
+        ? 0
+        : redirect_recipient(candidate, resize_redirect_mask, requester);
+    if (resize_recipient != 0 && (value_mask & 0x000cU) != 0 &&
+        (width != candidate.width || height != candidate.height)) {
+        try {
+            events.emplace_back(
+                resize_recipient,
+                ResizeRequestEvent{
+                    candidate.id, requested_width, requested_height});
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        width = candidate.width;
+        height = candidate.height;
+    }
     try {
         if (stack_mode) {
             children = parent->children;
@@ -628,15 +892,57 @@ ServerState::configure_window(
         return EventDelivery::queue_full;
     }
 
+    const auto &prospective_children = children ? *children : parent->children;
+    const auto candidate_position = std::find(
+        prospective_children.begin(), prospective_children.end(),
+        candidate.id);
+    const std::uint32_t above_sibling =
+        candidate_position != prospective_children.end() &&
+            std::next(candidate_position) != prospective_children.end()
+        ? *std::next(candidate_position)
+        : 0;
+    try {
+        const ConfigureNotifyEvent structure_event{
+            candidate.id, candidate.id, above_sibling,
+            x, y, width, height, border_width,
+            candidate.override_redirect};
+        for (const auto &selection : candidate.event_masks) {
+            if ((selection.second & structure_notify_mask) != 0)
+                events.emplace_back(selection.first, structure_event);
+        }
+        const ConfigureNotifyEvent substructure_event{
+            parent->id, candidate.id, above_sibling,
+            x, y, width, height, border_width,
+            candidate.override_redirect};
+        for (const auto &selection : parent->event_masks) {
+            if ((selection.second & substructure_notify_mask) != 0)
+                events.emplace_back(selection.first, substructure_event);
+        }
+    }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+
     std::shared_ptr<Surface> replacement;
+    ResizePreservation preservation;
     if (candidate.surface &&
         (candidate.width != width || candidate.height != height)) {
         auto surface = Surface::create(width, height,
                                        candidate.surface->depth());
         if (!surface)
             return EventDelivery::queue_full;
-        surface->copy_from(*candidate.surface, 0, 0, 0, 0,
-                           width, height, 3, 0xffffffffU);
+        surface->fill(
+            {0, 0, width, height}, candidate.background_pixel,
+            3, 0xffffffffU);
+        preservation = resize_preservation(
+            candidate.bit_gravity, candidate.x, candidate.y,
+            candidate.width, candidate.height, x, y, width, height);
+        if (candidate.bit_gravity != 0) {
+            surface->copy_from(
+                *candidate.surface, 0, 0,
+                preservation.destination_x, preservation.destination_y,
+                candidate.width, candidate.height, 3, 0xffffffffU);
+        }
         const bool retained = std::any_of(
             pixmaps_.begin(), pixmaps_.end(),
             [&candidate](const auto &entry) {
@@ -648,6 +954,33 @@ ServerState::configure_window(
                 : candidate.surface->storage_bytes());
         if (!replacement)
             return EventDelivery::queue_full;
+    }
+
+    if (replacement && candidate.mapped && map_state(candidate.id) == 2 &&
+        preservation.exposed_count != 0) {
+        try {
+            for (const auto &selection : candidate.event_masks) {
+                if ((selection.second & exposure_mask) == 0)
+                    continue;
+                for (std::size_t index = 0;
+                     index < preservation.exposed_count; ++index) {
+                    const auto &area = preservation.exposed[index];
+                    events.emplace_back(
+                        selection.first,
+                        ExposeEvent{
+                            candidate.id,
+                            static_cast<std::uint16_t>(area.x),
+                            static_cast<std::uint16_t>(area.y),
+                            static_cast<std::uint16_t>(area.width),
+                            static_cast<std::uint16_t>(area.height),
+                            static_cast<std::uint16_t>(
+                                preservation.exposed_count - index - 1)});
+                }
+            }
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
     }
 
     const bool has_recipient = !events.empty();
@@ -669,15 +1002,16 @@ ServerState::configure_window(
         : EventDelivery::no_recipient;
 }
 
-bool
+EventDelivery
 ServerState::circulate_window(std::uint32_t parent_id, bool raise_lowest)
 {
     auto *parent = window(parent_id);
     if (parent == nullptr)
-        return false;
+        return EventDelivery::no_recipient;
     auto &children = parent->children;
     if (children.size() < 2)
-        return true;
+        return EventDelivery::no_recipient;
+    std::uint32_t circulated = 0;
     if (raise_lowest) {
         const auto found = std::find_if(
             children.begin(), children.end(), [this](std::uint32_t id) {
@@ -685,7 +1019,7 @@ ServerState::circulate_window(std::uint32_t parent_id, bool raise_lowest)
                 return child != nullptr && child->mapped;
             });
         if (found != children.end())
-            std::rotate(found, found + 1, children.end());
+            circulated = *found;
     }
     else {
         const auto found = std::find_if(
@@ -693,13 +1027,49 @@ ServerState::circulate_window(std::uint32_t parent_id, bool raise_lowest)
                 const auto *child = window(id);
                 return child != nullptr && child->mapped;
             });
-        if (found != children.rend()) {
-            const auto forward = std::prev(found.base());
-            std::rotate(children.begin(), forward, std::next(forward));
+        if (found != children.rend())
+            circulated = *found;
+    }
+    if (circulated == 0)
+        return EventDelivery::no_recipient;
+
+    std::vector<PlannedEvent> events;
+    const std::uint8_t place = raise_lowest ? 0 : 1;
+    try {
+        const auto *candidate = window(circulated);
+        if (candidate != nullptr) {
+            const CirculateNotifyEvent structure_event{
+                candidate->id, candidate->id, place};
+            for (const auto &selection : candidate->event_masks) {
+                if ((selection.second & structure_notify_mask) != 0)
+                    events.emplace_back(selection.first, structure_event);
+            }
+        }
+        const CirculateNotifyEvent substructure_event{
+            parent->id, circulated, place};
+        for (const auto &selection : parent->event_masks) {
+            if ((selection.second & substructure_notify_mask) != 0)
+                events.emplace_back(selection.first, substructure_event);
         }
     }
+    catch (const std::bad_alloc &) {
+        return EventDelivery::queue_full;
+    }
+    if (!queue_events_atomically(events))
+        return EventDelivery::queue_full;
+
+    if (raise_lowest) {
+        const auto found = std::find(children.begin(), children.end(), circulated);
+        std::rotate(found, std::next(found), children.end());
+    }
+    else {
+        const auto found = std::find(children.begin(), children.end(), circulated);
+        std::rotate(children.begin(), found, std::next(found));
+    }
     invalidate_scene();
-    return true;
+    return events.empty()
+        ? EventDelivery::no_recipient
+        : EventDelivery::delivered;
 }
 
 void
@@ -1865,6 +2235,15 @@ ServerState::readable_surface(std::uint32_t id)
     return composited_root_.get();
 }
 
+Surface *
+ServerState::readable_surface(std::uint32_t id, const Rectangle &area)
+{
+    if (id != root_window_id)
+        return drawable_surface(id);
+    composite_scene(area);
+    return composited_root_.get();
+}
+
 EventDelivery
 ServerState::set_window_mapped(WindowRecord &candidate, bool mapped)
 {
@@ -1971,6 +2350,24 @@ ServerState::update_window_mappings(
                 if ((selection.second & structure_notify_mask) != 0)
                     events.emplace_back(selection.first, structure_event);
             }
+            if (mapped) {
+                for (const auto &selection : candidate->event_masks) {
+                    if ((selection.second & visibility_change_mask) != 0) {
+                        events.emplace_back(
+                            selection.first,
+                            VisibilityNotifyEvent{candidate->id, 0});
+                    }
+                    if ((selection.second & exposure_mask) != 0 &&
+                        candidate->window_class == WindowClass::input_output &&
+                        map_state(candidate->id) == 2) {
+                        events.emplace_back(
+                            selection.first,
+                            ExposeEvent{
+                                candidate->id, 0, 0, candidate->width,
+                                candidate->height, 0});
+                    }
+                }
+            }
 
             const auto *parent = window(candidate->parent);
             if (parent == nullptr)
@@ -2011,8 +2408,10 @@ ServerState::update_window_mappings(
             candidate->mapped = mapped;
     }
     input_.focus = new_focus;
-    if (pointer_grab_lost)
+    if (pointer_grab_lost) {
         input_.pointer_grab.reset();
+        input_.frozen_pointer_event.reset();
+    }
     if (keyboard_grab_lost)
         input_.keyboard_grab.reset();
     displayed_cursor_ = prospective_cursor;
@@ -2029,17 +2428,36 @@ ServerState::update_window_mappings(
 void
 ServerState::composite_scene()
 {
+    composite_scene(Rectangle{0, 0, width_, height_});
+}
+
+void
+ServerState::composite_scene(const Rectangle &area)
+{
     if (!scene_dirty_ || !composited_root_)
         return;
     const auto *root = window(root_window_id);
     if (root == nullptr || !root->surface)
         return;
-    composited_root_->copy_from(*root->surface, 0, 0, 0, 0, width_, height_,
-                                3, 0xffffffffU);
+    const std::int64_t left = std::max<std::int64_t>(0, area.x);
+    const std::int64_t top = std::max<std::int64_t>(0, area.y);
+    const std::int64_t right = std::min<std::int64_t>(
+        width_, static_cast<std::int64_t>(area.x) + area.width);
+    const std::int64_t bottom = std::min<std::int64_t>(
+        height_, static_cast<std::int64_t>(area.y) + area.height);
+    if (left >= right || top >= bottom)
+        return;
+    composited_root_->copy_from(
+        *root->surface, static_cast<std::int32_t>(left),
+        static_cast<std::int32_t>(top), static_cast<std::int32_t>(left),
+        static_cast<std::int32_t>(top),
+        static_cast<std::uint32_t>(right - left),
+        static_cast<std::uint32_t>(bottom - top), 3, 0xffffffffU);
     for (const auto child : root->children) {
-        composite_window(child, 0, 0, 0, 0, width_, height_);
+        composite_window(child, 0, 0, left, top, right, bottom);
     }
-    scene_dirty_ = false;
+    if (left == 0 && top == 0 && right == width_ && bottom == height_)
+        scene_dirty_ = false;
 }
 
 void
@@ -2290,10 +2708,97 @@ ServerState::deactivate_pointer_grab()
         return EventDelivery::queue_full;
     }
     input_.pointer_grab.reset();
+    input_.frozen_pointer_event.reset();
     displayed_cursor_ = prospective_cursor;
     return cursor == EventDelivery::delivered
         ? cursor
         : crossing;
+}
+
+EventDelivery
+ServerState::allow_events(
+    std::uint32_t owner, std::uint8_t mode, std::uint32_t time)
+{
+    const std::uint32_t effective_time = time == 0 ? current_time_ : time;
+    const auto later_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) > 0;
+    };
+    const auto earlier_than = [](std::uint32_t left, std::uint32_t right) {
+        return static_cast<std::int32_t>(left - right) < 0;
+    };
+    if (!input_.pointer_grab || input_.pointer_grab->owner != owner ||
+        later_than(effective_time, current_time_) ||
+        earlier_than(effective_time, input_.pointer_grab_time)) {
+        return EventDelivery::no_recipient;
+    }
+
+    // AsyncPointer releases a synchronous freeze without replaying the event
+    // that activated a passive grab. ReplayPointer releases the grab and
+    // routes that event again while ignoring the activating passive grab.
+    if (mode == 0) {
+        auto pending = input_.frozen_pointer_event
+            ? std::move(input_.frozen_pointer_event->pending)
+            : std::deque<FrozenPointerEvent::PendingInput>{};
+        input_.pointer_grab->pointer_mode = 1;
+        input_.frozen_pointer_event.reset();
+        EventDelivery delivered = EventDelivery::no_recipient;
+        for (const auto &event : pending) {
+            const EventDelivery result = inject_input(
+                event.type, event.detail, event.root_x, event.root_y);
+            if (result == EventDelivery::queue_full)
+                return result;
+            if (result == EventDelivery::delivered)
+                delivered = result;
+        }
+        return delivered;
+    }
+    if (mode != 2 || !input_.pointer_grab->passive ||
+        !input_.frozen_pointer_event) {
+        return EventDelivery::no_recipient;
+    }
+
+    FrozenPointerEvent replay = std::move(*input_.frozen_pointer_event);
+    const auto prospective_cursor = current_cursor_for(
+        replay.pointer_window, nullptr);
+    std::vector<PlannedEvent> events;
+    const EventDelivery crossing = append_crossing_events(
+        input_.pointer_grab->window, replay.pointer_window,
+        replay.event.root_x, replay.event.root_y,
+        input_.modifier_button_mask, 2, nullptr, input_.focus, events);
+    const EventDelivery routed = crossing == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : route_input_event(
+              replay.event, replay.mask, replay.source,
+              replay.propagation_stop, replay.pointer_window,
+              nullptr, events);
+    const EventDelivery cursor =
+        crossing == EventDelivery::queue_full ||
+            routed == EventDelivery::queue_full
+        ? EventDelivery::queue_full
+        : append_cursor_change(prospective_cursor, events);
+    if (crossing == EventDelivery::queue_full ||
+        routed == EventDelivery::queue_full ||
+        cursor == EventDelivery::queue_full ||
+        !queue_events_atomically(events)) {
+        return EventDelivery::queue_full;
+    }
+    input_.pointer_grab.reset();
+    input_.frozen_pointer_event.reset();
+    displayed_cursor_ = prospective_cursor;
+    EventDelivery delivered = crossing == EventDelivery::delivered ||
+            routed == EventDelivery::delivered ||
+            cursor == EventDelivery::delivered
+        ? EventDelivery::delivered
+        : EventDelivery::no_recipient;
+    for (const auto &event : replay.pending) {
+        const EventDelivery result = inject_input(
+            event.type, event.detail, event.root_x, event.root_y);
+        if (result == EventDelivery::queue_full)
+            return result;
+        if (result == EventDelivery::delivered)
+            delivered = result;
+    }
+    return delivered;
 }
 
 EventDelivery
@@ -5454,6 +5959,21 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
     const bool key_event = type == 2 || type == 3;
     const bool button_event = type == 4 || type == 5;
     const bool motion_event = type == 6;
+    if ((button_event || motion_event) && input_.pointer_grab &&
+        input_.pointer_grab->pointer_mode == 0 &&
+        input_.frozen_pointer_event) {
+        auto &pending = input_.frozen_pointer_event->pending;
+        if (pending.size() >= maximum_pending_events)
+            return EventDelivery::queue_full;
+        try {
+            pending.push_back(FrozenPointerEvent::PendingInput{
+                type, detail, root_x, root_y});
+        }
+        catch (const std::bad_alloc &) {
+            return EventDelivery::queue_full;
+        }
+        return EventDelivery::no_recipient;
+    }
     auto prospective_keys = input_.pressed_keys;
     auto prospective_buttons = input_.pressed_buttons;
     XkbKeyboardState prospective_xkb = input_.xkb;
@@ -5723,6 +6243,10 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
         else {
             input_.pointer_grab = *activated;
             input_.pointer_grab_time = activated->activated_at;
+            if (activated->passive && activated->pointer_mode == 0) {
+                input_.frozen_pointer_event = FrozenPointerEvent{
+                    event, mask, source, propagation_stop, pointer_window, {}};
+            }
         }
     }
     if (automatic) {
@@ -5736,6 +6260,7 @@ ServerState::inject_input(std::uint8_t type, std::uint8_t detail,
          input_.pointer_grab->automatic) &&
         input_.pressed_buttons.none()) {
         input_.pointer_grab.reset();
+        input_.frozen_pointer_event.reset();
     }
     if (type == 2 && input_.global_auto_repeat &&
         (input_.auto_repeats[detail >> 3] &
@@ -5908,6 +6433,7 @@ ServerState::erase_window_tree(std::uint32_t id) noexcept
         (input_.pointer_grab->window == id ||
          input_.pointer_grab->confine_to == id)) {
         input_.pointer_grab.reset();
+        input_.frozen_pointer_event.reset();
     }
     if (input_.keyboard_grab && input_.keyboard_grab->window == id)
         input_.keyboard_grab.reset();
@@ -6209,8 +6735,10 @@ ServerState::reparent_window(std::uint32_t id, std::uint32_t new_parent,
     candidate->x = x;
     candidate->y = y;
     input_.focus = new_focus;
-    if (pointer_grab_lost)
+    if (pointer_grab_lost) {
         input_.pointer_grab.reset();
+        input_.frozen_pointer_event.reset();
+    }
     if (keyboard_grab_lost)
         input_.keyboard_grab.reset();
     displayed_cursor_ = prospective_cursor;
@@ -6346,6 +6874,7 @@ ServerState::apply_save_set(std::uint32_t owner)
                  (input_.pointer_grab->confine_to != 0 &&
                   map_state(input_.pointer_grab->confine_to) != 2))) {
                 input_.pointer_grab.reset();
+                input_.frozen_pointer_event.reset();
             }
             if (input_.keyboard_grab &&
                 map_state(input_.keyboard_grab->window) != 2) {
@@ -6582,6 +7111,7 @@ ServerState::disconnect_client(std::uint32_t owner)
     if (input_.pointer_grab && input_.pointer_grab->owner == owner &&
         deactivate_pointer_grab() == EventDelivery::queue_full) {
         input_.pointer_grab.reset();
+        input_.frozen_pointer_event.reset();
     }
     if (input_.keyboard_grab && input_.keyboard_grab->owner == owner &&
         deactivate_keyboard_grab() == EventDelivery::queue_full) {

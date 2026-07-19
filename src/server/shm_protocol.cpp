@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <optional>
 #include <string>
@@ -40,7 +41,7 @@ zpixmap_size(std::uint16_t width, std::uint16_t height,
 {
     const std::size_t bits_per_pixel = depth == 1
         ? 1
-        : (depth == 8 ? 8 : 32);
+        : (depth <= 8 ? 8 : 32);
     const auto row_bits = checked_multiply(
         static_cast<std::size_t>(width), bits_per_pixel);
     const auto rounded_bits = row_bits
@@ -209,7 +210,7 @@ Connection::handle_shm(const RequestContext &context)
             !format || !padding_ok || !segment_id || !offset) {
             return malformed_shm("truncated MIT-SHM GetImage request");
         }
-        const auto *surface = server_.readable_surface(*drawable);
+        const auto *surface = server_.drawable_surface(*drawable);
         if (surface == nullptr)
             return error(bad_drawable, *drawable);
         if (*format != 2)
@@ -221,6 +222,11 @@ Connection::handle_shm(const RequestContext &context)
             image_y + *height > surface->height()) {
             return error(bad_match);
         }
+        surface = server_.readable_surface(
+            *drawable,
+            Rectangle{image_x, image_y, *width, *height});
+        if (surface == nullptr)
+            return error(bad_drawable, *drawable);
         auto *memory = server_.shared_memory(*segment_id);
         if (memory == nullptr)
             return error(bad_segment, *segment_id);
@@ -234,33 +240,55 @@ Connection::handle_shm(const RequestContext &context)
         if (!end || *end > memory->size())
             return error(bad_access, *offset);
         destination += *offset;
-        std::fill(destination, destination + *size, std::byte{0});
         const auto stride = *size / *height;
         const bool little = host_byte_order() == ByteOrder::little;
-        for (std::uint32_t row = 0; row < *height; ++row) {
-            for (std::uint32_t column = 0; column < *width; ++column) {
-                const std::uint32_t pixel = surface->pixel(
-                    static_cast<std::uint16_t>(image_x + column),
-                    static_cast<std::uint16_t>(image_y + row)) & *plane_mask;
-                const std::size_t row_offset =
+        if (little && surface->depth() >= 24) {
+            const std::uint32_t depth_mask = surface->depth() == 32
+                ? 0xffffffffU
+                : 0x00ffffffU;
+            const std::uint32_t mask = *plane_mask & depth_mask;
+            for (std::uint32_t row = 0; row < *height; ++row) {
+                const auto *source = surface->data() +
+                    static_cast<std::size_t>(image_y + row) *
+                        surface->width() + image_x;
+                auto *row_destination = destination +
                     static_cast<std::size_t>(row) * stride;
-                if (surface->depth() == 1) {
-                    const unsigned bit = little ? column & 7U
-                                                : 7U - (column & 7U);
-                    destination[row_offset + column / 8] |=
-                        static_cast<std::byte>((pixel & 1U) << bit);
+                for (std::uint32_t column = 0; column < *width; ++column) {
+                    const std::uint32_t pixel = source[column] & mask;
+                    std::memcpy(row_destination + column * sizeof(pixel),
+                                &pixel, sizeof(pixel));
                 }
-                else if (surface->depth() == 8) {
-                    destination[row_offset + column] =
-                        static_cast<std::byte>(pixel);
-                }
-                else {
-                    const std::size_t pixel_offset = row_offset + column * 4;
-                    for (unsigned index = 0; index < 4; ++index) {
-                        const unsigned shift = little ? index * 8
-                                                      : (3 - index) * 8;
-                        destination[pixel_offset + index] =
-                            static_cast<std::byte>(pixel >> shift);
+            }
+        }
+        else {
+            std::fill(destination, destination + *size, std::byte{0});
+            for (std::uint32_t row = 0; row < *height; ++row) {
+                for (std::uint32_t column = 0; column < *width; ++column) {
+                    const std::uint32_t pixel = surface->pixel(
+                        static_cast<std::uint16_t>(image_x + column),
+                        static_cast<std::uint16_t>(image_y + row)) &
+                        *plane_mask;
+                    const std::size_t row_offset =
+                        static_cast<std::size_t>(row) * stride;
+                    if (surface->depth() == 1) {
+                        const unsigned bit = little ? column & 7U
+                                                    : 7U - (column & 7U);
+                        destination[row_offset + column / 8] |=
+                            static_cast<std::byte>((pixel & 1U) << bit);
+                    }
+                    else if (surface->depth() <= 8) {
+                        destination[row_offset + column] =
+                            static_cast<std::byte>(pixel);
+                    }
+                    else {
+                        const std::size_t pixel_offset =
+                            row_offset + column * 4;
+                        for (unsigned index = 0; index < 4; ++index) {
+                            const unsigned shift = little ? index * 8
+                                                          : (3 - index) * 8;
+                            destination[pixel_offset + index] =
+                                static_cast<std::byte>(pixel >> shift);
+                        }
                     }
                 }
             }

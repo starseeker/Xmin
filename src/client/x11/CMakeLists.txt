@@ -92,6 +92,7 @@ if(XMIN_BUILD_QT_CLIENT OR XMIN_BUILD_TOOLKIT_CLIENT)
     xlib_core.cpp
     xlib_events.cpp
     xlib_region.cpp
+    xlib_wm.cpp
     xlib_minimal.cpp
   )
 endif()

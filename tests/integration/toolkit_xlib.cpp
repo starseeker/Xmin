@@ -230,6 +230,25 @@ int main()
         return fail(display, "XYPixmap plane handling failed", 5);
 
     Screen *screen = DefaultScreenOfDisplay(display);
+    GC default_gc = DefaultGCOfScreen(screen);
+    XGCValues default_values{};
+    if (default_gc == nullptr || default_gc != XDefaultGC(display, 0) ||
+        default_gc != XDefaultGCOfScreen(screen) ||
+        XDefaultRootWindow(display) != screen->root ||
+        XRootWindowOfScreen(screen) != screen->root ||
+        XDefaultVisualOfScreen(screen) != screen->root_visual ||
+        XScreenOfDisplay(display, 0) != screen ||
+        XDefaultScreenOfDisplay(display) != screen ||
+        XScreenCount(display) != 1 || XAllPlanes() != AllPlanes ||
+        !XGetGCValues(
+            display, default_gc,
+            GCFunction | GCPlaneMask | GCGraphicsExposures,
+            &default_values) ||
+        default_values.function != GXcopy ||
+        default_values.plane_mask != AllPlanes ||
+        default_values.graphics_exposures != True) {
+        return fail(display, "default screen resources were incomplete", 6);
+    }
 
     XSelectInput(
         display, screen->root,
@@ -239,6 +258,13 @@ int main()
         screen->black_pixel, screen->black_pixel);
     XMapWindow(display, structure_window);
     XEvent structure_event{};
+    if (XWindowEvent(
+            display, screen->root, SubstructureNotifyMask,
+            &structure_event) != 0 || structure_event.type != CreateNotify ||
+        structure_event.xcreatewindow.parent != screen->root ||
+        structure_event.xcreatewindow.window != structure_window) {
+        return fail(display, "create notification matching failed", 6);
+    }
     if (XWindowEvent(
             display, screen->root, SubstructureNotifyMask,
             &structure_event) != 0 || structure_event.type != MapNotify ||
@@ -345,6 +371,15 @@ int main()
         screen->black_pixel, screen->black_pixel);
     XMapWindow(display, window);
 
+    const Pixmap default_gc_buffer = XCreatePixmap(
+        display, window, 64, 48,
+        static_cast<unsigned int>(screen->root_depth));
+    XSetForeground(display, default_gc, 0x0000aa00UL);
+    XFillRectangle(display, default_gc_buffer, default_gc, 0, 0, 64, 48);
+    XCopyArea(
+        display, default_gc_buffer, window, default_gc, 0, 0, 64, 48, 0, 0);
+    XFreePixmap(display, default_gc_buffer);
+
     char title_text[] = "Qt \xce\xa9";
     char *title_list[]{title_text};
     XTextProperty title_property{};
@@ -394,7 +429,7 @@ int main()
         display, window, 0, 0, 64, 48, AllPlanes, ZPixmap);
     const bool clip_ok = image != nullptr &&
         XGetPixel(image, 18, 14) == 0x00ff0000UL &&
-        XGetPixel(image, 2, 2) == screen->black_pixel;
+        XGetPixel(image, 2, 2) == 0x0000aa00UL;
     if (image != nullptr)
         XDestroyImage(image);
     XFreeGC(display, gc);

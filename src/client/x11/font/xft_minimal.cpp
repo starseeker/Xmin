@@ -697,6 +697,58 @@ Bool XftDrawSetClip(XftDraw *draw, Region region)
     return True;
 }
 
+Bool XftDrawSetClipRectangles(
+    XftDraw *draw, int x_origin, int y_origin, const XRectangle *rectangles,
+    int count)
+{
+    if (draw == nullptr || draw->destination == None || count < 0 ||
+        (count != 0 && rectangles == nullptr)) {
+        return False;
+    }
+    std::vector<xcb_rectangle_t> wire;
+    wire.reserve(static_cast<std::size_t>(count));
+    for (int index = 0; index < count; ++index) {
+        if (rectangles[index].width != 0 && rectangles[index].height != 0) {
+            wire.push_back({
+                rectangles[index].x, rectangles[index].y,
+                rectangles[index].width, rectangles[index].height});
+        }
+    }
+    auto *connection = xmin::client::x11::xlib_connection(draw->display);
+    if (!checked(
+            connection, xcb_render_set_picture_clip_rectangles_checked(
+                            connection, draw->destination,
+                            static_cast<std::int16_t>(x_origin),
+                            static_cast<std::int16_t>(y_origin),
+                            static_cast<std::uint32_t>(wire.size()),
+                            wire.data()))) {
+        return False;
+    }
+    draw->clip_rectangles = std::move(wire);
+    draw->clip_set = true;
+    return True;
+}
+
+void XftDrawRect(
+    XftDraw *draw, const XftColor *color, int x, int y,
+    unsigned int width, unsigned int height)
+{
+    if (draw == nullptr || color == nullptr || draw->destination == None ||
+        width == 0 || height == 0) {
+        return;
+    }
+    const Picture source = source_picture(draw, color);
+    auto *connection = xmin::client::x11::xlib_connection(draw->display);
+    if (source != None && connection != nullptr) {
+        xcb_render_composite(
+            connection, XCB_RENDER_PICT_OP_SRC, source, None,
+            draw->destination, 0, 0, 0, 0,
+            static_cast<std::int16_t>(x), static_cast<std::int16_t>(y),
+            static_cast<std::uint16_t>(width),
+            static_cast<std::uint16_t>(height));
+    }
+}
+
 void XftDefaultSubstitute(Display *, int, FcPattern *)
 {
 }
@@ -762,6 +814,23 @@ Bool XftColorAllocValue(
         (static_cast<unsigned long>(color->red >> 8U) << 16U) |
         (static_cast<unsigned long>(color->green >> 8U) << 8U) |
         static_cast<unsigned long>(color->blue >> 8U);
+    return True;
+}
+
+Bool XftColorAllocName(
+    Display *display, const Visual *visual, Colormap colormap,
+    const char *name, XftColor *result)
+{
+    XColor parsed{};
+    if (result == nullptr ||
+        !XParseColor(display, colormap, name, &parsed) ||
+        !XAllocColor(display, colormap, &parsed)) {
+        return False;
+    }
+    result->pixel = parsed.pixel;
+    result->color = {
+        parsed.red, parsed.green, parsed.blue, 0xffffU};
+    (void)visual;
     return True;
 }
 

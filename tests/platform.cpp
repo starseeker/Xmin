@@ -102,6 +102,32 @@ make_stale_socket(const std::string &path)
                address_size) == 0;
 }
 
+UniqueFd
+make_abstract_listener(const std::string &path)
+{
+#if defined(__linux__)
+    sockaddr_un address{};
+    if (path.size() + 1 >= sizeof(address.sun_path))
+        return {};
+    address.sun_family = AF_UNIX;
+    address.sun_path[0] = '\0';
+    std::memcpy(address.sun_path + 1, path.data(), path.size());
+    const auto address_size = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + path.size() + 1);
+    UniqueFd descriptor(::socket(AF_UNIX, SOCK_STREAM, 0));
+    if (!descriptor ||
+        ::bind(descriptor.get(), reinterpret_cast<sockaddr *>(&address),
+               address_size) != 0 ||
+        ::listen(descriptor.get(), 1) != 0) {
+        return {};
+    }
+    return descriptor;
+#else
+    static_cast<void>(path);
+    return {};
+#endif
+}
+
 bool
 test_xauthority(const std::string &root)
 {
@@ -224,6 +250,30 @@ test_replacement_paths_are_preserved(const std::string &root)
     return socket_preserved && lock_preserved;
 }
 
+bool
+test_abstract_display_reservation(const std::string &root)
+{
+#if defined(__linux__)
+    const std::string socket_directory = root + "/.X11-unix";
+    if (::mkdir(socket_directory.c_str(), 0700) != 0)
+        return false;
+    const std::string socket_path = socket_directory + "/X7";
+    auto listener = make_abstract_listener(socket_path);
+    if (!listener)
+        return false;
+    auto display = xmin::server::DisplaySocket::open(7, root);
+    const bool rejected = !display &&
+        display.error().code == xmin::server::ErrorCode::busy &&
+        !exists(socket_path) && !exists(root + "/.X7-lock");
+    listener.reset();
+    static_cast<void>(::rmdir(socket_directory.c_str()));
+    return rejected;
+#else
+    static_cast<void>(root);
+    return true;
+#endif
+}
+
 } // namespace
 
 int
@@ -242,11 +292,15 @@ main()
     const bool reservation_passed = test_display_reservation(root);
     const bool replacement_passed =
         test_replacement_paths_are_preserved(root);
+    const bool abstract_reservation_passed =
+        test_abstract_display_reservation(root);
     static_cast<void>(::rmdir(root.c_str()));
-    if (!authority_passed || !reservation_passed || !replacement_passed) {
+    if (!authority_passed || !reservation_passed || !replacement_passed ||
+        !abstract_reservation_passed) {
         std::cerr << "platform test failed: xauthority=" << authority_passed
                   << " reservation=" << reservation_passed
-                  << " replacement=" << replacement_passed << '\n';
+                  << " replacement=" << replacement_passed
+                  << " abstract=" << abstract_reservation_passed << '\n';
         return 1;
     }
     return 0;

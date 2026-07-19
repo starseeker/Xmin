@@ -1,6 +1,7 @@
 #include "xmin/server/atom_table.hpp"
 #include "xmin/server/checked.hpp"
 #include "xmin/server/color.hpp"
+#include "xmin/server/connection.hpp"
 #include "xmin/server/generated/core_protocol.hpp"
 #include "xmin/server/property_data.hpp"
 #include "xmin/server/resource_registry.hpp"
@@ -24,6 +25,7 @@
 #include <string>
 #include <variant>
 #include <vector>
+#include <sys/socket.h>
 #include <unistd.h>
 
 namespace {
@@ -208,6 +210,108 @@ test_unique_fd()
 }
 
 bool
+write_exact(int descriptor, const std::uint8_t *bytes, std::size_t size)
+{
+    std::size_t offset = 0;
+    while (offset < size) {
+        const ssize_t count = ::write(descriptor, bytes + offset, size - offset);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            return false;
+        offset += static_cast<std::size_t>(count);
+    }
+    return true;
+}
+
+bool
+read_exact(int descriptor, std::uint8_t *bytes, std::size_t size)
+{
+    std::size_t offset = 0;
+    while (offset < size) {
+        const ssize_t count = ::read(descriptor, bytes + offset, size - offset);
+        if (count < 0 && errno == EINTR)
+            continue;
+        if (count <= 0)
+            return false;
+        offset += static_cast<std::size_t>(count);
+    }
+    return true;
+}
+
+bool
+test_connection_event_reply_order()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    int descriptors[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM, 0, descriptors) != 0) {
+        std::cerr << "connection-order socketpair failed\n";
+        return false;
+    }
+    xmin::server::UniqueFd peer(descriptors[1]);
+    xmin::server::ServerState server(64, 48);
+    xmin::server::ServerConfig config;
+    config.width = 64;
+    config.height = 48;
+    config.resource_base = owner;
+    config.allow_unauthenticated = true;
+    xmin::server::Connection connection{
+        xmin::server::UniqueFd(descriptors[0]), std::move(config), server};
+    if (!expect(static_cast<bool>(connection.prepare()),
+                "connection-order prepare failed")) {
+        return false;
+    }
+
+    std::array<std::uint8_t, 12> setup{};
+    setup[0] = static_cast<std::uint8_t>('l');
+    setup[2] = 11;
+    if (!expect(write_exact(peer.get(), setup.data(), setup.size()) &&
+                    connection.on_readable() && connection.on_writable(),
+                "connection-order setup failed")) {
+        return false;
+    }
+    std::array<std::uint8_t, 8> setup_prefix{};
+    if (!expect(read_exact(
+                    peer.get(), setup_prefix.data(), setup_prefix.size()) &&
+                    setup_prefix[0] == 1,
+                "connection-order setup reply failed")) {
+        return false;
+    }
+    const std::size_t setup_size = static_cast<std::size_t>(
+        setup_prefix[6] | (static_cast<std::uint16_t>(setup_prefix[7]) << 8)) *
+        4U;
+    std::vector<std::uint8_t> setup_payload(setup_size);
+    if (!expect(read_exact(
+                    peer.get(), setup_payload.data(), setup_payload.size()),
+                "connection-order setup payload failed")) {
+        return false;
+    }
+
+    // Model a backpressured connection: an asynchronous event is pending
+    // before a newer request is dispatched.  Its wire record must precede
+    // the reply, even when on_readable runs before on_writable.
+    if (!expect(server.broadcast_mapping_notify(1, 8, 1),
+                "connection-order event setup failed")) {
+        return false;
+    }
+    const std::array<std::uint8_t, 4> get_input_focus{43, 0, 1, 0};
+    if (!expect(write_exact(peer.get(), get_input_focus.data(),
+                            get_input_focus.size()) &&
+                    connection.on_readable() && connection.on_writable(),
+                "connection-order request dispatch failed")) {
+        return false;
+    }
+    std::array<std::uint8_t, 64> output{};
+    return expect(read_exact(peer.get(), output.data(), output.size()),
+                  "connection-order output read failed") &&
+        expect(output[0] == 34 && output[32] == 1,
+               "an event was written after a newer reply") &&
+        expect(output[2] == 0 && output[3] == 0 &&
+                   output[34] == 1 && output[35] == 0,
+               "connection-order response sequences are wrong");
+}
+
+bool
 test_shared_server_state()
 {
     constexpr std::uint32_t first_owner = 0x00200000;
@@ -215,6 +319,11 @@ test_shared_server_state()
     xmin::server::ServerState server(320, 240);
     if (!expect(server.window(xmin::server::root_window_id) != nullptr,
                 "server root window is missing") ||
+        !expect(server.window(xmin::server::root_window_id)
+                        ->background_pixel == 0x0020252bU &&
+                    server.readable_surface(xmin::server::root_window_id)
+                        ->pixel(0, 0) == 0x0020252bU,
+                "server root did not initialize with the desktop background") ||
         !expect(server.input().pointer_x == 160 &&
                     server.input().pointer_y == 120 &&
                     server.input().modifier_button_mask == 0 &&
@@ -602,6 +711,8 @@ test_input_routing()
     constexpr std::uint32_t child_id = first_owner | 2U;
     constexpr std::uint32_t key_press_mask = 1U << 0;
     constexpr std::uint32_t key_release_mask = 1U << 1;
+    constexpr std::uint32_t button_press_mask = 1U << 2;
+    constexpr std::uint32_t button_release_mask = 1U << 3;
     xmin::server::ServerState server(100, 80);
     if (!expect(server.register_client(first_owner) &&
                     server.register_client(second_owner),
@@ -787,8 +898,80 @@ test_input_routing()
     key = queued == nullptr
         ? nullptr
         : std::get_if<xmin::server::CoreInputEvent>(queued);
-    return expect(key != nullptr && key->type == 3 && key->detail == 40,
-                  "passive grab release event was not delivered");
+    if (!expect(key != nullptr && key->type == 3 && key->detail == 40,
+                "passive grab release event was not delivered")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+
+    stored_child->event_masks.emplace(
+        second_owner, button_press_mask | button_release_mask);
+    xmin::server::PassiveGrab pointer;
+    pointer.kind = xmin::server::PassiveGrabKind::button;
+    pointer.details = xmin::server::passive_grab_details(pointer.kind, 3);
+    pointer.modifiers = xmin::server::passive_grab_modifiers(0);
+    pointer.owner = first_owner;
+    pointer.window = child_id;
+    pointer.event_mask = button_press_mask;
+    pointer.pointer_mode = 0;
+    pointer.owner_events = true;
+    if (!expect(server.add_passive_grab(std::move(pointer)) ==
+                    xmin::server::PassiveGrabUpdate::updated &&
+                    server.inject_input(4, 3, 18, 17) ==
+                    xmin::server::EventDelivery::delivered &&
+                    server.input().pointer_grab &&
+                    server.input().pointer_grab->passive &&
+                    server.input().frozen_pointer_event.has_value(),
+                "synchronous passive pointer grab did not freeze")) {
+        return false;
+    }
+    queued = server.next_event(first_owner);
+    const auto *button = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CoreInputEvent>(queued);
+    if (!expect(button != nullptr && button->type == 4 &&
+                    button->detail == 3 && button->event == child_id &&
+                    !server.has_pending_event(second_owner),
+                "synchronous passive grab press used the wrong route")) {
+        return false;
+    }
+    server.pop_event(first_owner);
+    if (!expect(server.inject_input(5, 3, 18, 17) ==
+                    xmin::server::EventDelivery::no_recipient &&
+                    server.input().pointer_grab &&
+                    server.input().frozen_pointer_event &&
+                    server.input().frozen_pointer_event->pending.size() == 1 &&
+                    server.input().pressed_buttons.test(3),
+                "synchronous pointer grab did not queue the release")) {
+        return false;
+    }
+    if (!expect(server.allow_events(first_owner, 2, 0) ==
+                    xmin::server::EventDelivery::delivered &&
+                    !server.input().pointer_grab &&
+                    !server.input().frozen_pointer_event &&
+                    server.input().pressed_buttons.none(),
+                "ReplayPointer did not release the passive grab")) {
+        return false;
+    }
+    queued = server.next_event(second_owner);
+    button = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CoreInputEvent>(queued);
+    if (!expect(button != nullptr && button->type == 4 &&
+                    button->detail == 3 && button->event == child_id &&
+                    button->state == 0,
+                "ReplayPointer did not deliver the activating event")) {
+        return false;
+    }
+    server.pop_event(second_owner);
+    queued = server.next_event(second_owner);
+    button = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CoreInputEvent>(queued);
+    return expect(button != nullptr && button->type == 5 &&
+                      button->detail == 3 &&
+                      button->state == (1U << 10),
+                  "replayed pointer release metadata is wrong");
 }
 
 bool
@@ -1711,6 +1894,8 @@ test_structure_mapping_notifications()
     constexpr std::uint32_t owner = 0x00200000;
     constexpr std::uint32_t observer = 0x00400000;
     constexpr std::uint32_t child = owner | 1U;
+    constexpr std::uint32_t exposure_mask = 1U << 15;
+    constexpr std::uint32_t visibility_change_mask = 1U << 16;
     constexpr std::uint32_t structure_notify_mask = 1U << 17;
     constexpr std::uint32_t substructure_notify_mask = 1U << 19;
     xmin::server::ServerState server(100, 80);
@@ -1721,6 +1906,8 @@ test_structure_mapping_notifications()
     }
     server.note_client_sequence(owner, 107);
     server.note_client_sequence(observer, 109);
+    server.window(xmin::server::root_window_id)->event_masks.emplace(
+        observer, substructure_notify_mask);
 
     xmin::server::WindowRecord window;
     window.id = child;
@@ -1733,10 +1920,25 @@ test_structure_mapping_notifications()
                 "mapping-notify window insertion failed")) {
         return false;
     }
+    {
+        const auto *queued = server.next_event(observer);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::CreateNotifyEvent>(queued);
+        if (!expect(event != nullptr &&
+                        event->parent == xmin::server::root_window_id &&
+                        event->window == child && event->x == 5 &&
+                        event->y == 7 && event->width == 20 &&
+                        event->height == 15 && event->border_width == 0 &&
+                        !event->override_redirect && event->sequence == 109,
+                    "CreateNotify routing or payload is wrong")) {
+            return false;
+        }
+        server.pop_event(observer);
+    }
     server.window(child)->event_masks.emplace(
-        owner, structure_notify_mask);
-    server.window(xmin::server::root_window_id)->event_masks.emplace(
-        observer, substructure_notify_mask);
+        owner,
+        exposure_mask | structure_notify_mask | visibility_change_mask);
 
     const auto structure_map = [&]() {
         const auto *queued = server.next_event(owner);
@@ -1761,9 +1963,33 @@ test_structure_mapping_notifications()
         server.pop_event(observer);
         return matches;
     };
+    const auto visibility_map = [&]() {
+        const auto *queued = server.next_event(owner);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::VisibilityNotifyEvent>(queued);
+        const bool matches = event != nullptr && event->window == child &&
+            event->state == 0 && event->sequence == 107;
+        server.pop_event(owner);
+        return matches;
+    };
+    const auto expose_map = [&]() {
+        const auto *queued = server.next_event(owner);
+        const auto *event = queued == nullptr
+            ? nullptr
+            : std::get_if<xmin::server::ExposeEvent>(queued);
+        const bool matches = event != nullptr && event->window == child &&
+            event->x == 0 && event->y == 0 && event->width == 20 &&
+            event->height == 15 && event->count == 0 &&
+            event->sequence == 107;
+        server.pop_event(owner);
+        return matches;
+    };
     if (!expect(server.set_window_mapped(*server.window(child), true) ==
                     xmin::server::EventDelivery::delivered &&
                     server.window(child)->mapped && structure_map() &&
+                    visibility_map() &&
+                    expose_map() &&
                     substructure_map() &&
                     !server.has_pending_event(owner) &&
                     !server.has_pending_event(observer),
@@ -1801,6 +2027,337 @@ test_structure_mapping_notifications()
             substructure_unmap() && !server.has_pending_event(owner) &&
             !server.has_pending_event(observer),
         "UnmapNotify routing or payload is wrong");
+}
+
+bool
+test_window_manager_redirects()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t manager = 0x00400000;
+    constexpr std::uint32_t child = owner | 1U;
+    constexpr std::uint32_t sibling = owner | 2U;
+    constexpr std::uint32_t structure_notify_mask = 1U << 17;
+    constexpr std::uint32_t substructure_notify_mask = 1U << 19;
+    constexpr std::uint32_t substructure_redirect_mask = 1U << 20;
+    xmin::server::ServerState server(100, 80);
+    if (!expect(server.register_client(owner) &&
+                    server.register_client(manager),
+                "window-manager redirect client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 41);
+    server.note_client_sequence(manager, 73);
+
+    xmin::server::WindowRecord candidate;
+    candidate.id = child;
+    candidate.parent = xmin::server::root_window_id;
+    candidate.x = 3;
+    candidate.y = 4;
+    candidate.width = 30;
+    candidate.height = 20;
+    xmin::server::WindowRecord other = candidate;
+    other.id = sibling;
+    other.x = 40;
+    if (!expect(server.add_window(std::move(candidate), owner) &&
+                    server.add_window(std::move(other), owner),
+                "window-manager redirect window insertion failed")) {
+        return false;
+    }
+    auto *root = server.window(xmin::server::root_window_id);
+    auto *stored = server.window(child);
+    root->event_masks.emplace(
+        manager, substructure_redirect_mask | substructure_notify_mask);
+    stored->event_masks.emplace(owner, structure_notify_mask);
+
+    if (!expect(server.redirect_map_request(owner, *stored) ==
+                    xmin::server::RedirectDelivery::redirected &&
+                    !stored->mapped,
+                "MapWindow was not redirected")) {
+        return false;
+    }
+    const auto *queued = server.next_event(manager);
+    const auto *map = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::MapRequestEvent>(queued);
+    if (!expect(map != nullptr &&
+                    map->parent == xmin::server::root_window_id &&
+                    map->window == child && map->sequence == 73,
+                "MapRequest payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+
+    if (!expect(server.redirect_configure_request(
+                    owner, *stored, -2, 6, 44, 25, 2, 0x006f,
+                    sibling, 1) ==
+                    xmin::server::RedirectDelivery::redirected,
+                "ConfigureWindow was not redirected")) {
+        return false;
+    }
+    queued = server.next_event(manager);
+    const auto *configure_request = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ConfigureRequestEvent>(queued);
+    if (!expect(configure_request != nullptr &&
+                    configure_request->parent ==
+                        xmin::server::root_window_id &&
+                    configure_request->window == child &&
+                    configure_request->sibling == sibling &&
+                    configure_request->x == -2 &&
+                    configure_request->y == 6 &&
+                    configure_request->width == 44 &&
+                    configure_request->height == 25 &&
+                    configure_request->border_width == 2 &&
+                    configure_request->stack_mode == 1 &&
+                    configure_request->value_mask == 0x006f &&
+                    configure_request->sequence == 73,
+                "ConfigureRequest payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+
+    if (!expect(server.redirect_map_request(manager, *stored) ==
+                    xmin::server::RedirectDelivery::not_redirected,
+                "a manager redirected its own MapWindow request") ||
+        !expect(server.set_window_mapped(*stored, true) !=
+                    xmin::server::EventDelivery::queue_full &&
+                    server.set_window_mapped(*server.window(sibling), true) !=
+                    xmin::server::EventDelivery::queue_full,
+                "window-manager redirect mapping setup failed")) {
+        return false;
+    }
+    // Discard the structure and substructure MapNotify events.
+    server.pop_event(owner);
+    server.pop_event(manager);
+    server.pop_event(manager);
+
+    if (!expect(server.redirect_circulate_request(owner, *root, true) ==
+                    xmin::server::RedirectDelivery::redirected,
+                "CirculateWindow was not redirected")) {
+        return false;
+    }
+    queued = server.next_event(manager);
+    const auto *circulate = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CirculateRequestEvent>(queued);
+    if (!expect(circulate != nullptr &&
+                    circulate->parent == xmin::server::root_window_id &&
+                    circulate->window == child && circulate->place == 0 &&
+                    circulate->sequence == 73,
+                "CirculateRequest payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+
+    if (!expect(server.configure_window(
+                    *stored, 7, 8, 35, 22, 1,
+                    std::nullopt, std::nullopt) ==
+                    xmin::server::EventDelivery::delivered,
+                "manager ConfigureWindow failed")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    const auto *structure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ConfigureNotifyEvent>(queued);
+    if (!expect(structure != nullptr && structure->event == child &&
+                    structure->window == child && structure->x == 7 &&
+                    structure->y == 8 && structure->width == 35 &&
+                    structure->height == 22 &&
+                    structure->border_width == 1 &&
+                    structure->sequence == 41,
+                "structure ConfigureNotify payload is wrong")) {
+        return false;
+    }
+    server.pop_event(owner);
+    queued = server.next_event(manager);
+    const auto *substructure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ConfigureNotifyEvent>(queued);
+    if (!expect(substructure != nullptr &&
+                    substructure->event == xmin::server::root_window_id &&
+                    substructure->window == child &&
+                    substructure->sequence == 73,
+                "substructure ConfigureNotify payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+
+    stored->event_masks.emplace(manager, 1U << 18);
+    if (!expect(server.configure_window(
+                    *stored, 9, 10, 60, 40, 1,
+                    std::nullopt, std::nullopt, owner, 0x000f) ==
+                    xmin::server::EventDelivery::delivered &&
+                    stored->x == 9 && stored->y == 10 &&
+                    stored->width == 35 && stored->height == 22,
+                "ResizeRedirect did not preserve the managed size")) {
+        return false;
+    }
+    queued = server.next_event(manager);
+    const auto *resize = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ResizeRequestEvent>(queued);
+    if (!expect(resize != nullptr && resize->window == child &&
+                    resize->width == 60 && resize->height == 40 &&
+                    resize->sequence == 73,
+                "ResizeRequest payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+    // The effective ConfigureNotify follows the redirected resize request.
+    queued = server.next_event(manager);
+    substructure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ConfigureNotifyEvent>(queued);
+    if (!expect(substructure != nullptr &&
+                    substructure->width == 35 &&
+                    substructure->height == 22,
+                "ResizeRedirect ConfigureNotify reported the requested size")) {
+        return false;
+    }
+    server.pop_event(manager);
+    queued = server.next_event(owner);
+    structure = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ConfigureNotifyEvent>(queued);
+    if (!expect(structure != nullptr && structure->x == 9 &&
+                    structure->y == 10 && structure->width == 35 &&
+                    structure->height == 22,
+                "ResizeRedirect structure notification is wrong")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    if (!expect(server.circulate_window(
+                    xmin::server::root_window_id, true) ==
+                    xmin::server::EventDelivery::delivered,
+                "manager CirculateWindow failed")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    const auto *circulate_notify = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CirculateNotifyEvent>(queued);
+    if (!expect(circulate_notify != nullptr &&
+                    circulate_notify->event == child &&
+                    circulate_notify->window == child &&
+                    circulate_notify->place == 0,
+                "structure CirculateNotify payload is wrong")) {
+        return false;
+    }
+    server.pop_event(owner);
+    queued = server.next_event(manager);
+    circulate_notify = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::CirculateNotifyEvent>(queued);
+    if (!expect(circulate_notify != nullptr &&
+                    circulate_notify->event ==
+                        xmin::server::root_window_id &&
+                    circulate_notify->window == child &&
+                    circulate_notify->place == 0,
+                "substructure CirculateNotify payload is wrong")) {
+        return false;
+    }
+    server.pop_event(manager);
+
+    stored->override_redirect = true;
+    return expect(server.redirect_map_request(owner, *stored) ==
+                      xmin::server::RedirectDelivery::not_redirected,
+                  "override-redirect MapWindow was redirected") &&
+        expect(!server.has_pending_event(owner) &&
+                   !server.has_pending_event(manager),
+               "window-manager redirect test left queued events");
+}
+
+bool
+test_resize_exposures()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t window_id = owner | 1U;
+    constexpr std::uint32_t exposure_mask = 1U << 15;
+    constexpr std::uint32_t background = 0x00112233U;
+    constexpr std::uint32_t foreground = 0x00abcdefU;
+    xmin::server::ServerState server(32, 24);
+    if (!expect(server.register_client(owner),
+                "resize-exposure client registration failed")) {
+        return false;
+    }
+    server.note_client_sequence(owner, 117);
+    auto surface = xmin::server::Surface::create(4, 3, 24);
+    if (!expect(surface.has_value(),
+                "resize-exposure surface allocation failed")) {
+        return false;
+    }
+    surface->fill({0, 0, 4, 3}, foreground, 3, 0xffffffffU);
+    xmin::server::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::server::root_window_id;
+    window.width = 4;
+    window.height = 3;
+    window.mapped = true;
+    window.background_pixel = background;
+    window.surface = server.adopt_surface(std::move(*surface));
+    window.event_masks.emplace(owner, exposure_mask);
+    if (!expect(window.surface != nullptr &&
+                    server.add_window(std::move(window), owner),
+                "resize-exposure window insertion failed")) {
+        return false;
+    }
+
+    auto *stored = server.window(window_id);
+    if (!expect(server.configure_window(
+                    *stored, 0, 0, 6, 5, 0,
+                    std::nullopt, std::nullopt) ==
+                    xmin::server::EventDelivery::delivered &&
+                    stored->surface->pixel(0, 0) == background &&
+                    stored->surface->pixel(5, 4) == background,
+                "ForgetGravity did not clear a resized window")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *expose = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ExposeEvent>(queued);
+    if (!expect(expose != nullptr && expose->window == window_id &&
+                    expose->x == 0 && expose->y == 0 &&
+                    expose->width == 6 && expose->height == 5 &&
+                    expose->count == 0 && expose->sequence == 117,
+                "ForgetGravity resize exposure is malformed")) {
+        return false;
+    }
+    server.pop_event(owner);
+
+    stored->bit_gravity = 1; // NorthWestGravity
+    stored->surface->fill({0, 0, 6, 5}, foreground, 3, 0xffffffffU);
+    if (!expect(server.configure_window(
+                    *stored, 0, 0, 8, 6, 0,
+                    std::nullopt, std::nullopt) ==
+                    xmin::server::EventDelivery::delivered &&
+                    stored->surface->pixel(0, 0) == foreground &&
+                    stored->surface->pixel(5, 4) == foreground &&
+                    stored->surface->pixel(7, 0) == background &&
+                    stored->surface->pixel(0, 5) == background,
+                "NorthWestGravity did not preserve resized contents")) {
+        return false;
+    }
+    queued = server.next_event(owner);
+    expose = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ExposeEvent>(queued);
+    const bool bottom = expose != nullptr && expose->x == 0 &&
+        expose->y == 5 && expose->width == 8 && expose->height == 1 &&
+        expose->count == 1;
+    server.pop_event(owner);
+    queued = server.next_event(owner);
+    expose = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ExposeEvent>(queued);
+    const bool right = expose != nullptr && expose->x == 6 &&
+        expose->y == 0 && expose->width == 2 && expose->height == 5 &&
+        expose->count == 0;
+    server.pop_event(owner);
+    return expect(bottom && right && !server.has_pending_event(owner),
+                  "NorthWestGravity resize regions are malformed");
 }
 
 bool
@@ -3449,6 +4006,23 @@ test_scene_composition()
         return false;
     }
 
+    root->surface->fill({0, 0, 1, 1}, 0x00ffffffU, 3, 0xffffffffU);
+    root->surface->fill({15, 11, 1, 1}, 0x00ffffffU, 3, 0xffffffffU);
+    server.invalidate_scene();
+    composed = server.readable_surface(
+        xmin::server::root_window_id, {0, 0, 1, 1});
+    if (!expect(composed->pixel(0, 0) == 0x00ffffffU,
+                "partial root composition omitted its requested area")) {
+        return false;
+    }
+    composed = server.readable_surface(xmin::server::root_window_id);
+    if (!expect(composed->pixel(15, 11) == 0x00ffffffU,
+                "partial root composition incorrectly marked the scene clean")) {
+        return false;
+    }
+    root->surface->fill({0, 0, 16, 12}, 0x000000ffU, 3, 0xffffffffU);
+    server.invalidate_scene();
+
     static_cast<void>(
         server.set_window_mapped(*server.window(owner), false));
     composed = server.readable_surface(xmin::server::root_window_id);
@@ -4583,6 +5157,7 @@ test_present_state()
     window.width = 4;
     window.height = 3;
     window.mapped = true;
+    window.bit_gravity = 1;
     window.surface = server.adopt_surface(std::move(*window_surface));
     auto managed_pixmap = server.adopt_surface(std::move(*pixmap_surface));
     if (!expect(window.surface != nullptr && managed_pixmap != nullptr &&
@@ -4904,6 +5479,7 @@ main()
             test_wire_order(xmin::server::ByteOrder::big) &&
             test_property_byte_order() &&
             test_atoms_and_resources() && test_unique_fd() &&
+            test_connection_event_reply_order() &&
             test_shared_server_state() && test_property_notifications() &&
             test_passive_grabs() &&
             test_input_routing() && test_key_repeat_timers() &&
@@ -4913,6 +5489,8 @@ main()
             test_automatic_pointer_grab() &&
             test_focus_events() &&
             test_structure_mapping_notifications() &&
+            test_window_manager_redirects() &&
+            test_resize_exposures() &&
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
             test_grab_transitions() &&

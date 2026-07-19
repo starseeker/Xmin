@@ -178,9 +178,14 @@ FcPattern *FcFontSetMatch(
     FcConfig *config, FcFontSet **sets, int set_count,
     FcPattern *pattern, FcResult *result);
 void FcFontSetDestroy(FcFontSet *set);
+FcPattern *FcFontMatch(
+    FcConfig *config, FcPattern *pattern, FcResult *result);
+void FcDefaultSubstitute(FcPattern *pattern);
 
+FcCharSet *FcCharSetCreate(void);
 FcCharSet *FcCharSetCopy(FcCharSet *source);
 void FcCharSetDestroy(FcCharSet *charset);
+FcBool FcCharSetAddChar(FcCharSet *charset, FcChar32 codepoint);
 FcBool FcCharSetHasChar(const FcCharSet *charset, FcChar32 codepoint);
 
 FcBool FcConfigSubstitute(

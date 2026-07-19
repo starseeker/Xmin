@@ -1,12 +1,68 @@
 #include <xcb/present.h>
 #include <xcb/sync.h>
 #include <xcb/xcb.h>
+#include <xcb/xcbext.h>
 
 #include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/uio.h>
+
+typedef struct {
+    uint8_t major_opcode;
+    uint8_t minor_opcode;
+    uint16_t length;
+    xcb_window_t window;
+    xcb_pixmap_t pixmap;
+    uint32_t serial;
+    uint32_t valid;
+    uint32_t update;
+    int16_t x_off;
+    int16_t y_off;
+    uint32_t target_crtc;
+    uint32_t acquire_syncobj;
+    uint32_t release_syncobj;
+    uint64_t acquire_point;
+    uint64_t release_point;
+    uint32_t options;
+    uint8_t pad0[4];
+    uint64_t target_msc;
+    uint64_t divisor;
+    uint64_t remainder;
+} xmin_present_pixmap_synced_request_t;
+
+_Static_assert(sizeof(xmin_present_pixmap_synced_request_t) == 88,
+               "PresentPixmapSynced wire request must be 88 bytes");
+
+static xcb_void_cookie_t
+present_pixmap_synced_checked(xcb_connection_t *connection,
+                              xcb_window_t window, xcb_pixmap_t pixmap,
+                              uint32_t serial)
+{
+    static const xcb_protocol_request_t protocol = {
+        .count = 2,
+        .ext = &xcb_present_id,
+        .opcode = 5,
+        .isvoid = 1
+    };
+    xmin_present_pixmap_synced_request_t request = {
+        .window = window,
+        .pixmap = pixmap,
+        .serial = serial
+    };
+    struct iovec parts[4];
+    xcb_void_cookie_t cookie;
+
+    parts[2].iov_base = &request;
+    parts[2].iov_len = sizeof(request);
+    parts[3].iov_base = NULL;
+    parts[3].iov_len = 0;
+    cookie.sequence = xcb_send_request(
+        connection, XCB_REQUEST_CHECKED, parts + 2, &protocol);
+    return cookie;
+}
 
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
@@ -376,10 +432,8 @@ main(void)
     if (version->minor_version >= 4 &&
         !checked_error(
             connection,
-            xcb_present_pixmap_synced_checked(
-                connection, window, pixmap, serial + 2,
-                XCB_NONE, XCB_NONE, 0, 0, XCB_NONE, XCB_NONE, XCB_NONE,
-                0, 0, 0, 0, 0, 0, 0, NULL),
+            present_pixmap_synced_checked(connection, window, pixmap,
+                                          serial + 2),
             XCB_MATCH, "PresentPixmapSynced software rejection")) {
         goto cleanup;
     }

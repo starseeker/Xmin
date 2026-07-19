@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <cstring>
 #include <new>
 #include <utility>
 
@@ -179,7 +180,7 @@ Surface::Surface(std::uint16_t width, std::uint16_t height,
 std::optional<Surface>
 Surface::create(std::uint16_t width, std::uint16_t height, std::uint8_t depth)
 {
-    if (depth != 1 && depth != 8 && depth != 24 && depth != 32)
+    if (depth != 1 && depth != 4 && depth != 8 && depth != 24 && depth != 32)
         return std::nullopt;
     const auto count = pixel_count(width, height);
     if (!count)
@@ -394,6 +395,36 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
         first_column = last_x - 1;
         after_last_column = first_x - 1;
         column_step = -1;
+    }
+
+    const std::uint32_t destination_mask = depth_mask();
+    if (function == 3 &&
+        (plane_mask & destination_mask) == destination_mask &&
+        clip.unrestricted()) {
+        for (std::int64_t row = first_row; row != after_last_row;
+             row += row_step) {
+            const auto source_row = static_cast<std::size_t>(source_y + row) *
+                source.width_;
+            const auto destination_row =
+                static_cast<std::size_t>(destination_y + row) * width_;
+            if (depth_ == 32) {
+                std::memmove(
+                    data() + destination_row + destination_x + first_x,
+                    source.data() + source_row + source_x + first_x,
+                    static_cast<std::size_t>(last_x - first_x) *
+                        sizeof(std::uint32_t));
+                continue;
+            }
+            for (std::int64_t column = first_column;
+                 column != after_last_column; column += column_step) {
+                const auto sx = static_cast<std::size_t>(source_x + column);
+                const auto dx =
+                    static_cast<std::size_t>(destination_x + column);
+                data()[destination_row + dx] =
+                    source.data()[source_row + sx] & destination_mask;
+            }
+        }
+        return;
     }
     for (std::int64_t row = first_row; row != after_last_row;
          row += row_step) {

@@ -220,11 +220,12 @@ bool RenderFont::draw(
         return false;
     }
 
-    xcb_render_composite_glyphs_32(
-        connection_, XCB_RENDER_PICT_OP_OVER, source, destination, format_,
-        glyphset_, 0, 0, static_cast<std::uint32_t>(commands.size()),
-        commands.data());
-    return xcb_connection_has_error(connection_) == 0;
+    return checked(
+        connection_, xcb_render_composite_glyphs_32_checked(
+                         connection_, XCB_RENDER_PICT_OP_OVER, source,
+                         destination, format_, glyphset_, 0, 0,
+                         static_cast<std::uint32_t>(commands.size()),
+                         commands.data()));
 }
 
 } // namespace xmin::client::font

@@ -547,6 +547,23 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *create = std::get_if<CreateNotifyEvent>(&event)) {
+        writer.u8(16); // CreateNotify
+        writer.u8(0);
+        writer.u16(create->sequence);
+        writer.u32(create->parent);
+        writer.u32(create->window);
+        writer.i16(create->x);
+        writer.i16(create->y);
+        writer.u16(create->width);
+        writer.u16(create->height);
+        writer.u16(create->border_width);
+        writer.u8(create->override_redirect ? 1U : 0U);
+        writer.u8(0);
+        writer.pad(8);
+        return writer.data();
+    }
+
     if (const auto *map = std::get_if<MapNotifyEvent>(&event)) {
         writer.u8(19); // MapNotify
         writer.u8(0);
@@ -558,6 +575,16 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *request = std::get_if<MapRequestEvent>(&event)) {
+        writer.u8(20); // MapRequest
+        writer.u8(0);
+        writer.u16(request->sequence);
+        writer.u32(request->parent);
+        writer.u32(request->window);
+        writer.pad(20);
+        return writer.data();
+    }
+
     if (const auto *unmap = std::get_if<UnmapNotifyEvent>(&event)) {
         writer.u8(18); // UnmapNotify
         writer.u8(0);
@@ -566,6 +593,101 @@ Connection::encode_event(const ClientEvent &event) const
         writer.u32(unmap->window);
         writer.u8(unmap->from_configure ? 1U : 0U);
         writer.pad(19);
+        return writer.data();
+    }
+
+    if (const auto *visibility =
+            std::get_if<VisibilityNotifyEvent>(&event)) {
+        writer.u8(15); // VisibilityNotify
+        writer.u8(0);
+        writer.u16(visibility->sequence);
+        writer.u32(visibility->window);
+        writer.u8(visibility->state);
+        writer.pad(23);
+        return writer.data();
+    }
+
+    if (const auto *expose = std::get_if<ExposeEvent>(&event)) {
+        writer.u8(12); // Expose
+        writer.u8(0);
+        writer.u16(expose->sequence);
+        writer.u32(expose->window);
+        writer.u16(expose->x);
+        writer.u16(expose->y);
+        writer.u16(expose->width);
+        writer.u16(expose->height);
+        writer.u16(expose->count);
+        writer.pad(14);
+        return writer.data();
+    }
+
+    if (const auto *configure = std::get_if<ConfigureNotifyEvent>(&event)) {
+        writer.u8(22); // ConfigureNotify
+        writer.u8(0);
+        writer.u16(configure->sequence);
+        writer.u32(configure->event);
+        writer.u32(configure->window);
+        writer.u32(configure->above_sibling);
+        writer.i16(configure->x);
+        writer.i16(configure->y);
+        writer.u16(configure->width);
+        writer.u16(configure->height);
+        writer.u16(configure->border_width);
+        writer.u8(configure->override_redirect ? 1U : 0U);
+        writer.u8(0);
+        writer.pad(4);
+        return writer.data();
+    }
+
+    if (const auto *request = std::get_if<ConfigureRequestEvent>(&event)) {
+        writer.u8(23); // ConfigureRequest
+        writer.u8(request->stack_mode);
+        writer.u16(request->sequence);
+        writer.u32(request->parent);
+        writer.u32(request->window);
+        writer.u32(request->sibling);
+        writer.i16(request->x);
+        writer.i16(request->y);
+        writer.u16(request->width);
+        writer.u16(request->height);
+        writer.u16(request->border_width);
+        writer.u16(request->value_mask);
+        writer.pad(4);
+        return writer.data();
+    }
+
+    if (const auto *request = std::get_if<ResizeRequestEvent>(&event)) {
+        writer.u8(25); // ResizeRequest
+        writer.u8(0);
+        writer.u16(request->sequence);
+        writer.u32(request->window);
+        writer.u16(request->width);
+        writer.u16(request->height);
+        writer.pad(20);
+        return writer.data();
+    }
+
+    if (const auto *circulate = std::get_if<CirculateNotifyEvent>(&event)) {
+        writer.u8(26); // CirculateNotify
+        writer.u8(0);
+        writer.u16(circulate->sequence);
+        writer.u32(circulate->event);
+        writer.u32(circulate->window);
+        writer.pad(4);
+        writer.u8(circulate->place);
+        writer.pad(15);
+        return writer.data();
+    }
+
+    if (const auto *request = std::get_if<CirculateRequestEvent>(&event)) {
+        writer.u8(27); // CirculateRequest
+        writer.u8(0);
+        writer.u16(request->sequence);
+        writer.u32(request->parent);
+        writer.u32(request->window);
+        writer.pad(4);
+        writer.u8(request->place);
+        writer.pad(15);
         return writer.data();
     }
 
@@ -1092,7 +1214,7 @@ Connection::send_setup_success(ByteOrder order)
     // Core framing remains available before BIG-REQUESTS is enabled.
     payload.u16(static_cast<std::uint16_t>(maximum_core_request_units));
     payload.u8(1);      // roots
-    payload.u8(4);      // pixmap formats
+    payload.u8(5);      // pixmap formats
     const auto image_order = host_byte_order() == ByteOrder::little ? 0U : 1U;
     payload.u8(static_cast<std::uint8_t>(image_order));
     payload.u8(static_cast<std::uint8_t>(image_order));
@@ -1106,6 +1228,7 @@ Connection::send_setup_success(ByteOrder order)
     payload.pad_to_four();
     for (const auto &format : {
              std::pair<std::uint8_t, std::uint8_t>{1, 1},
+             {4, 8},
              {8, 8},
              {24, 32},
              {32, 32}}) {
@@ -1130,20 +1253,27 @@ Connection::send_setup_success(ByteOrder order)
     payload.u8(0);
     payload.u8(0);
     payload.u8(24);
-    payload.u8(1);
+    payload.u8(5);
 
-    payload.u8(24);
-    payload.u8(0);
-    payload.u16(1);
-    payload.pad(4);
-    payload.u32(root_visual_id);
-    payload.u8(4); // TrueColor
-    payload.u8(8);
-    payload.u16(256);
-    payload.u32(0x00ff0000);
-    payload.u32(0x0000ff00);
-    payload.u32(0x000000ff);
-    payload.pad(4);
+    // Every depth accepted by CreatePixmap must be advertised here as an
+    // allowed screen depth.  libXrender verifies this invariant and rejects
+    // RENDER on servers which accept an unadvertised pixmap depth.
+    for (const std::uint8_t depth : {1U, 4U, 8U, 24U, 32U}) {
+        payload.u8(depth);
+        payload.u8(0);
+        payload.u16(depth == 24 ? 1 : 0);
+        payload.pad(4);
+        if (depth == 24) {
+            payload.u32(root_visual_id);
+            payload.u8(4); // TrueColor
+            payload.u8(8);
+            payload.u16(256);
+            payload.u32(0x00ff0000);
+            payload.u32(0x0000ff00);
+            payload.u32(0x000000ff);
+            payload.pad(4);
+        }
+    }
 
     if ((payload.size() & 3) != 0 || payload.size() / 4 > 65535)
         return malformed("invalid generated setup length");
@@ -1869,6 +1999,13 @@ Connection::handle_map_window(const RequestContext &context)
     if (window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *id);
+    const auto redirected = server_.redirect_map_request(
+        config_.resource_base, *window);
+    if (redirected == RedirectDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    if (redirected == RedirectDelivery::redirected)
+        return drain_pending_events();
     const auto delivered = server_.set_window_mapped(*window, true);
     if (delivered == EventDelivery::queue_full)
         return send_error(context.order, bad_alloc, context.opcode,
@@ -2033,9 +2170,19 @@ Connection::handle_configure_window(const RequestContext &context)
     if (window->parent == 0)
         return Result<void>::success();
 
+    const auto redirected = server_.redirect_configure_request(
+        config_.resource_base, *window, x, y, width, height,
+        border_width, *mask, sibling, stack_mode);
+    if (redirected == RedirectDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    if (redirected == RedirectDelivery::redirected)
+        return drain_pending_events();
+
     if (server_.configure_window(
             *window, x, y, width, height, border_width,
-            sibling, stack_mode) == EventDelivery::queue_full) {
+            sibling, stack_mode, config_.resource_base,
+            *mask) == EventDelivery::queue_full) {
         return send_error(context.order, bad_alloc, context.opcode,
                           context.sequence);
     }
@@ -3068,7 +3215,17 @@ Connection::handle_allow_events(const RequestContext &context)
     if (context.data > 7)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, context.data);
-    return Result<void>::success();
+    WireReader reader(context.request.data() + 4, 4, context.order);
+    const auto time = reader.u32();
+    if (!time)
+        return malformed("truncated AllowEvents request");
+    if (server_.allow_events(
+            config_.resource_base, context.data, *time) ==
+        EventDelivery::queue_full) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return drain_pending_events();
 }
 
 Result<void>
@@ -3357,7 +3514,8 @@ Connection::handle_create_pixmap(const RequestContext &context)
     if (*width == 0 || *height == 0)
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence);
-    if (context.data != 1 && context.data != 8 && context.data != 24 &&
+    if (context.data != 1 && context.data != 4 && context.data != 8 &&
+        context.data != 24 &&
         context.data != 32) {
         return send_error(context.order, bad_value, context.opcode,
                           context.sequence, context.data);
@@ -4437,7 +4595,7 @@ Connection::draw_zpixmap(
 
     const std::size_t bits_per_pixel = depth == 1
         ? 1
-        : (depth == 8 ? 8 : 32);
+        : (depth <= 8 ? 8 : 32);
     const auto row_bits = checked_multiply(
         static_cast<std::size_t>(total_width), bits_per_pixel);
     const auto rounded_bits = row_bits
@@ -4475,7 +4633,7 @@ Connection::draw_zpixmap(
                     : 7U - (source_column & 7U);
                 pixel = (byte >> bit) & 1U;
             }
-            else if (depth == 8) {
+            else if (depth <= 8) {
                 pixel = row_data[source_column];
             }
             else {
@@ -4595,7 +4753,7 @@ Connection::handle_get_image(const RequestContext &context)
     const auto plane_mask = reader.u32();
     if (!drawable_id || !x || !y || !width || !height || !plane_mask)
         return malformed("truncated GetImage request");
-    const auto *surface = server_.readable_surface(*drawable_id);
+    const auto *surface = server_.drawable_surface(*drawable_id);
     if (surface == nullptr)
         return send_error(context.order, bad_drawable, context.opcode,
                           context.sequence, *drawable_id);
@@ -4610,10 +4768,16 @@ Connection::handle_get_image(const RequestContext &context)
         return send_error(context.order, bad_match, context.opcode,
                           context.sequence);
     }
+    surface = server_.readable_surface(
+        *drawable_id, Rectangle{image_x, image_y, *width, *height});
+    if (surface == nullptr) {
+        return send_error(context.order, bad_drawable, context.opcode,
+                          context.sequence, *drawable_id);
+    }
 
     const std::size_t bits_per_pixel = surface->depth() == 1
         ? 1
-        : (surface->depth() == 8 ? 8 : 32);
+        : (surface->depth() <= 8 ? 8 : 32);
     const auto row_bits = checked_multiply(
         static_cast<std::size_t>(*width), bits_per_pixel);
     const auto rounded_bits = row_bits
@@ -4652,7 +4816,7 @@ Connection::handle_get_image(const RequestContext &context)
                 image[row_offset + column / 8] |=
                     static_cast<std::uint8_t>((pixel & 1U) << bit);
             }
-            else if (surface->depth() == 8) {
+            else if (surface->depth() <= 8) {
                 image[row_offset + column] =
                     static_cast<std::uint8_t>(pixel);
             }
@@ -7579,6 +7743,16 @@ Connection::process_input()
     while (!finished_ && !close_after_output_ &&
            !(state_ == State::requests &&
              server_.sync_waiting(config_.resource_base))) {
+        // Events carry the sequence of the last request processed for this
+        // client.  They must enter the wire stream before any reply to a
+        // newer request; otherwise libxcb can conclude that the newer reply
+        // has already been skipped.  This matters when a large reply leaves
+        // the socket backpressured while another client queues events.
+        if (state_ == State::requests) {
+            auto drained = drain_pending_events();
+            if (!drained)
+                return drained;
+        }
         Result<bool> processed = [&]() {
             switch (state_) {
             case State::setup_prefix:

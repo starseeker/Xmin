@@ -1,6 +1,51 @@
 manifest_version = 2
 
 [[source]]
+name = "dash"
+revision = "6a1533f24b646364ad514c542292b5c85b2adabf"
+url = "https://git.kernel.org/pub/scm/utils/dash/dash.git"
+tree = "6120591a4759404605aa6a04e686db521ef3fb55"
+status = "imported"
+local_path = "third_party/dash"
+retained_paths = [
+  "complete dash 0.5.13.4 release sources and documentation except Git metadata, ignore files, and upstream src/mksignames.c",
+  "tools/dash-mksignames.c under 0BSD replaces the omitted GPL helper and generates signames.c from platform signal ABI facts",
+]
+license_paths = ["LICENSES/dash/COPYING"]
+patches = ["upstream src/mksignames.c is excluded during import and replaced by tools/dash-mksignames.c"]
+importer = "tools/import-dash.sh"
+
+[[source]]
+name = "glfw"
+revision = "7b6aead9fb88b3623e3b3725ebb42670cbe4c579"
+url = "https://github.com/glfw/glfw.git"
+status = "git-submodule"
+local_path = "third_party/glfw"
+retained_paths = ["complete pinned GLFW 3.4 source used only by the host viewer"]
+license_paths = ["LICENSES/glfw/LICENSE.md"]
+patches = []
+
+[[source]]
+name = "jwm"
+revision = "3e4518efdbc3b89c710a20d672b392608fbc8f3c"
+url = "https://github.com/joewing/jwm.git"
+status = "git-submodule"
+local_path = "third_party/jwm"
+retained_paths = ["complete pinned source; focused source list and feature configuration build xmin-jwm"]
+license_paths = ["LICENSES/jwm/LICENSE"]
+patches = ["patches/jwm/0001-direct-xft-without-pango.patch"]
+
+[[source]]
+name = "st"
+revision = "6e970474743d57a5d8b054c41fd3bff2bc895742"
+url = "https://git.suckless.org/st"
+status = "git-submodule"
+local_path = "third_party/st"
+retained_paths = ["complete pinned st 0.9.3 source; selected files build xmin-st"]
+license_paths = ["LICENSES/st/LICENSE"]
+patches = ["patches/st/0001-external-process-backend.patch"]
+
+[[source]]
 name = "xcb-proto"
 revision = "1.17.0"
 url = "https://www.x.org/releases/individual/xcb/"

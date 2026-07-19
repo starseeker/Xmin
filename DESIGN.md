@@ -168,11 +168,17 @@ Thin executables were chosen from measured size and responsibility:
 
 - `Xmin` owns server configuration and serving;
 - `xmin-run` owns credentials, display allocation, supervision, and cleanup;
-- `xminctl` owns automation and PPM capture.
+- `xminctl` owns automation and PPM capture;
+- `xmin-session` selects desktop policy and starts Xmin plus JWM;
+- `xmin-viewer` is an attachable host window and input bridge; and
+- `xmin-jwm`, `xmin-st`, and `xmin-sh` remain ordinary guest applications.
 
 The split avoids a mode-dispatch binary while allowing the launcher and
-controller to remain independently useful. The optional GL DSO is packaged
-under `lib/xmin`, outside the server dependency graph.
+controller to remain independently useful. Closing or restarting the viewer
+does not affect the guest session. The viewer tracks raw DAMAGE for the guest
+window tree, merges overlapping rectangles while retaining disjoint updates,
+and asks the server to compose only those root regions. The optional GL DSO is
+packaged under `lib/xmin`, outside the server dependency graph.
 
 ## Deliberate non-goals
 

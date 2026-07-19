@@ -317,6 +317,86 @@ cleanup:
     return result;
 }
 
+static int
+test_depth_four_pixmap(xcb_connection_t *connection, xcb_screen_t *screen)
+{
+    static const uint8_t source[] = {
+        1, 2, 3, 0,
+        4, 5, 6, 0
+    };
+    xcb_generic_error_t *error = NULL;
+    xcb_get_image_reply_t *image = NULL;
+    xcb_pixmap_t pixmap = xcb_generate_id(connection);
+    xcb_gcontext_t graphics = xcb_generate_id(connection);
+    xcb_rectangle_t rectangle = { 0, 0, 3, 2 };
+    uint32_t foreground = 0x0aU;
+    int result = 0;
+    int pixmap_created = 0;
+    int graphics_created = 0;
+
+    if (!checked(connection,
+                 xcb_create_pixmap_checked(
+                     connection, 4, pixmap, screen->root, 3, 2),
+                 "CreatePixmap depth 4"))
+        goto cleanup;
+    pixmap_created = 1;
+    if (!checked(connection,
+                 xcb_create_gc_checked(
+                     connection, graphics, pixmap, XCB_GC_FOREGROUND,
+                     &foreground),
+                 "CreateGC depth 4"))
+        goto cleanup;
+    graphics_created = 1;
+    if (!checked(connection,
+                 xcb_poly_fill_rectangle_checked(
+                     connection, pixmap, graphics, 1, &rectangle),
+                 "FillRectangle depth 4"))
+        goto cleanup;
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap,
+                      0, 0, 3, 2, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL || image->depth != 4 ||
+        xcb_get_image_data_length(image) != 8 ||
+        xcb_get_image_data(image)[0] != 0x0aU ||
+        xcb_get_image_data(image)[2] != 0x0aU ||
+        xcb_get_image_data(image)[4] != 0x0aU ||
+        xcb_get_image_data(image)[6] != 0x0aU)
+        goto cleanup;
+    free(image);
+    image = NULL;
+
+    if (!checked(connection,
+                 xcb_put_image_checked(
+                     connection, XCB_IMAGE_FORMAT_Z_PIXMAP,
+                     pixmap, graphics, 3, 2, 0, 0, 0, 4,
+                     sizeof(source), source),
+                 "PutImage depth 4"))
+        goto cleanup;
+    image = xcb_get_image_reply(
+        connection,
+        xcb_get_image(connection, XCB_IMAGE_FORMAT_Z_PIXMAP, pixmap,
+                      0, 0, 3, 2, UINT32_MAX),
+        &error);
+    if (error != NULL || image == NULL || image->depth != 4 ||
+        xcb_get_image_data_length(image) != 8 ||
+        memcmp(xcb_get_image_data(image), source, sizeof(source)) != 0)
+        goto cleanup;
+    result = 1;
+
+cleanup:
+    if (!result)
+        fprintf(stderr, "depth-four pixmap acceptance failed\n");
+    free(error);
+    free(image);
+    if (graphics_created)
+        xcb_free_gc(connection, graphics);
+    if (pixmap_created)
+        xcb_free_pixmap(connection, pixmap);
+    return result;
+}
+
 int
 main(void)
 {
@@ -372,7 +452,8 @@ main(void)
     memcpy(&pixel, xcb_get_image_data(image), sizeof(pixel));
     if ((pixel & 0x00ffffffU) != 0x0000ff00U ||
         !test_builtin_fonts(connection, window, graphics) ||
-        !test_completed_core_raster(connection, window, graphics))
+        !test_completed_core_raster(connection, window, graphics) ||
+        !test_depth_four_pixmap(connection, screen))
         goto cleanup;
     result = 0;
 

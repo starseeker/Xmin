@@ -116,6 +116,33 @@ stale_socket_error(int error) noexcept
     return error == ECONNREFUSED || error == ENOENT;
 }
 
+bool
+abstract_listener_exists(const std::string &path) noexcept
+{
+#if defined(__linux__)
+    sockaddr_un address{};
+    if (path.size() + 1 >= sizeof(address.sun_path))
+        return true;
+    UniqueFd probe(::socket(AF_UNIX, SOCK_STREAM, 0));
+    if (!probe)
+        return true;
+    address.sun_family = AF_UNIX;
+    address.sun_path[0] = '\0';
+    std::memcpy(address.sun_path + 1, path.data(), path.size());
+    const auto address_size = static_cast<socklen_t>(
+        offsetof(sockaddr_un, sun_path) + path.size() + 1);
+    if (::connect(
+            probe.get(), reinterpret_cast<const sockaddr *>(&address),
+            address_size) == 0) {
+        return true;
+    }
+    return stale_socket_error(errno) ? false : true;
+#else
+    static_cast<void>(path);
+    return false;
+#endif
+}
+
 void
 unlink_if_same(const std::string &path, dev_t device, ino_t inode) noexcept
 {
@@ -391,6 +418,14 @@ Result<void>
 DisplaySocket::start(unsigned display, const std::string &root)
 {
     display_ = display;
+    const std::string socket_path =
+        root + "/.X11-unix/X" + std::to_string(display_);
+    if (abstract_listener_exists(socket_path)) {
+        return Result<void>::failure(
+            ErrorCode::busy,
+            "display :" + std::to_string(display_) +
+                " already has an abstract listening socket");
+    }
     auto locked = acquire_lock(root);
     if (!locked)
         return locked;

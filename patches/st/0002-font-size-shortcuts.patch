@@ -1,0 +1,24 @@
+diff --git a/config.h b/config.h
+index 91ab8ca..23be203 100644
+--- a/config.h
++++ b/config.h
+@@ -176,6 +176,8 @@ static uint forcemousemod = ShiftMask;
+ static MouseShortcut mshortcuts[] = {
+ 	/* mask                 button   function        argument       release */
+ 	{ XK_ANY_MOD,           Button2, selpaste,       {.i = 0},      1 },
++	{ ControlMask,          Button4, zoom,           {.f = +1} },
++	{ ControlMask,          Button5, zoom,           {.f = -1} },
+ 	{ ShiftMask,            Button4, ttysend,        {.s = "\033[5;2~"} },
+ 	{ XK_ANY_MOD,           Button4, ttysend,        {.s = "\031"} },
+ 	{ ShiftMask,            Button5, ttysend,        {.s = "\033[6;2~"} },
+@@ -193,6 +195,10 @@ static Shortcut shortcuts[] = {
+ 	{ ShiftMask,            XK_Print,       printscreen,    {.i =  0} },
+ 	{ XK_ANY_MOD,           XK_Print,       printsel,       {.i =  0} },
+ 	{ TERMMOD,              XK_Prior,       zoom,           {.f = +1} },
++	{ TERMMOD,              XK_plus,        zoom,           {.f = +1} },
++	{ TERMMOD,              XK_equal,       zoom,           {.f = +1} },
++	{ TERMMOD,              XK_minus,       zoom,           {.f = -1} },
++	{ TERMMOD,              XK_0,           zoomreset,      {.f =  0} },
+ 	{ TERMMOD,              XK_Next,        zoom,           {.f = -1} },
+ 	{ TERMMOD,              XK_Home,        zoomreset,      {.f =  0} },
+ 	{ TERMMOD,              XK_C,           clipcopy,       {.i =  0} },

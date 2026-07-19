@@ -6,7 +6,6 @@
 #include <sys/uio.h>
 
 #include <xcb/bigreq.h>
-#include <xcb/ge.h>
 #include <xcb/render.h>
 #include <xcb/shape.h>
 #include <xcb/sync.h>
@@ -15,45 +14,17 @@
 #include <xcb/xc_misc.h>
 #include <xcb/xtest.h>
 
+#include "xcb_ge_query.h"
+
 static int checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
                    const char *operation);
-
-static xcb_genericevent_query_version_reply_t *
-query_generic_event_version(xcb_connection_t *connection,
-                            xcb_generic_error_t **error)
-{
-    static xcb_extension_t extension = {
-        .name = "Generic Event Extension",
-        .global_id = 0
-    };
-    static const xcb_protocol_request_t protocol = {
-        .count = 2,
-        .ext = &extension,
-        .opcode = XCB_GENERICEVENT_QUERY_VERSION,
-        .isvoid = 0
-    };
-    xcb_genericevent_query_version_request_t request = {
-        .client_major_version = 1,
-        .client_minor_version = 0
-    };
-    struct iovec parts[4];
-    unsigned int sequence;
-
-    parts[2].iov_base = &request;
-    parts[2].iov_len = sizeof(request);
-    parts[3].iov_base = NULL;
-    parts[3].iov_len = (size_t) (-(int) sizeof(request)) & 3U;
-    sequence = xcb_send_request(connection, XCB_REQUEST_CHECKED, parts + 2,
-                                &protocol);
-    return xcb_wait_for_reply(connection, sequence, error);
-}
 
 static int
 test_foundation_extensions(xcb_connection_t *connection)
 {
     xcb_generic_error_t *error = NULL;
-    xcb_genericevent_query_version_reply_t *generic =
-        query_generic_event_version(connection, &error);
+    xmin_ge_query_version_reply_t *generic =
+        xmin_query_ge_version(connection, &error);
     xcb_xc_misc_get_version_reply_t *misc = NULL;
     xcb_big_requests_enable_reply_t *big = NULL;
     int result = 0;

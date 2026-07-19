@@ -1,0 +1,9 @@
+[submodule "third_party/glfw"]
+	path = third_party/glfw
+	url = https://github.com/glfw/glfw.git
+[submodule "third_party/jwm"]
+	path = third_party/jwm
+	url = https://github.com/joewing/jwm.git
+[submodule "third_party/st"]
+	path = third_party/st
+	url = https://git.suckless.org/st

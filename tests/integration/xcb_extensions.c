@@ -3,8 +3,9 @@
 #include <xcb/bigreq.h>
 #include <xcb/composite.h>
 #include <xcb/damage.h>
+#if XMIN_TEST_HAVE_XCB_DBE
 #include <xcb/dbe.h>
-#include <xcb/ge.h>
+#endif
 #include <xcb/present.h>
 #include <xcb/randr.h>
 #include <xcb/render.h>
@@ -28,6 +29,8 @@
 #include <string.h>
 #include <sys/uio.h>
 
+#include "xcb_ge_query.h"
+
 #if XMIN_HAVE_MITSHM
 #include <sys/ipc.h>
 #include <sys/shm.h>
@@ -47,42 +50,12 @@ checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
     return 0;
 }
 
-static xcb_genericevent_query_version_reply_t *
-query_generic_event_version(xcb_connection_t *connection,
-                            xcb_generic_error_t **error)
-{
-    static xcb_extension_t extension = {
-        .name = "Generic Event Extension",
-        .global_id = 0
-    };
-    static const xcb_protocol_request_t protocol = {
-        .count = 2,
-        .ext = &extension,
-        .opcode = XCB_GENERICEVENT_QUERY_VERSION,
-        .isvoid = 0
-    };
-    xcb_genericevent_query_version_request_t request = {
-        .client_major_version = 1,
-        .client_minor_version = 0
-    };
-    struct iovec parts[4];
-    unsigned int sequence;
-
-    parts[2].iov_base = &request;
-    parts[2].iov_len = sizeof(request);
-    parts[3].iov_base = NULL;
-    parts[3].iov_len = (size_t) (-(int) sizeof(request)) & 3U;
-    sequence = xcb_send_request(connection, XCB_REQUEST_CHECKED, parts + 2,
-                                &protocol);
-    return xcb_wait_for_reply(connection, sequence, error);
-}
-
 static int
 test_foundation_extensions(xcb_connection_t *connection)
 {
     xcb_generic_error_t *error = NULL;
-    xcb_genericevent_query_version_reply_t *generic =
-        query_generic_event_version(connection, &error);
+    xmin_ge_query_version_reply_t *generic =
+        xmin_query_ge_version(connection, &error);
     xcb_xc_misc_get_version_reply_t *misc = NULL;
     xcb_big_requests_enable_reply_t *big = NULL;
     const char *stage = "Generic Event version";
@@ -1525,6 +1498,7 @@ cleanup:
     return result;
 }
 
+#if XMIN_TEST_HAVE_XCB_DBE
 static int
 test_dbe(xcb_connection_t *connection, xcb_screen_t *screen)
 {
@@ -1601,6 +1575,7 @@ cleanup:
     free(version);
     return result;
 }
+#endif
 
 #if XMIN_HAVE_MITSHM
 static int
@@ -1734,7 +1709,10 @@ main(void)
         !test_sync(connection) || !test_input(connection) ||
         !test_xkb(connection) || !test_xtest(connection, screen) ||
         !test_composite_damage(connection, screen) ||
-        !test_present(connection, screen) || !test_dbe(connection, screen)
+        !test_present(connection, screen)
+#if XMIN_TEST_HAVE_XCB_DBE
+        || !test_dbe(connection, screen)
+#endif
 #if XMIN_HAVE_MITSHM
         || !test_shm(connection, screen)
 #endif

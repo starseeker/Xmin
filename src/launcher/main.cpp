@@ -52,6 +52,14 @@ set_close_on_exec(int descriptor)
         ::fcntl(descriptor, F_SETFD, flags | FD_CLOEXEC) == 0;
 }
 
+bool
+set_nonblocking(int descriptor)
+{
+    const int flags = ::fcntl(descriptor, F_GETFL);
+    return flags >= 0 &&
+        ::fcntl(descriptor, F_SETFL, flags | O_NONBLOCK) == 0;
+}
+
 class SignalPipe {
 public:
     bool install()
@@ -62,7 +70,9 @@ public:
         read_.reset(descriptors[0]);
         write_.reset(descriptors[1]);
         if (!set_close_on_exec(read_.get()) ||
-            !set_close_on_exec(write_.get())) {
+            !set_close_on_exec(write_.get()) ||
+            !set_nonblocking(read_.get()) ||
+            !set_nonblocking(write_.get())) {
             return false;
         }
         struct sigaction action {};
@@ -142,7 +152,47 @@ void
 print_usage(std::ostream &stream, std::string_view program)
 {
     stream << "usage: " << program
-           << " [--server PATH] [--screen WxHxD] -- COMMAND [ARG ...]\n";
+           << " [--server PATH] [--screen WxHxD] [--session-info FILE]"
+              " -- COMMAND [ARG ...]\n";
+}
+
+bool
+write_all(int descriptor, std::string_view value)
+{
+    while (!value.empty()) {
+        const ssize_t written = ::write(descriptor, value.data(), value.size());
+        if (written < 0 && errno == EINTR)
+            continue;
+        if (written <= 0)
+            return false;
+        value.remove_prefix(static_cast<std::size_t>(written));
+    }
+    return true;
+}
+
+bool
+write_session_info(
+    const std::string &path, const std::string &display,
+    const std::string &authority)
+{
+    const int descriptor = ::open(
+        path.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+        0600);
+    if (descriptor < 0)
+        return false;
+    UniqueFd file(descriptor);
+    struct stat status {};
+    if (::fstat(file.get(), &status) != 0)
+        return false;
+    if (!S_ISREG(status.st_mode) || status.st_uid != ::getuid()) {
+        errno = EACCES;
+        return false;
+    }
+    if (::fchmod(file.get(), 0600) != 0 || ::ftruncate(file.get(), 0) != 0)
+        return false;
+    const std::string contents =
+        "XMIN_DISPLAY=" + display + "\nXMIN_XAUTHORITY=" + authority + "\n";
+    return write_all(file.get(), contents) && ::fsync(file.get()) == 0;
 }
 
 std::string
@@ -197,11 +247,17 @@ configure_bundled_gl(const std::string &launcher)
     const auto slash = launcher.rfind('/');
     if (slash == std::string::npos)
         return true;
-    const std::string directory = launcher.substr(0, slash) + "/../" +
-        XMIN_INSTALL_LIBDIR + "/xmin";
+    const std::string library_root = launcher.substr(0, slash) + "/../" +
+        XMIN_INSTALL_LIBDIR;
+    std::string directory = library_root + "/xmin";
     struct stat status {};
-    if (::stat(directory.c_str(), &status) != 0 || !S_ISDIR(status.st_mode))
-        return true;
+    if (::stat(directory.c_str(), &status) != 0 || !S_ISDIR(status.st_mode)) {
+        directory = library_root;
+        if (::stat(directory.c_str(), &status) != 0 ||
+            !S_ISDIR(status.st_mode)) {
+            return true;
+        }
+    }
     const char *existing = std::getenv(variable.data());
     const std::string value = existing != nullptr && *existing != '\0'
         ? directory + ":" + existing
@@ -309,6 +365,7 @@ run(int argc, char **argv)
 {
     std::string server_override;
     std::string screen;
+    std::string session_info;
     int command_index = -1;
     for (int index = 1; index < argc; ++index) {
         const std::string_view argument(argv[index]);
@@ -324,10 +381,12 @@ run(int argc, char **argv)
             std::cout << "xmin-run " << XMIN_VERSION << '\n';
             return 0;
         }
-        if ((argument == "--server" || argument == "--screen") &&
+        if ((argument == "--server" || argument == "--screen" ||
+             argument == "--session-info") &&
             index + 1 < argc) {
-            std::string &destination =
-                argument == "--server" ? server_override : screen;
+            std::string &destination = argument == "--server"
+                ? server_override
+                : (argument == "--screen" ? screen : session_info);
             destination = argv[++index];
             continue;
         }
@@ -426,7 +485,19 @@ run(int argc, char **argv)
                 std::cerr << "xmin-run: cannot set child environment: "
                           << std::strerror(errno) << '\n';
             }
+            else if (!session_info.empty() &&
+                     !write_session_info(
+                         session_info, display_environment, authority)) {
+                std::cerr << "xmin-run: cannot write session information "
+                          << session_info << ": " << std::strerror(errno)
+                          << '\n';
+            }
             else {
+                if (!session_info.empty()) {
+                    std::cout << "xmin-run: viewer: xmin-viewer --session-info "
+                              << session_info << '\n';
+                    std::cout.flush();
+                }
                 command = ::fork();
                 if (command == 0) {
                     signals.restore();
@@ -492,6 +563,10 @@ run(int argc, char **argv)
         result = 125;
     if (server_exited_early && result == 0)
         result = 125;
+    if (!session_info.empty() &&
+        ::unlink(session_info.c_str()) != 0 && errno != ENOENT) {
+        result = 125;
+    }
     if (::unlink(authority.c_str()) != 0 && errno != ENOENT)
         result = 125;
     if (::rmdir(temporary->c_str()) != 0 && errno != ENOENT)

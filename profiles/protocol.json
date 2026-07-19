@@ -17,7 +17,7 @@
     "root_depth": 24,
     "root_storage": "XRGB8888",
     "root_visual": "TrueColor",
-    "pixmap_depths": [1, 8, 24, 32]
+    "pixmap_depths": [1, 4, 8, 24, 32]
   },
   "core": {
     "xml": "xproto.xml",

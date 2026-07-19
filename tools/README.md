@@ -24,8 +24,11 @@ python3 tools/generate-core-fonts.py data/fonts/xmin_builtin_fonts.c \
 ```
 
 `generate-builtin-fonts.py` recreates the intermediate font data from the
-pinned libXfont2 release. `import-pixman.sh` and `import-osmesa.sh` refresh the
-two source dependencies recorded in `UPSTREAM.toml`.
+pinned libXfont2 release. `import-pixman.sh`, `import-osmesa.sh`, and
+`import-dash.sh` refresh the source dependencies recorded in `UPSTREAM.toml`.
+The dash importer requires the exact official v0.5.13.4 Git checkout, verifies
+the release's GPL-bearing path set, omits upstream `src/mksignames.c`, and
+installs Xmin's 0BSD generator in its place.
 
 Refresh the optional toolkit client's parser and embedded font files from
 verified upstream checkouts with:

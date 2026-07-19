@@ -48,10 +48,23 @@ Connection::handle_circulate_window(const RequestContext &context)
     const auto parent = reader.u32();
     if (!parent)
         return malformed_core("truncated CirculateWindow request");
-    if (!server_.circulate_window(*parent, context.data == 0))
+    const auto *parent_window = server_.window(*parent);
+    if (parent_window == nullptr)
         return send_error(context.order, bad_window, context.opcode,
                           context.sequence, *parent);
-    return Result<void>::success();
+    const auto redirected = server_.redirect_circulate_request(
+        config_.resource_base, *parent_window, context.data == 0);
+    if (redirected == RedirectDelivery::queue_full)
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    if (redirected == RedirectDelivery::redirected)
+        return drain_pending_events();
+    if (server_.circulate_window(*parent, context.data == 0) ==
+            EventDelivery::queue_full) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
+    return drain_pending_events();
 }
 
 Result<void>

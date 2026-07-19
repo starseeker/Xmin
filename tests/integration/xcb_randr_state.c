@@ -1,10 +1,67 @@
 #include <xcb/randr.h>
 #include <xcb/xcb.h>
+#include <xcb/xcbext.h>
 
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/uio.h>
+
+typedef struct {
+    uint8_t major_opcode;
+    uint8_t minor_opcode;
+    uint16_t length;
+    xcb_window_t window;
+    xcb_atom_t name;
+    uint8_t primary;
+    uint8_t automatic;
+    uint16_t output_count;
+    int16_t x;
+    int16_t y;
+    uint16_t width;
+    uint16_t height;
+    uint32_t millimetre_width;
+    uint32_t millimetre_height;
+} xmin_randr_set_monitor_request_t;
+
+_Static_assert(sizeof(xmin_randr_set_monitor_request_t) == 32,
+               "RANDR SetMonitor wire request must be 32 bytes");
+
+static xcb_void_cookie_t
+set_monitor_checked(xcb_connection_t *connection, xcb_window_t window,
+                    xcb_atom_t name, int16_t x, int16_t y,
+                    uint16_t width, uint16_t height,
+                    uint32_t millimetre_width,
+                    uint32_t millimetre_height)
+{
+    static const xcb_protocol_request_t protocol = {
+        .count = 2,
+        .ext = &xcb_randr_id,
+        .opcode = XCB_RANDR_SET_MONITOR,
+        .isvoid = 1
+    };
+    xmin_randr_set_monitor_request_t request = {
+        .window = window,
+        .name = name,
+        .x = x,
+        .y = y,
+        .width = width,
+        .height = height,
+        .millimetre_width = millimetre_width,
+        .millimetre_height = millimetre_height
+    };
+    struct iovec parts[4];
+    xcb_void_cookie_t cookie;
+
+    parts[2].iov_base = &request;
+    parts[2].iov_len = sizeof(request);
+    parts[3].iov_base = NULL;
+    parts[3].iov_len = 0;
+    cookie.sequence = xcb_send_request(
+        connection, XCB_REQUEST_CHECKED, parts + 2, &protocol);
+    return cookie;
+}
 
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
@@ -406,28 +463,32 @@ main(void)
     if (monitor_atom == XCB_NONE) {
         goto cleanup;
     }
-    {
-        xcb_randr_monitor_info_t monitor;
-        memset(&monitor, 0, sizeof(monitor));
-        monitor.name = monitor_atom;
-        monitor.x = 5;
-        monitor.y = 6;
-        monitor.width = 20;
-        monitor.height = 15;
-        monitor.width_in_millimeters = 5;
-        monitor.height_in_millimeters = 4;
-        if (!checked(connection,
-                     xcb_randr_set_monitor_checked(
-                         connection, screen->root, &monitor),
-                     "RANDR SetMonitor"))
-            goto cleanup;
-    }
+    /*
+     * libxcb 1.15's generated SetMonitor wrapper leaves its trailing iovec
+     * uninitialised.  Encode this one small request directly so the server
+     * conformance test remains deterministic across host libxcb versions.
+     */
+    if (!checked(connection,
+                 set_monitor_checked(connection, screen->root, monitor_atom,
+                                     5, 6, 20, 15, 5, 4),
+                 "RANDR SetMonitor"))
+        goto cleanup;
     free(monitors);
     monitors = xcb_randr_get_monitors_reply(
         connection, xcb_randr_get_monitors(connection, screen->root, 0),
         &error);
-    if (error != NULL || monitors == NULL || monitors->nMonitors < 2 ||
-        !checked(connection,
+    if (error != NULL || monitors == NULL || monitors->nMonitors < 2) {
+        fprintf(stderr,
+                "GetMonitors returned error=%u monitors=%p count=%u "
+                "outputs=%u\n",
+                error == NULL ? 0U : error->error_code, (void *) monitors,
+                monitors == NULL ? 0U : monitors->nMonitors,
+                monitors == NULL ? 0U : monitors->nOutputs);
+        fprintf(stderr, "XCB connection error=%d\n",
+                xcb_connection_has_error(connection));
+        goto cleanup;
+    }
+    if (!checked(connection,
                  xcb_randr_delete_monitor_checked(
                      connection, screen->root, monitor_atom),
                  "RANDR DeleteMonitor"))

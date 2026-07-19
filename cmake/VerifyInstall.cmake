@@ -1,5 +1,6 @@
 foreach(required IN ITEMS
-    BINARY_DIR STAGE_DIR BINDIR LIBDIR VERSION HAVE_CLIENT_FONTS FONTDIR)
+    BINARY_DIR STAGE_DIR BINDIR LIBDIR MANDIR DOCDIR VERSION
+    HAVE_CLIENT_FONTS HAVE_SHELL FONTDIR)
   if(NOT DEFINED ${required})
     message(FATAL_ERROR "${required} is required")
   endif()
@@ -57,6 +58,27 @@ foreach(program IN ITEMS server controller)
 endforeach()
 
 set(audit_files "${server}" "${controller}")
+if(HAVE_SHELL)
+  set(shell "${STAGE_DIR}/${BINDIR}/xmin-sh")
+  if(NOT EXISTS "${shell}" OR
+      NOT EXISTS "${STAGE_DIR}/${MANDIR}/man1/xmin-sh.1" OR
+      NOT EXISTS "${STAGE_DIR}/${DOCDIR}/licenses/dash/COPYING")
+    message(FATAL_ERROR "Installed bundled shell or its notices are missing")
+  endif()
+  execute_process(
+    COMMAND "${shell}" -c
+      "test \"$(kill -l 15)\" = TERM && trap 'exit 0' TERM && kill -s TERM $$; exit 1"
+    RESULT_VARIABLE shell_result
+    OUTPUT_VARIABLE shell_output
+    ERROR_VARIABLE shell_error
+  )
+  if(NOT shell_result EQUAL 0)
+    message(FATAL_ERROR
+      "Installed bundled shell failed (${shell_result}): "
+      "${shell_output}${shell_error}")
+  endif()
+  list(APPEND audit_files "${shell}")
+endif()
 if(HAVE_LAUNCHER)
   set(launcher "${STAGE_DIR}/${BINDIR}/xmin-run")
   if(NOT EXISTS "${launcher}")

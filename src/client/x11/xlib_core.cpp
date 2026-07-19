@@ -283,6 +283,10 @@ void xlib_dispatch_io_error(Display *display) noexcept
     }
     catch (...) {
     }
+    // Xlib I/O error handlers are terminal: applications may replace the
+    // diagnostic callback, but returning from it must not resume use of a
+    // permanently failed connection.
+    std::_Exit(EXIT_FAILURE);
 }
 
 } // namespace xmin::client::x11
@@ -376,6 +380,20 @@ int XSetForeground(Display *display, GC gc, unsigned long foreground)
     XGCValues values{};
     values.foreground = foreground;
     return XChangeGC(display, gc, GCForeground, &values);
+}
+
+int XSetFont(Display *display, GC gc, Font font)
+{
+    XGCValues values{};
+    values.font = font;
+    return XChangeGC(display, gc, GCFont, &values);
+}
+
+int XSetGraphicsExposures(Display *display, GC gc, Bool exposures)
+{
+    XGCValues values{};
+    values.graphics_exposures = exposures;
+    return XChangeGC(display, gc, GCGraphicsExposures, &values);
 }
 
 int XSetFillStyle(Display *display, GC gc, int fill_style)
@@ -486,6 +504,55 @@ int XDrawLines(
         static_cast<xcb_drawable_t>(drawable), gc_id(gc),
         static_cast<std::uint32_t>(count),
         reinterpret_cast<const xcb_point_t *>(points));
+    return 1;
+}
+
+int XDrawSegments(
+    Display *display, Drawable drawable, GC gc, XSegment *segments,
+    int count)
+{
+    auto *xcb = connection(display);
+    if (xcb == nullptr || gc == nullptr || count < 0 ||
+        (count != 0 && segments == nullptr)) {
+        return 0;
+    }
+    std::vector<xcb_segment_t> wire(static_cast<std::size_t>(count));
+    std::transform(
+        segments, segments + count, wire.begin(), [](const XSegment &segment) {
+            return xcb_segment_t{segment.x1, segment.y1, segment.x2, segment.y2};
+        });
+    xcb_poly_segment(
+        xcb, static_cast<xcb_drawable_t>(drawable), gc_id(gc),
+        static_cast<std::uint32_t>(wire.size()), wire.data());
+    return 1;
+}
+
+int XDrawString(
+    Display *display, Drawable drawable, GC gc, int x, int y,
+    const char *string, int length)
+{
+    auto *xcb = connection(display);
+    if (xcb == nullptr || gc == nullptr || length < 0 ||
+        (length != 0 && string == nullptr)) {
+        return 0;
+    }
+    std::vector<std::uint8_t> items;
+    items.reserve(static_cast<std::size_t>(length) +
+                  2U * (static_cast<std::size_t>(length) / 254U + 1U));
+    int offset = 0;
+    while (offset < length) {
+        const int item_length = std::min(length - offset, 254);
+        items.push_back(static_cast<std::uint8_t>(item_length));
+        items.push_back(0); // delta
+        const auto *begin = reinterpret_cast<const std::uint8_t *>(
+            string + offset);
+        items.insert(items.end(), begin, begin + item_length);
+        offset += item_length;
+    }
+    xcb_poly_text_8(
+        xcb, static_cast<xcb_drawable_t>(drawable), gc_id(gc),
+        static_cast<std::int16_t>(x), static_cast<std::int16_t>(y),
+        static_cast<std::uint32_t>(items.size()), items.data());
     return 1;
 }
 
@@ -649,6 +716,20 @@ int XClearWindow(Display *display, Window window)
     auto *xcb = connection(display);
     if (xcb != nullptr)
         xcb_clear_area(xcb, False, window, 0, 0, 0, 0);
+    return xcb != nullptr;
+}
+
+int XClearArea(
+    Display *display, Window window, int x, int y, unsigned int width,
+    unsigned int height, Bool exposures)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr) {
+        xcb_clear_area(
+            xcb, exposures, window, static_cast<std::int16_t>(x),
+            static_cast<std::int16_t>(y), static_cast<std::uint16_t>(width),
+            static_cast<std::uint16_t>(height));
+    }
     return xcb != nullptr;
 }
 
@@ -990,6 +1071,22 @@ int XConfigureWindow(
     if (value_mask & CWStackMode) values.push_back(static_cast<std::uint32_t>(changes->stack_mode));
     return configure_window(
         display, window, static_cast<std::uint16_t>(value_mask), values);
+}
+
+int XRestackWindows(Display *display, Window *windows, int count)
+{
+    if (display == nullptr || count < 0 || (count != 0 && windows == nullptr))
+        return 0;
+    for (int index = 1; index < count; ++index) {
+        XWindowChanges changes{};
+        changes.sibling = windows[index - 1];
+        changes.stack_mode = Below;
+        if (!XConfigureWindow(
+                display, windows[index], CWSibling | CWStackMode, &changes)) {
+            return 0;
+        }
+    }
+    return 1;
 }
 
 Status XReconfigureWMWindow(
@@ -1348,6 +1445,27 @@ int XFreeFont(Display *display, XFontStruct *font)
     return xcb != nullptr;
 }
 
+int XTextWidth(XFontStruct *font, const char *string, int count)
+{
+    if (font == nullptr || count <= 0 || string == nullptr)
+        return 0;
+    int width = 0;
+    for (int index = 0; index < count; ++index) {
+        const unsigned int character =
+            static_cast<unsigned char>(string[index]);
+        const XCharStruct *metrics = nullptr;
+        if (font->per_char != nullptr && font->min_byte1 == 0 &&
+            font->max_byte1 == 0 &&
+            character >= static_cast<unsigned>(font->min_char_or_byte2) &&
+            character <= static_cast<unsigned>(font->max_char_or_byte2)) {
+            metrics = &font->per_char[
+                character - static_cast<unsigned>(font->min_char_or_byte2)];
+        }
+        width += metrics == nullptr ? font->min_bounds.width : metrics->width;
+    }
+    return width;
+}
+
 int XUnloadFont(Display *display, Font font)
 {
     auto *xcb = connection(display);
@@ -1359,6 +1477,91 @@ int XUnloadFont(Display *display, Font font)
 Window XRootWindow(Display *display, int screen)
 {
     return display == nullptr ? None : RootWindow(display, screen);
+}
+
+Window XDefaultRootWindow(Display *display)
+{
+    return display == nullptr ? None : DefaultRootWindow(display);
+}
+
+Window XRootWindowOfScreen(Screen *screen)
+{
+    return screen == nullptr ? None : RootWindowOfScreen(screen);
+}
+
+int XDefaultScreen(Display *display)
+{
+    return display == nullptr ? 0 : DefaultScreen(display);
+}
+
+Visual *XDefaultVisual(Display *display, int screen)
+{
+    return display == nullptr ? nullptr : DefaultVisual(display, screen);
+}
+
+Visual *XDefaultVisualOfScreen(Screen *screen)
+{
+    return screen == nullptr ? nullptr : DefaultVisualOfScreen(screen);
+}
+
+GC XDefaultGC(Display *display, int screen)
+{
+    return display == nullptr ? nullptr : DefaultGC(display, screen);
+}
+
+GC XDefaultGCOfScreen(Screen *screen)
+{
+    return screen == nullptr ? nullptr : DefaultGCOfScreen(screen);
+}
+
+unsigned long XBlackPixel(Display *display, int screen)
+{
+    return display == nullptr ? 0 : BlackPixel(display, screen);
+}
+
+unsigned long XWhitePixel(Display *display, int screen)
+{
+    return display == nullptr ? 0 : WhitePixel(display, screen);
+}
+
+unsigned long XAllPlanes(void)
+{
+    return AllPlanes;
+}
+
+unsigned long XBlackPixelOfScreen(Screen *screen)
+{
+    return screen == nullptr ? 0 : BlackPixelOfScreen(screen);
+}
+
+unsigned long XWhitePixelOfScreen(Screen *screen)
+{
+    return screen == nullptr ? 0 : WhitePixelOfScreen(screen);
+}
+
+Colormap XDefaultColormap(Display *display, int screen)
+{
+    return display == nullptr ? None : DefaultColormap(display, screen);
+}
+
+int XDefaultDepth(Display *display, int screen)
+{
+    return display == nullptr ? 0 : DefaultDepth(display, screen);
+}
+
+Screen *XScreenOfDisplay(Display *display, int screen)
+{
+    return display == nullptr ? nullptr : ScreenOfDisplay(display, screen);
+}
+
+Screen *XDefaultScreenOfDisplay(Display *display)
+{
+    return display == nullptr ? nullptr : DefaultScreenOfDisplay(display);
+}
+
+int XScreenCount(Display *display)
+{
+    return display == nullptr ? 0 : ScreenCount(display);
 }
 
 Status XQueryPointer(
@@ -1530,6 +1733,40 @@ int XGrabServer(Display *display)
 {
     auto *xcb = connection(display);
     if (xcb != nullptr) xcb_grab_server(xcb);
+    return xcb != nullptr;
+}
+
+int XChangeSaveSet(Display *display, Window window, int mode)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr)
+        xcb_change_save_set(xcb, static_cast<std::uint8_t>(mode), window);
+    return xcb != nullptr;
+}
+
+int XAddToSaveSet(Display *display, Window window)
+{
+    return XChangeSaveSet(display, window, SetModeInsert);
+}
+
+int XRemoveFromSaveSet(Display *display, Window window)
+{
+    return XChangeSaveSet(display, window, SetModeDelete);
+}
+
+int XInstallColormap(Display *display, Colormap colormap)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr)
+        xcb_install_colormap(xcb, colormap);
+    return xcb != nullptr;
+}
+
+int XKillClient(Display *display, XID resource)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr)
+        xcb_kill_client(xcb, static_cast<std::uint32_t>(resource));
     return xcb != nullptr;
 }
 

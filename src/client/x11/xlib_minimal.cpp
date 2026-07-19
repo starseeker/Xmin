@@ -440,6 +440,12 @@ Display *XOpenDisplay(const char *display_name)
     storage->max_keycode = setup->max_keycode;
     storage->private11 = reinterpret_cast<XPointer>(display_state.release());
 
+    screen.default_gc = XCreateGC(display, screen.root, 0, nullptr);
+    if (screen.default_gc == nullptr) {
+        XCloseDisplay(display);
+        return nullptr;
+    }
+
     const char *name = display_name;
     if (name == nullptr || *name == '\0') {
         name = std::getenv("DISPLAY");
@@ -468,6 +474,10 @@ int XCloseDisplay(Display *display)
     xmin::client::x11::xlib_forget_events(display);
     std::unique_ptr<DisplayState> display_state(state(display));
     if (display_state && display_state->connection != nullptr) {
+        if (display_state->screen.default_gc != nullptr) {
+            XFreeGC(display, display_state->screen.default_gc);
+            display_state->screen.default_gc = nullptr;
+        }
         xcb_disconnect(display_state->connection);
     }
     std::free(storage->vendor);

@@ -25,6 +25,26 @@ include(XminProtocolProfile)
 
 set(XMIN_INSTALL_FONTDIR "${CMAKE_INSTALL_DATADIR}/Xmin/fonts")
 
+# Keep the build tree predictable for people and helper scripts: every
+# executable (including test tools) lives in bin, while shared and static
+# libraries live in lib.  Multi-config generators use the same directories
+# instead of adding a configuration-name subdirectory.
+set(XMIN_BUILD_BINDIR "${PROJECT_BINARY_DIR}/bin")
+set(XMIN_BUILD_LIBDIR "${PROJECT_BINARY_DIR}/lib")
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${XMIN_BUILD_BINDIR}")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${XMIN_BUILD_LIBDIR}")
+set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${XMIN_BUILD_LIBDIR}")
+foreach(xmin_config IN LISTS CMAKE_CONFIGURATION_TYPES)
+  string(TOUPPER "${xmin_config}" xmin_config_upper)
+  set(CMAKE_RUNTIME_OUTPUT_DIRECTORY_${xmin_config_upper}
+    "${XMIN_BUILD_BINDIR}")
+  set(CMAKE_LIBRARY_OUTPUT_DIRECTORY_${xmin_config_upper}
+    "${XMIN_BUILD_LIBDIR}")
+  set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY_${xmin_config_upper}
+    "${XMIN_BUILD_LIBDIR}")
+endforeach()
+file(MAKE_DIRECTORY "${XMIN_BUILD_BINDIR}" "${XMIN_BUILD_LIBDIR}")
+
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
@@ -125,7 +145,7 @@ if(XMIN_ENABLE_INSTALL)
     COMPONENT Development
   )
   install(
-    FILES README.txt DESIGN.md BUILDING.md
+    FILES README.md DESIGN.md BUILDING.md
     TYPE DOC
     COMPONENT Documentation
   )
@@ -137,6 +157,9 @@ message(STATUS "  Qt X11 client SDK:     ${XMIN_BUILD_QT_CLIENT}")
 message(STATUS "  FLTK/Tk client SDK:    ${XMIN_BUILD_TOOLKIT_CLIENT}")
 message(STATUS "  MIT-SHM support:       ${XMIN_HAVE_MITSHM}")
 message(STATUS "  Integrated launcher:   ${XMIN_BUILD_LAUNCHER}")
+message(STATUS "  Host viewer:           ${XMIN_BUILD_VIEWER}")
+message(STATUS "  Desktop session:       ${XMIN_BUILD_DESKTOP}")
+message(STATUS "  Bundled dash shell:    ${XMIN_BUILD_BUNDLED_SHELL}")
 message(STATUS "  Tests:                 ${XMIN_BUILD_TESTS}")
 message(STATUS "  ASan/UBSan:            ${XMIN_ENABLE_SANITIZERS}")
 if(XMIN_BUILD_TESTS)

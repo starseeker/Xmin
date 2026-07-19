@@ -1,0 +1,129 @@
+diff --git a/src/font.c b/src/font.c
+index b9c70d6..7ef1f7a 100644
+--- a/src/font.c
++++ b/src/font.c
+@@ -34,6 +34,8 @@
+ 
+ #ifdef USE_PANGO
+ static const char *DEFAULT_FONT = "12";
++#elif defined(USE_XFT)
++static const char *DEFAULT_FONT = "Go Sans-12";
+ #else
+ static const char *DEFAULT_FONT = "fixed";
+@@ -60,14 +62,16 @@ static int font_ascents[FONT_COUNT];
+ static PangoLayout *fonts[FONT_COUNT];
+ static int font_heights[FONT_COUNT];
+ static int font_ascents[FONT_COUNT];
+ static PangoFontMap *font_map;
+ static PangoContext *font_context;
++#elif defined(USE_XFT)
++static XftFont *fonts[FONT_COUNT];
+ #else
+ static XFontStruct *fonts[FONT_COUNT];
+ #endif
+ static char *fontNames[FONT_COUNT];
+ 
+-#ifdef USE_PANGO
++#if defined(USE_PANGO) || defined(USE_XFT)
+ static int IsXlfd(const char *str);
+ #endif
+@@ -164,6 +166,24 @@ void StartupFonts(void)
+         font_heights[x] = 0;
+       }
++#elif defined(USE_XFT)
++      XftFont *font = NULL;
++      if(fontNames[x]) {
++         if(IsXlfd(fontNames[x])) {
++            font = JXftFontOpenXlfd(display, rootScreen, fontNames[x]);
++         }
++         if(!font) {
++            font = JXftFontOpenName(display, rootScreen, fontNames[x]);
++         }
++         if(JUNLIKELY(!font)) {
++            Warning(_("could not load font: %s"), fontNames[x]);
++         }
++      }
++      if(!font) {
++         font = JXftFontOpenName(display, rootScreen, DEFAULT_FONT);
++      }
++      fonts[x] = font;
+ #else /* USE_PANGO */
+       if(fontNames[x]) {
+          fonts[x] = JXLoadQueryFont(display, fontNames[x]);
+@@ -188,6 +208,9 @@ void ShutdownFonts(void)
+          g_object_unref(fonts[x]);
+          fonts[x] = NULL;
++#elif defined(USE_XFT)
++         JXftFontClose(display, fonts[x]);
++         fonts[x] = NULL;
+ #else
+          JXFreeFont(display, fonts[x]);
+          fonts[x] = NULL;
+@@ -230,7 +256,7 @@ void DestroyFonts(void)
+ 
+ /** Determine if a font string is likely XLFD. */
+-#ifdef USE_PANGO
++#if defined(USE_PANGO) || defined(USE_XFT)
+ int IsXlfd(const char *str)
+ {
+    /* Valid XLFD should have 14 '-'s. */
+@@ -317,6 +340,8 @@ int GetStringWidth(FontType ft, const char *str)
+ 
+ #ifdef USE_PANGO
+    PangoRectangle rect;
++#elif defined(USE_XFT)
++   XGlyphInfo extents;
+ #endif
+ 
+    /* Convert to UTF-8 if necessary. */
+@@ -327,6 +352,10 @@ int GetStringWidth(FontType ft, const char *str)
+    pango_layout_set_width(fonts[ft], -1);
+    pango_layout_get_extents(fonts[ft], NULL, &rect);
+    result = (rect.width + PANGO_SCALE - 1) / PANGO_SCALE;
++#elif defined(USE_XFT)
++   JXftTextExtentsUtf8(display, fonts[ft], (const FcChar8*)utf8String,
++                       strlen(utf8String), &extents);
++   result = extents.xOff;
+ #else
+    result = XTextWidth(fonts[ft], utf8String, strlen(utf8String));
+ #endif
+@@ -343,6 +372,8 @@ int GetStringHeight(FontType ft)
+ {
+ #ifdef USE_PANGO
+    return PANGO_PIXELS(font_heights[ft]);
++#elif defined(USE_XFT)
++   return fonts[ft]->height;
+ #else
+    return fonts[ft]->ascent + fonts[ft]->descent;
+ #endif
+@@ -369,10 +400,13 @@ void RenderString(Drawable d, FontType font, ColorType color,
+    Region renderRegion;
+    int len;
+    char *utf8String;
+-#ifdef USE_PANGO
++#if defined(USE_PANGO) || defined(USE_XFT)
+    XftDraw *xd;
+-   PangoLayoutLine *line;
+    XftColor *xc;
++#  ifdef USE_PANGO
++   PangoLayoutLine *line;
++#  endif
+ #else
+    XGCValues gcValues;
+    unsigned long gcMask;
+@@ -416,6 +450,15 @@ void RenderString(Drawable d, FontType font, ColorType color,
+       y * PANGO_SCALE + font_ascents[font]);
+ 
+    JXftDrawDestroy(xd);
++#elif defined(USE_XFT)
++   xd = JXftDrawCreate(display, d, rootVisual, rootColormap);
++   if(xd) {
++      JXftDrawSetClip(xd, renderRegion);
++      xc = GetXftColor(color);
++      JXftDrawStringUtf8(xd, xc, fonts[font], x, y + fonts[font]->ascent,
++                         (const FcChar8*)utf8String, len);
++      JXftDrawDestroy(xd);
++   }
+ #else
+ 
+    gcMask = GCGraphicsExposures;

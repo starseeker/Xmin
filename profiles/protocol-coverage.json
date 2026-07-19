@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "generated_from": {
-    "policy_sha256": "fc33904315c76df9da6b583be0d79114c08febb7c25036ae57361c093b54f3ac",
+    "policy_sha256": "888ac397b4621047407258c55c0ec06db6c8f6a3de966b182e8e9db3f0a5da1a",
     "xml": [
       {
         "file": "bigreq.xml",
@@ -106,6 +106,7 @@
       "root_visual": "TrueColor",
       "pixmap_depths": [
         1,
+        4,
         8,
         24,
         32

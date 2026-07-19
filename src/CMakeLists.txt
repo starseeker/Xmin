@@ -6,10 +6,18 @@ if(XMIN_BUILD_LAUNCHER)
   add_subdirectory(launcher)
 endif()
 
+if(XMIN_BUILD_VIEWER)
+  add_subdirectory(viewer)
+endif()
+
 if(XMIN_BUILD_QT_CLIENT OR XMIN_BUILD_TOOLKIT_CLIENT)
   add_subdirectory(client/x11)
 endif()
 
 if(XMIN_BUILD_CLIENT_GL)
   add_subdirectory(client/glx)
+endif()
+
+if(XMIN_BUILD_DESKTOP)
+  add_subdirectory(desktop)
 endif()

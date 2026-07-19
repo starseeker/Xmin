@@ -259,7 +259,8 @@ main(void)
         xcb_generic_event_t *event = xcb_wait_for_event(connection);
         if (event == NULL)
             goto cleanup;
-        if ((event->response_type & 0x7fU) == extension->first_event + 1) {
+        if ((event->response_type & 0x7fU) ==
+            (unsigned int) extension->first_event + 1U) {
             xcb_xfixes_cursor_notify_event_t *notify =
                 (xcb_xfixes_cursor_notify_event_t *) event;
             int valid = notify->window == screen->root &&

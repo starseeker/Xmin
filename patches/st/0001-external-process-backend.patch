@@ -1,0 +1,157 @@
+diff --git a/st.c b/st.c
+index 51049ba..26bf817 100644
+--- a/st.c
++++ b/st.c
+@@ -16,6 +16,10 @@
+ #include "st.h"
+ #include "win.h"
+ 
++#ifdef XMIN_EXTERNAL_PTY_BACKEND
++#include "xmin_pty_backend.h"
++#endif
++
+ #if   defined(__linux)
+  #include <pty.h>
+ #elif defined(__OpenBSD__) || defined(__NetBSD__) || defined(__APPLE__)
+@@ -658,6 +662,7 @@ die(const char *errstr, ...)
+ 	exit(1);
+ }
+ 
++#ifndef XMIN_EXTERNAL_PTY_BACKEND
+ void
+ execsh(char *cmd, char **args)
+ {
+@@ -945,6 +950,96 @@ ttyhangup(void)
+ 	kill(pid, SIGHUP);
+ }
+ 
++#else
++
++int
++ttynew(const char *line, char *cmd, const char *out, char **args)
++{
++	struct xmin_pty_options options = {
++		.line = line,
++		.command = cmd,
++		.output = out,
++		.arguments = args,
++		.shell = cmd,
++		.scroll = scroll,
++		.utmp = utmp,
++		.stty_args = stty_args,
++		.termname = termname,
++	};
++	if (out)
++		term.mode |= MODE_PRINT;
++	return xmin_pty_open(&options);
++}
++
++size_t
++ttyread(void)
++{
++	static char buf[BUFSIZ];
++	static int buflen;
++	ssize_t received;
++	int written;
++
++	received = xmin_pty_read(buf + buflen, LEN(buf) - buflen);
++	if (received == 0)
++		exit(0);
++	if (received < 0) {
++		if (errno == EINTR)
++			return 0;
++		die("couldn't read from terminal backend: %s\n", strerror(errno));
++	}
++	buflen += received;
++	written = twrite(buf, buflen, 0);
++	buflen -= written;
++	if (buflen > 0)
++		memmove(buf, buf + written, buflen);
++	return received;
++}
++
++static void
++ttywriteraw(const char *data, size_t length)
++{
++	if (xmin_pty_write(data, length) < 0)
++		die("write error on terminal backend: %s\n", strerror(errno));
++}
++
++void
++ttywrite(const char *data, size_t length, int may_echo)
++{
++	const char *next;
++	if (may_echo && IS_SET(MODE_ECHO))
++		twrite(data, length, 1);
++	if (!IS_SET(MODE_CRLF)) {
++		ttywriteraw(data, length);
++		return;
++	}
++	while (length > 0) {
++		if (*data == '\r') {
++			next = data + 1;
++			ttywriteraw("\r\n", 2);
++		} else {
++			next = memchr(data, '\r', length);
++			DEFAULT(next, data + length);
++			ttywriteraw(data, next - data);
++		}
++		length -= next - data;
++		data = next;
++	}
++}
++
++void
++ttyresize(int width, int height)
++{
++	xmin_pty_resize(term.row, term.col, width, height);
++}
++
++void
++ttyhangup(void)
++{
++	xmin_pty_hangup();
++}
++
++#endif
++
+ int
+ tattrset(int attr)
+ {
+@@ -2056,8 +2151,11 @@ strreset(void)
+ void
+ sendbreak(const Arg *arg)
+ {
++#ifdef XMIN_EXTERNAL_PTY_BACKEND
++	xmin_pty_send_break();
++#else
+ 	if (tcsendbreak(cmdfd, 0))
+ 		perror("Error sending break");
++#endif
+ }
+ 
+ void
+@@ -2065,7 +2163,11 @@ tprinter(char *s, size_t len)
+ {
++#ifdef XMIN_EXTERNAL_PTY_BACKEND
++	xmin_pty_print(s, len);
++#else
+ 	if (iofd != -1 && xwrite(iofd, s, len) < 0) {
+ 		perror("Error writing to output file");
+ 		close(iofd);
+ 		iofd = -1;
+ 	}
++#endif
+ }
+diff --git a/x.c b/x.c
+index d73152b..ae45087 100644
+--- a/x.c
++++ b/x.c
+@@ -1,6 +1,7 @@
+ /* See LICENSE for license details. */
+ #include <errno.h>
+ #include <math.h>
++#include <stdio.h>
+ #include <limits.h>
+ #include <locale.h>
+ #include <signal.h>

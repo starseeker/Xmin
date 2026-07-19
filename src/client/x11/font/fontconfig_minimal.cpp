@@ -637,9 +637,32 @@ void FcFontSetDestroy(FcFontSet *set)
     delete set;
 }
 
+FcPattern *FcFontMatch(
+    FcConfig *, FcPattern *pattern, FcResult *result)
+{
+    FcPattern *matched = FcFontRenderPrepare(nullptr, pattern, nullptr);
+    if (result != nullptr)
+        *result = matched == nullptr ? FcResultNoMatch : FcResultMatch;
+    return matched;
+}
+
+void FcDefaultSubstitute(FcPattern *)
+{
+}
+
+FcCharSet *FcCharSetCreate(void)
+{
+    return new (std::nothrow) FcCharSet;
+}
+
 FcCharSet *FcCharSetCopy(FcCharSet *source)
 {
     return source == nullptr ? nullptr : new (std::nothrow) FcCharSet(*source);
+}
+
+FcBool FcCharSetAddChar(FcCharSet *charset, FcChar32 codepoint)
+{
+    return charset != nullptr && codepoint <= 0x10ffffU ? FcTrue : FcFalse;
 }
 
 void FcCharSetDestroy(FcCharSet *charset)

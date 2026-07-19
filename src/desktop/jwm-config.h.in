@@ -1,0 +1,37 @@
+#ifndef XMIN_JWM_CONFIG_H
+#define XMIN_JWM_CONFIG_H
+
+#define PACKAGE "xmin-jwm"
+#define PACKAGE_NAME "JWM"
+#define PACKAGE_VERSION "2.4.6-xmin"
+#define VERSION PACKAGE_VERSION
+#define SYSTEM_CONFIG "@CMAKE_INSTALL_FULL_DATADIR@/Xmin/desktop/jwmrc"
+
+#define HAVE_STDARG_H 1
+#define HAVE_STDIO_H 1
+#define HAVE_STDLIB_H 1
+#define HAVE_CTYPE_H 1
+#define HAVE_SIGNAL_H 1
+#define HAVE_UNISTD_H 1
+#define HAVE_TIME_H 1
+#define HAVE_SYS_WAIT_H 1
+#define HAVE_SYS_TIME_H 1
+#define HAVE_SYS_SELECT_H 1
+#define HAVE_LOCALE_H 1
+#define HAVE_X11_XUTIL_H 1
+#define HAVE_X11_CURSORFONT_H 1
+#define HAVE_X11_XPROTO_H 1
+#define HAVE_X11_XATOM_H 1
+#define HAVE_X11_KEYSYM_H 1
+#define HAVE_X11_XRESOURCE_H 1
+#define HAVE_UNSETENV 1
+#define HAVE_PUTENV 1
+#define HAVE_SETLOCALE 1
+
+/* Xmin supplies Xft and embedded fonts without Pango, Freetype, or runtime
+ * font discovery.  Image loaders and the auxiliary X extension libraries are
+ * deliberately omitted from this desktop profile. */
+#define USE_XFT 1
+#define DISABLE_CONFIRM 1
+
+#endif

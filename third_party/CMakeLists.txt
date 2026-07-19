@@ -61,3 +61,17 @@ xmin_add_component(pixman
     "${PROJECT_BINARY_DIR}/generated/pixman"
   PUBLIC_LIBRARIES ${xmin_pixman_libraries}
 )
+
+# GLFW belongs exclusively to the optional host viewer.  Keep its platform
+# dependencies and OpenGL linkage outside the Xmin server graph.
+if(XMIN_BUILD_VIEWER)
+  set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+  set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+  set(GLFW_INSTALL OFF CACHE BOOL "" FORCE)
+  if(UNIX AND NOT APPLE)
+    set(GLFW_BUILD_X11 ON CACHE BOOL "" FORCE)
+    set(GLFW_BUILD_WAYLAND OFF CACHE BOOL "" FORCE)
+  endif()
+  add_subdirectory(glfw EXCLUDE_FROM_ALL)
+endif()

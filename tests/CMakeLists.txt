@@ -7,6 +7,30 @@ set_tests_properties(xmin.help PROPERTIES
   PASS_REGULAR_EXPRESSION "usage: Xmin .*DISPLAY"
 )
 
+if(UNIX AND TARGET Xmin::session AND TARGET Xmin::viewer)
+  add_test(NAME xmin.launch-script-help
+    COMMAND "${PROJECT_SOURCE_DIR}/launch.sh" --help
+  )
+  set_tests_properties(xmin.launch-script-help PROPERTIES
+    PASS_REGULAR_EXPRESSION
+      "Launch an Xmin desktop session and attach the separate GLFW host viewer"
+  )
+  add_test(NAME xmin.desktop-stress-help
+    COMMAND "${PROJECT_SOURCE_DIR}/tests/desktop_stress.sh" --help
+  )
+  set_tests_properties(xmin.desktop-stress-help PROPERTIES
+    PASS_REGULAR_EXPRESSION "seeded Xmin/JWM/st/GLFW lifecycle stress test"
+  )
+endif()
+
+if(TARGET xmin_dash_external)
+  add_test(NAME xmin.bundled-shell
+    COMMAND "${XMIN_BUILD_BINDIR}/xmin-sh" -c
+      "test \"$(kill -l 15)\" = TERM && trap 'exit 0' TERM && kill -s TERM $$; exit 1"
+  )
+  set_tests_properties(xmin.bundled-shell PROPERTIES TIMEOUT 10)
+endif()
+
 add_executable(xmin_foundation foundation.cpp)
 target_compile_features(xmin_foundation PRIVATE cxx_std_17)
 target_link_libraries(xmin_foundation PRIVATE Xmin::server_core)
@@ -48,6 +72,11 @@ add_test(NAME xmin.standalone
 set_tests_properties(xmin.standalone PROPERTIES TIMEOUT 30)
 
 if(TARGET Xmin::run)
+  # When available, a reference X server lets the same Xmin client binaries
+  # run in the opposite direction.  This catches client/server bugs that can
+  # otherwise agree with each other and remain invisible.
+  find_program(XMIN_TEST_XVFB_RUN_EXECUTABLE NAMES xvfb-run)
+
   add_executable(xmin_launcher_child integration/launcher_child.c)
   target_compile_features(xmin_launcher_child PRIVATE c_std_11)
   xmin_enable_warnings(xmin_launcher_child)
@@ -95,6 +124,17 @@ if(TARGET Xmin::run)
         -- $<TARGET_FILE:xmin_qt_client_core>
     )
     set_tests_properties(xmin.qt-client-core PROPERTIES TIMEOUT 20)
+    if(XMIN_TEST_XVFB_RUN_EXECUTABLE)
+      add_test(NAME xmin.qt-client-core-xvfb
+        COMMAND "${XMIN_TEST_XVFB_RUN_EXECUTABLE}" -a -s
+          "-screen 0 96x80x24 -nolisten tcp"
+          $<TARGET_FILE:xmin_qt_client_core>
+      )
+      set_tests_properties(xmin.qt-client-core-xvfb PROPERTIES
+        TIMEOUT 20
+        LABELS reference
+      )
+    endif()
   endif()
 
   if(TARGET Xmin::ToolkitX11)
@@ -142,6 +182,17 @@ if(TARGET Xmin::run)
         -- $<TARGET_FILE:xmin_toolkit_xlib>
     )
     set_tests_properties(xmin.toolkit-xlib PROPERTIES TIMEOUT 20)
+    if(XMIN_TEST_XVFB_RUN_EXECUTABLE)
+      add_test(NAME xmin.toolkit-xlib-xvfb
+        COMMAND "${XMIN_TEST_XVFB_RUN_EXECUTABLE}" -a -s
+          "-screen 0 96x72x24 -nolisten tcp"
+          $<TARGET_FILE:xmin_toolkit_xlib>
+      )
+      set_tests_properties(xmin.toolkit-xlib-xvfb PROPERTIES
+        TIMEOUT 20
+        LABELS reference
+      )
+    endif()
   endif()
 
   # Host XCB is test-only and remains an independent protocol authority.
@@ -202,9 +253,14 @@ if(TARGET Xmin::run)
       pkg_check_modules(XMIN_TEST_XCB_EXTENSIONS QUIET IMPORTED_TARGET
         xcb-render xcb-randr xcb-xfixes xcb-shape xcb-sync xcb-xinput
         xcb-xkb xcb-xtest xcb-composite xcb-damage xcb-present xcb-shm
-        xcb-dbe xcb-xinerama xcb-screensaver
+        xcb-xinerama xcb-screensaver
       )
       if(TARGET PkgConfig::XMIN_TEST_XCB_EXTENSIONS)
+        # DBE is optional in several otherwise complete libxcb development
+        # installations.  Do not let its absence suppress every extension
+        # conformance test; only omit the DBE-specific client-library check.
+        pkg_check_modules(XMIN_TEST_XCB_DBE QUIET IMPORTED_TARGET xcb-dbe)
+
         function(xmin_add_extension_xcb_test target source test_name width height)
           add_executable(${target} ${source})
           target_compile_features(${target} PRIVATE c_std_11)
@@ -228,6 +284,20 @@ if(TARGET Xmin::run)
         xmin_add_extension_xcb_test(
           xmin_xcb_extensions integration/xcb_extensions.c
           xmin.xcb-extensions 96 80)
+        if(TARGET PkgConfig::XMIN_TEST_XCB_DBE)
+          target_compile_definitions(xmin_xcb_extensions PRIVATE
+            XMIN_TEST_HAVE_XCB_DBE=1
+          )
+          target_link_libraries(xmin_xcb_extensions PRIVATE
+            PkgConfig::XMIN_TEST_XCB_DBE
+          )
+        else()
+          target_compile_definitions(xmin_xcb_extensions PRIVATE
+            XMIN_TEST_HAVE_XCB_DBE=0
+          )
+          message(STATUS
+            "xcb-dbe not found: omitting only the DBE libxcb binding check")
+        endif()
         xmin_add_extension_xcb_test(
           xmin_xcb_xtest_state integration/xcb_xtest_state.c
           xmin.xcb-xtest-state 96 80)
@@ -356,7 +426,19 @@ if(TARGET Xmin::run)
         -- $<TARGET_FILE:xmin_${qt_suffix}_raster>
     )
     set_tests_properties(xmin.${qt_suffix}-raster PROPERTIES
-      ENVIRONMENT "QT_QPA_PLATFORM=xcb" TIMEOUT 30)
+      ENVIRONMENT
+        "QT_QPA_PLATFORM=xcb;QT_QPA_PLATFORMTHEME=none;QT_XCB_GL_INTEGRATION=none;XDG_CURRENT_DESKTOP=generic;DESKTOP_SESSION=;QT_IM_MODULE=compose"
+      TIMEOUT 30
+    )
+    if(XMIN_ENABLE_SANITIZERS)
+      # libxkbcommon-x11 uses bounded copies from exact-sized XCB reply
+      # allocations. ASan's strict string interceptor reads through the
+      # allocation boundary even though the explicit protocol length bounds
+      # the operation; retain all other address/undefined checks.
+      set_property(TEST xmin.${qt_suffix}-raster APPEND PROPERTY
+        ENVIRONMENT "ASAN_OPTIONS=strict_string_checks=0"
+      )
+    endif()
 
     # An unmodified host Qt may load its Xlib-based qxcb support. Linking that
     # process to the toolkit facade would mix two different Display ABIs in one
@@ -384,7 +466,15 @@ if(TARGET Xmin::run)
           -- $<TARGET_FILE:xmin_${qt_suffix}_opengl>
       )
       set_tests_properties(xmin.${qt_suffix}-opengl PROPERTIES
-        ENVIRONMENT "QT_QPA_PLATFORM=xcb" TIMEOUT 30)
+        ENVIRONMENT
+          "QT_QPA_PLATFORM=xcb;QT_QPA_PLATFORMTHEME=none;XDG_CURRENT_DESKTOP=generic;DESKTOP_SESSION=;QT_IM_MODULE=compose"
+        TIMEOUT 30
+      )
+      if(XMIN_ENABLE_SANITIZERS)
+        set_property(TEST xmin.${qt_suffix}-opengl APPEND PROPERTY
+          ENVIRONMENT "ASAN_OPTIONS=strict_string_checks=0"
+        )
+      endif()
     endif()
   endfunction()
 
@@ -434,11 +524,14 @@ if(XMIN_ENABLE_INSTALL)
   set(xmin_install_have_launcher FALSE)
   set(xmin_install_have_gl FALSE)
   set(xmin_install_have_client_fonts FALSE)
+  set(xmin_install_have_shell FALSE)
   set(xmin_install_test_arguments
     "-DBINARY_DIR=${PROJECT_BINARY_DIR}"
     "-DSTAGE_DIR=${PROJECT_BINARY_DIR}/install-test/prefix"
     "-DBINDIR=${CMAKE_INSTALL_BINDIR}"
     "-DLIBDIR=${CMAKE_INSTALL_LIBDIR}"
+    "-DMANDIR=${CMAKE_INSTALL_MANDIR}"
+    "-DDOCDIR=${CMAKE_INSTALL_DOCDIR}"
     "-DVERSION=${PROJECT_VERSION}"
   )
   if(TARGET Xmin::run)
@@ -453,10 +546,14 @@ if(XMIN_ENABLE_INSTALL)
   if(TARGET Xmin::QtX11 OR TARGET Xmin::ToolkitX11)
     set(xmin_install_have_client_fonts TRUE)
   endif()
+  if(TARGET xmin_dash_external)
+    set(xmin_install_have_shell TRUE)
+  endif()
   list(APPEND xmin_install_test_arguments
     "-DHAVE_LAUNCHER=${xmin_install_have_launcher}"
     "-DHAVE_GL=${xmin_install_have_gl}"
     "-DHAVE_CLIENT_FONTS=${xmin_install_have_client_fonts}"
+    "-DHAVE_SHELL=${xmin_install_have_shell}"
     "-DFONTDIR=${XMIN_INSTALL_FONTDIR}"
   )
   add_test(NAME xmin.install-relocation-dependencies

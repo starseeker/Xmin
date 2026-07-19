@@ -2,7 +2,7 @@
 
 ## Requirements
 
-The product build requires CMake 3.21 or newer, a C11 compiler, a C++17
+The core product build requires CMake 3.21 or newer, a C11 compiler, a C++17
 compiler, Unix-domain sockets, and the standard C/C++ and math libraries.
 Optional client OpenGL additionally needs the platform thread backend selected
 by CMake. All product sources, pixman, protocol inputs, fonts, and optional
@@ -25,11 +25,16 @@ file mappings, MIT-SHM shared pixmaps, or Present are unavailable (including an
 initial Windows port), it retains its heap buffer and `PutImage`/`XPutImage`
 presentation path.
 
-Host XCB, xkbcommon-x11, Qt, GTK, and Xlib are test-only discoveries. Missing
-test packages reduce the applicable acceptance set but do not affect the
-product graph. `XMIN_BUILD_QT_CLIENT` and `XMIN_BUILD_TOOLKIT_CLIENT` instead
-build Xmin's own narrow client ABIs and do not discover or link those host X
-libraries.
+The optional Unix viewer uses the host window system through GLFW and requires
+host OpenGL, XCB, and XTEST. XCB-SHM enables shared capture, and XCB-DAMAGE
+enables disjoint partial-frame redraws; both retain portable fallbacks when
+unavailable.
+The optional bundled shell build also requires Autoconf, Automake, and Make.
+Host xkbcommon-x11, Qt, GTK, and Xlib are otherwise test-only discoveries.
+Missing test packages reduce the applicable acceptance set but do not affect
+the core product graph. `XMIN_BUILD_QT_CLIENT` and
+`XMIN_BUILD_TOOLKIT_CLIENT` build Xmin's own narrow client ABIs and do not
+discover or link those host X libraries.
 
 ## Presets
 
@@ -39,14 +44,19 @@ cmake --build --preset dev
 ctest --preset dev
 ```
 
+All build-tree executables, including test tools, are written to
+`build/dev/bin`; shared and static libraries and archives are written to
+`build/dev/lib`. The same `bin`/`lib` layout is used for other build trees and
+multi-configuration generators.
+
 Four checked-in presets cover normal workflows:
 
 | Preset | Purpose |
 | --- | --- |
 | `dev` | Debug build, tests, optional client GL, compilation database. |
 | `release` | Optimized full package with tests. |
-| `minimal` | Optimized server package with client GL disabled. |
-| `sanitizer` | Debug ASan/UBSan, warnings as errors, client GL disabled. |
+| `minimal` | Optimized server package with client GL, viewer, and desktop disabled. |
+| `sanitizer` | Debug core ASan/UBSan gate with warnings as errors and optional applications disabled. |
 
 Use `--fresh` when validating source deletion or platform detection:
 
@@ -62,6 +72,9 @@ cmake --preset minimal --fresh
 | `XMIN_BUILD_QT_CLIENT` | `OFF` | Build and install the Xmin-native C++17 XCB/xkbcommon client SDK used by patched Qt qxcb. |
 | `XMIN_BUILD_TOOLKIT_CLIENT` | `OFF` | Add the focused Xlib/Xft/Fontconfig facade and embedded Go fonts used by patched FLTK and Tk. |
 | `XMIN_BUILD_LAUNCHER` | `ON` | Build authenticated process supervisor `xmin-run`. |
+| `XMIN_BUILD_VIEWER` | Unix except macOS: `ON` | Build the separate GLFW host viewer and guest-input bridge. |
+| `XMIN_BUILD_DESKTOP` | Unix except macOS: `ON` | Build the JWM/st desktop and `xmin-session` supervisor. |
+| `XMIN_BUILD_BUNDLED_SHELL` | Unix: `ON` | Build the imported dash sources as `xmin-sh` for desktop sessions. |
 | `XMIN_BUILD_TESTS` | top-level `ON` | Build the self-tests and independent client gates. |
 | `XMIN_REQUIRE_TOOLKIT_TESTS` | `OFF` | Require Qt 5/6 and GTK 3 acceptance targets. |
 | `XMIN_ENABLE_INSTALL` | top-level `ON` | Generate install and relocation rules. |
@@ -81,15 +94,15 @@ alternate DDX drivers, and runtime extension selection are not build options.
 Prefer the launcher for normal work:
 
 ```sh
-./build/dev/src/launcher/xmin-run \
-  --server ./build/dev/src/server/Xmin \
+./build/dev/bin/xmin-run \
+  --server ./build/dev/bin/Xmin \
   --screen 1280x1024x24 -- your-program arguments...
 ```
 
 Run the server directly only when managing authentication yourself:
 
 ```sh
-./build/dev/src/server/Xmin :99 --auth /path/to/Xauthority \
+./build/dev/bin/Xmin :99 --auth /path/to/Xauthority \
   --screen 1280x1024 --max-clients 64
 ```
 
@@ -101,6 +114,57 @@ exists for isolated tests that must redirect `/tmp/.X11-unix` and lock files.
 commands. It accepts `--display :N`; otherwise it uses `DISPLAY` and
 `XAUTHORITY`.
 
+For a reproducible full-desktop lifecycle workload, run both the shared-memory
+and portable capture paths:
+
+```sh
+xvfb-run -a tests/desktop_stress.sh --build-dir .build --seed 1
+xvfb-run -a tests/desktop_stress.sh --build-dir .build --seed 1 --no-shm
+```
+
+This stresses guest geometry, map/unmap and stacking state, the GLFW host
+window, terminal creation/destruction, viewer detach/reattach, final input,
+and capture. `--resize-only` retains the narrower original workload; see
+`tests/desktop_stress.sh --help` for individual iteration controls.
+
+See `tests/README.md` for the layered test design and the policy for translating
+selected XTS and rendercheck behavior into focused native regressions.
+
+Launch the complete optional interactive desktop and its GLFW host viewer with:
+
+```sh
+./launch.sh
+```
+
+The script selects `.build` or `build/dev`, waits for the private session
+descriptor, attaches the viewer, and stops the session when the viewer exits.
+Use `./launch.sh --help` for build-directory, geometry, capture-rate, and
+portable no-SHM overrides.
+
+The session and viewer remain separate executables. For a persistent session
+that permits viewer detach and reattach, run these commands in separate
+terminals:
+
+```sh
+./build/dev/bin/xmin-session \
+  --session-info /tmp/xmin-session.info
+./build/dev/bin/xmin-viewer \
+  --session-info /tmp/xmin-session.info
+```
+
+`xmin-session` starts Xmin and JWM, selects the sibling `xmin-sh` when present,
+and keeps st available through the JWM root menu without opening a terminal
+automatically. `xmin-viewer` reads the descriptor without owning the session,
+so it can detach and reattach. It preserves disjoint DAMAGE rectangles and
+uses MIT-SHM for partial capture when possible; `--no-shm` selects the bounded
+tiled `GetImage` fallback explicitly. The default root and viewer letterbox
+color is `#20252b`.
+
+JWM gives terminal windows a six-pixel graphical resize border, and its title
+bar menu includes a Resize action. In `xmin-st`, `Ctrl+Shift++` increases the
+font size, `Ctrl+Shift+-` decreases it, and `Ctrl+Shift+0` restores the default;
+`Ctrl` plus the mouse wheel also adjusts the size.
+
 ## Installation and relocation
 
 ```sh
@@ -109,7 +173,8 @@ cmake --install build/release --prefix /opt/xmin
 ```
 
 The package installs `Xmin`, `xmin-run`, `xminctl`, documentation, and—when
-enabled—`lib/xmin/libGL` plus its GL/GLX/OSMesa headers. Applications opt into
+enabled—the viewer, desktop applications, `xmin-sh`, and `lib/xmin/libGL`
+plus its GL/GLX/OSMesa headers. Applications opt into
 the companion GL DSO explicitly; it is not a server dependency. Enabling
 `XMIN_BUILD_QT_CLIENT` also installs `Xmin::QtX11`, its standard ABI headers,
 the XCB bridge header for `Xmin::GL`, and the pinned Go font files exposed by
@@ -159,6 +224,7 @@ are in `UPSTREAM.toml`.
 ```sh
 tools/import-pixman.sh /path/to/pixman-0.46.2
 tools/import-osmesa.sh /path/to/osmesa-13b14a95
+tools/import-dash.sh /path/to/dash-v0.5.13.4-checkout
 ```
 
 Pixman uses `tools/pixman-files.txt` as an exact allowlist. OSMesa regenerates

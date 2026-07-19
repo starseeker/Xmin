@@ -35,7 +35,10 @@
         "CMAKE_BUILD_TYPE": "Release",
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "XMIN_BUILD_TESTS": "ON",
-        "XMIN_BUILD_CLIENT_GL": "OFF"
+        "XMIN_BUILD_CLIENT_GL": "OFF",
+        "XMIN_BUILD_VIEWER": "OFF",
+        "XMIN_BUILD_DESKTOP": "OFF",
+        "XMIN_BUILD_BUNDLED_SHELL": "OFF"
       }
     },
     {
@@ -48,6 +51,9 @@
         "CMAKE_EXPORT_COMPILE_COMMANDS": "ON",
         "XMIN_BUILD_TESTS": "ON",
         "XMIN_BUILD_CLIENT_GL": "OFF",
+        "XMIN_BUILD_VIEWER": "OFF",
+        "XMIN_BUILD_DESKTOP": "OFF",
+        "XMIN_BUILD_BUNDLED_SHELL": "OFF",
         "XMIN_ENABLE_SANITIZERS": "ON",
         "XMIN_WARNINGS_AS_ERRORS": "ON"
       }

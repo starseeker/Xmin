@@ -36,55 +36,42 @@ struct _XOC { int unused = 0; };
 namespace {
 
 using EventQueue = std::deque<xcb_generic_event_t *>;
+using PutbackQueue = std::deque<XEvent>;
 std::mutex queue_mutex;
 std::unordered_map<Display *, EventQueue> queues;
+std::unordered_map<Display *, PutbackQueue> putback_queues;
 
-int queue_length(const EventQueue &queue) noexcept
+void update_queue_length(Display *display) noexcept
 {
+    if (display == nullptr)
+        return;
+    const auto found_raw = queues.find(display);
+    const auto found_putbacks = putback_queues.find(display);
+    const std::size_t raw = found_raw == queues.end()
+        ? 0 : found_raw->second.size();
+    const std::size_t putbacks = found_putbacks == putback_queues.end()
+        ? 0 : found_putbacks->second.size();
     const auto maximum =
         static_cast<std::size_t>(std::numeric_limits<int>::max());
-    return static_cast<int>(std::min(queue.size(), maximum));
+    reinterpret_cast<_XPrivDisplay>(display)->qlen = static_cast<int>(
+        std::min(raw + putbacks, maximum));
 }
 
-void update_queue_length(Display *display, const EventQueue &queue) noexcept
+long xevent_mask(const XEvent &event)
 {
-    if (display != nullptr)
-        reinterpret_cast<_XPrivDisplay>(display)->qlen =
-            queue_length(queue);
-}
-
-xcb_connection_t *connection(Display *display)
-{
-    return xmin::client::x11::xlib_connection(display);
-}
-
-int event_type(const xcb_generic_event_t *event)
-{
-    return event == nullptr ? 0 : event->response_type & 0x7f;
-}
-
-long event_mask(const xcb_generic_event_t *generic)
-{
-    const int type = event_type(generic);
-    switch (type) {
+    switch (event.type) {
     case KeyPress: return KeyPressMask;
     case KeyRelease: return KeyReleaseMask;
     case ButtonPress: return ButtonPressMask;
     case ButtonRelease: return ButtonReleaseMask;
     case MotionNotify: {
-        const auto state = reinterpret_cast<
-            const xcb_motion_notify_event_t *>(generic)->state;
         long mask = PointerMotionMask;
-        const struct {
-            unsigned int state;
-            long motion;
-        } buttons[]{{Button1Mask, Button1MotionMask},
-                    {Button2Mask, Button2MotionMask},
-                    {Button3Mask, Button3MotionMask},
-                    {Button4Mask, Button4MotionMask},
-                    {Button5Mask, Button5MotionMask}};
+        const struct { unsigned int state; long motion; } buttons[]{
+            {Button1Mask, Button1MotionMask}, {Button2Mask, Button2MotionMask},
+            {Button3Mask, Button3MotionMask}, {Button4Mask, Button4MotionMask},
+            {Button5Mask, Button5MotionMask}};
         for (const auto &button : buttons) {
-            if ((state & button.state) != 0)
+            if ((event.xmotion.state & button.state) != 0)
                 mask |= ButtonMotionMask | button.motion;
         }
         return mask;
@@ -95,57 +82,28 @@ long event_mask(const xcb_generic_event_t *generic)
     case FocusOut: return FocusChangeMask;
     case Expose: return ExposureMask;
     case VisibilityNotify: return VisibilityChangeMask;
-    case CreateNotify:
-        return SubstructureNotifyMask;
-    case DestroyNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_destroy_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case UnmapNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_unmap_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case MapNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_map_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case ReparentNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_reparent_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case ConfigureNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_configure_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case GravityNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_gravity_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
-    case CirculateNotify: {
-        const auto *event = reinterpret_cast<
-            const xcb_circulate_notify_event_t *>(generic);
-        return event->event == event->window
-            ? StructureNotifyMask
-            : SubstructureNotifyMask;
-    }
+    case CreateNotify: return SubstructureNotifyMask;
+    case DestroyNotify:
+        return event.xdestroywindow.event == event.xdestroywindow.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case UnmapNotify:
+        return event.xunmap.event == event.xunmap.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case MapNotify:
+        return event.xmap.event == event.xmap.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case ReparentNotify:
+        return event.xreparent.event == event.xreparent.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case ConfigureNotify:
+        return event.xconfigure.event == event.xconfigure.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case GravityNotify:
+        return event.xgravity.event == event.xgravity.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
+    case CirculateNotify:
+        return event.xcirculate.event == event.xcirculate.window
+            ? StructureNotifyMask : SubstructureNotifyMask;
     case ResizeRequest: return ResizeRedirectMask;
     case MapRequest:
     case ConfigureRequest:
@@ -154,6 +112,35 @@ long event_mask(const xcb_generic_event_t *generic)
     case ColormapNotify: return ColormapChangeMask;
     default: return 0;
     }
+}
+
+Window xevent_window(const XEvent &event)
+{
+    switch (event.type) {
+    case CreateNotify: return event.xcreatewindow.parent;
+    case DestroyNotify: return event.xdestroywindow.event;
+    case UnmapNotify: return event.xunmap.event;
+    case MapNotify: return event.xmap.event;
+    case ReparentNotify: return event.xreparent.event;
+    case ConfigureNotify: return event.xconfigure.event;
+    case GravityNotify: return event.xgravity.event;
+    case CirculateNotify: return event.xcirculate.event;
+    case ResizeRequest: return event.xresizerequest.window;
+    case MapRequest: return event.xmaprequest.parent;
+    case ConfigureRequest: return event.xconfigurerequest.parent;
+    case CirculateRequest: return event.xcirculaterequest.parent;
+    default: return event.xany.window;
+    }
+}
+
+xcb_connection_t *connection(Display *display)
+{
+    return xmin::client::x11::xlib_connection(display);
+}
+
+int event_type(const xcb_generic_event_t *event)
+{
+    return event == nullptr ? 0 : event->response_type & 0x7f;
 }
 
 Window event_window(const xcb_generic_event_t *generic)
@@ -514,7 +501,7 @@ void pump(Display *display)
             std::lock_guard<std::mutex> lock(queue_mutex);
             auto &queue = queues[display];
             queue.push_back(event);
-            update_queue_length(display, queue);
+            update_queue_length(display);
         }
         catch (...) {
             std::free(event);
@@ -522,6 +509,8 @@ void pump(Display *display)
             return;
         }
     }
+    if (xcb_connection_has_error(xcb) != 0)
+        xmin::client::x11::xlib_dispatch_io_error(display);
 }
 
 xcb_generic_event_t *next_raw(Display *display, bool block)
@@ -532,13 +521,15 @@ xcb_generic_event_t *next_raw(Display *display, bool block)
         if (found != queues.end() && !found->second.empty()) {
             auto *result = found->second.front();
             found->second.pop_front();
-            update_queue_length(display, found->second);
+            update_queue_length(display);
             return result;
         }
     }
     auto *xcb = connection(display);
     if (xcb == nullptr)
         return nullptr;
+    if (block)
+        XFlush(display);
     for (;;) {
         auto *result = block
             ? xcb_wait_for_event(xcb)
@@ -557,38 +548,126 @@ xcb_generic_event_t *next_raw(Display *display, bool block)
     }
 }
 
-xcb_generic_event_t *take_queued_window_event(
-    Display *display, Window window, long mask)
-{
-    std::lock_guard<std::mutex> lock(queue_mutex);
-    auto found_queue = queues.find(display);
-    if (found_queue == queues.end())
-        return nullptr;
-    auto &queue = found_queue->second;
-    const auto found = std::find_if(
-        queue.begin(), queue.end(), [window, mask](const auto *event) {
-            return event_window(event) == window &&
-                (event_mask(event) & mask) != 0;
-        });
-    if (found == queue.end())
-        return nullptr;
-    auto *result = *found;
-    queue.erase(found);
-    update_queue_length(display, queue);
-    return result;
-}
-
 bool enqueue_raw(Display *display, xcb_generic_event_t *event)
 {
     try {
         std::lock_guard<std::mutex> lock(queue_mutex);
         auto &queue = queues[display];
         queue.push_back(event);
-        update_queue_length(display, queue);
+        update_queue_length(display);
         return true;
     }
     catch (...) {
         return false;
+    }
+}
+
+template <typename Predicate>
+bool take_matching_event(
+    Display *display, XEvent *result, Predicate predicate, bool pump_first)
+{
+    if (display == nullptr || result == nullptr)
+        return false;
+    if (pump_first)
+        pump(display);
+
+    std::size_t putback_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        const auto found = putback_queues.find(display);
+        if (found != putback_queues.end())
+            putback_count = found->second.size();
+    }
+    for (std::size_t index = 0; index < putback_count; ++index) {
+        XEvent candidate{};
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            auto &queue = putback_queues[display];
+            if (queue.empty())
+                break;
+            candidate = queue.front();
+            queue.pop_front();
+            update_queue_length(display);
+        }
+        if (predicate(candidate)) {
+            *result = candidate;
+            return true;
+        }
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            putback_queues[display].push_back(candidate);
+            update_queue_length(display);
+        }
+    }
+
+    std::size_t raw_count = 0;
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        const auto found = queues.find(display);
+        if (found != queues.end())
+            raw_count = found->second.size();
+    }
+    for (std::size_t index = 0; index < raw_count; ++index) {
+        xcb_generic_event_t *raw = nullptr;
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            auto &queue = queues[display];
+            if (queue.empty())
+                break;
+            raw = queue.front();
+            queue.pop_front();
+            update_queue_length(display);
+        }
+        XEvent candidate{};
+        const bool converted = convert(display, raw, &candidate);
+        if (converted && predicate(candidate)) {
+            std::free(raw);
+            *result = candidate;
+            return true;
+        }
+        if (!enqueue_raw(display, raw)) {
+            std::free(raw);
+            xmin::client::x11::xlib_dispatch_io_error(display);
+            return false;
+        }
+    }
+    return false;
+}
+
+template <typename Predicate>
+int wait_matching_event(
+    Display *display, XEvent *result, Predicate predicate)
+{
+    for (;;) {
+        if (take_matching_event(display, result, predicate, true))
+            return 0;
+        auto *xcb = connection(display);
+        if (xcb == nullptr)
+            return -1;
+        XFlush(display);
+        auto *raw = xcb_wait_for_event(xcb);
+        while (raw != nullptr && raw->response_type == 0) {
+            xmin::client::x11::xlib_dispatch_error(
+                display, reinterpret_cast<const xcb_generic_error_t *>(raw));
+            std::free(raw);
+            raw = xcb_wait_for_event(xcb);
+        }
+        if (raw == nullptr) {
+            if (xcb_connection_has_error(xcb) != 0)
+                xmin::client::x11::xlib_dispatch_io_error(display);
+            return -1;
+        }
+        XEvent candidate{};
+        if (convert(display, raw, &candidate) && predicate(candidate)) {
+            std::free(raw);
+            *result = candidate;
+            return 0;
+        }
+        if (!enqueue_raw(display, raw)) {
+            std::free(raw);
+            xmin::client::x11::xlib_dispatch_io_error(display);
+            return -1;
+        }
     }
 }
 
@@ -812,6 +891,7 @@ void xlib_forget_events(Display *display) noexcept
             std::free(event);
         queues.erase(found);
     }
+    putback_queues.erase(display);
     if (display != nullptr)
         reinterpret_cast<_XPrivDisplay>(display)->qlen = 0;
 }
@@ -824,11 +904,18 @@ int XQLength(Display *display)
 {
     std::lock_guard<std::mutex> lock(queue_mutex);
     const auto found = queues.find(display);
-    return found == queues.end() ? 0 : queue_length(found->second);
+    const auto found_putbacks = putback_queues.find(display);
+    const std::size_t raw = found == queues.end() ? 0 : found->second.size();
+    const std::size_t putbacks = found_putbacks == putback_queues.end()
+        ? 0 : found_putbacks->second.size();
+    const auto maximum =
+        static_cast<std::size_t>(std::numeric_limits<int>::max());
+    return static_cast<int>(std::min(raw + putbacks, maximum));
 }
 
 int XPending(Display *display)
 {
+    XFlush(display);
     pump(display);
     return XQLength(display);
 }
@@ -844,6 +931,16 @@ int XEventsQueued(Display *display, int mode)
 
 int XNextEvent(Display *display, XEvent *event)
 {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        auto found = putback_queues.find(display);
+        if (found != putback_queues.end() && !found->second.empty()) {
+            *event = found->second.front();
+            found->second.pop_front();
+            update_queue_length(display);
+            return 0;
+        }
+    }
     std::unique_ptr<xcb_generic_event_t, decltype(&std::free)> raw(
         next_raw(display, true), std::free);
     return convert(display, raw.get(), event) ? 0 : -1;
@@ -851,6 +948,14 @@ int XNextEvent(Display *display, XEvent *event)
 
 int XPeekEvent(Display *display, XEvent *event)
 {
+    {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        const auto found = putback_queues.find(display);
+        if (found != putback_queues.end() && !found->second.empty()) {
+            *event = found->second.front();
+            return 0;
+        }
+    }
     auto *raw = next_raw(display, true);
     if (raw == nullptr)
         return -1;
@@ -859,7 +964,7 @@ int XPeekEvent(Display *display, XEvent *event)
         std::lock_guard<std::mutex> lock(queue_mutex);
         auto &queue = queues[display];
         queue.push_front(raw);
-        update_queue_length(display, queue);
+        update_queue_length(display);
     }
     catch (...) {
         std::free(raw);
@@ -870,35 +975,81 @@ int XPeekEvent(Display *display, XEvent *event)
 
 int XWindowEvent(Display *display, Window window, long mask, XEvent *event)
 {
-    for (;;) {
-        auto *raw = take_queued_window_event(display, window, mask);
-        if (raw == nullptr) {
-            auto *xcb = connection(display);
-            if (xcb == nullptr)
-                return -1;
-            raw = xcb_wait_for_event(xcb);
-            while (raw != nullptr && raw->response_type == 0) {
-                xmin::client::x11::xlib_dispatch_error(
-                    display,
-                    reinterpret_cast<const xcb_generic_error_t *>(raw));
-                std::free(raw);
-                raw = xcb_wait_for_event(xcb);
-            }
-            if (raw == nullptr && xcb_connection_has_error(xcb) != 0)
-                xmin::client::x11::xlib_dispatch_io_error(display);
-        }
-        if (raw == nullptr)
-            return -1;
-        if (event_window(raw) == window && (event_mask(raw) & mask) != 0) {
-            const bool converted = convert(display, raw, event);
-            std::free(raw);
-            return converted ? 0 : -1;
-        }
-        if (!enqueue_raw(display, raw)) {
-            std::free(raw);
-            xmin::client::x11::xlib_dispatch_io_error(display);
-            return -1;
-        }
+    return wait_matching_event(display, event, [window, mask](const XEvent &value) {
+        return xevent_window(value) == window &&
+            (xevent_mask(value) & mask) != 0;
+    });
+}
+
+Bool XCheckMaskEvent(Display *display, long mask, XEvent *event)
+{
+    return take_matching_event(display, event, [mask](const XEvent &value) {
+        return (xevent_mask(value) & mask) != 0;
+    }, true);
+}
+
+Bool XCheckTypedEvent(Display *display, int type, XEvent *event)
+{
+    return take_matching_event(display, event, [type](const XEvent &value) {
+        return value.type == type;
+    }, true);
+}
+
+Bool XCheckTypedWindowEvent(
+    Display *display, Window window, int type, XEvent *event)
+{
+    return take_matching_event(
+        display, event, [window, type](const XEvent &value) {
+            return value.type == type && xevent_window(value) == window;
+        }, true);
+}
+
+Bool XCheckWindowEvent(
+    Display *display, Window window, long mask, XEvent *event)
+{
+    return take_matching_event(
+        display, event, [window, mask](const XEvent &value) {
+            return xevent_window(value) == window &&
+                (xevent_mask(value) & mask) != 0;
+        }, true);
+}
+
+Bool XCheckIfEvent(
+    Display *display, XEvent *event,
+    Bool (*predicate)(Display *, XEvent *, XPointer), XPointer argument)
+{
+    if (predicate == nullptr)
+        return False;
+    return take_matching_event(
+        display, event, [display, predicate, argument](XEvent value) {
+            return predicate(display, &value, argument) != False;
+        }, true);
+}
+
+int XIfEvent(
+    Display *display, XEvent *event,
+    Bool (*predicate)(Display *, XEvent *, XPointer), XPointer argument)
+{
+    if (predicate == nullptr)
+        return -1;
+    return wait_matching_event(
+        display, event, [display, predicate, argument](XEvent value) {
+            return predicate(display, &value, argument) != False;
+        });
+}
+
+int XPutBackEvent(Display *display, XEvent *event)
+{
+    if (display == nullptr || event == nullptr)
+        return 0;
+    try {
+        std::lock_guard<std::mutex> lock(queue_mutex);
+        putback_queues[display].push_front(*event);
+        update_queue_length(display);
+        return 1;
+    }
+    catch (...) {
+        return 0;
     }
 }
 
@@ -972,6 +1123,75 @@ int XUngrabPointer(Display *display, Time time)
     auto *xcb = connection(display);
     if (xcb != nullptr)
         xcb_ungrab_pointer(xcb, time);
+    return xcb != nullptr;
+}
+
+int XGrabButton(
+    Display *display, unsigned int button, unsigned int modifiers,
+    Window grab_window, Bool owner_events, unsigned int event_mask_value,
+    int pointer_mode, int keyboard_mode, Window confine_to, Cursor cursor)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr) {
+        xcb_grab_button(
+            xcb, owner_events, grab_window,
+            static_cast<std::uint16_t>(event_mask_value),
+            static_cast<std::uint8_t>(pointer_mode),
+            static_cast<std::uint8_t>(keyboard_mode), confine_to, cursor,
+            static_cast<std::uint8_t>(button),
+            static_cast<std::uint16_t>(modifiers));
+    }
+    return xcb != nullptr;
+}
+
+int XUngrabButton(
+    Display *display, unsigned int button, unsigned int modifiers,
+    Window grab_window)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr) {
+        xcb_ungrab_button(
+            xcb, static_cast<std::uint8_t>(button), grab_window,
+            static_cast<std::uint16_t>(modifiers));
+    }
+    return xcb != nullptr;
+}
+
+int XGrabKey(
+    Display *display, int keycode, unsigned int modifiers,
+    Window grab_window, Bool owner_events, int pointer_mode,
+    int keyboard_mode)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr) {
+        xcb_grab_key(
+            xcb, owner_events, grab_window,
+            static_cast<std::uint16_t>(modifiers),
+            static_cast<std::uint8_t>(keycode),
+            static_cast<std::uint8_t>(pointer_mode),
+            static_cast<std::uint8_t>(keyboard_mode));
+    }
+    return xcb != nullptr;
+}
+
+int XUngrabKey(
+    Display *display, int keycode, unsigned int modifiers,
+    Window grab_window)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr) {
+        xcb_ungrab_key(
+            xcb, static_cast<std::uint8_t>(keycode), grab_window,
+            static_cast<std::uint16_t>(modifiers));
+    }
+    return xcb != nullptr;
+}
+
+int XAllowEvents(Display *display, int event_mode, Time time)
+{
+    auto *xcb = connection(display);
+    if (xcb != nullptr)
+        xcb_allow_events(xcb, static_cast<std::uint8_t>(event_mode), time);
     return xcb != nullptr;
 }
 
@@ -1344,6 +1564,19 @@ int Xutf8LookupString(
             *status = XLookupNone;
     }
     return written;
+}
+
+int XmbLookupString(
+    XIC context, XKeyPressedEvent *event, char *buffer, int capacity,
+    KeySym *keysym, Status *status)
+{
+    return Xutf8LookupString(
+        context, event, buffer, capacity, keysym, status);
+}
+
+Bool XkbBell(Display *display, Window, int percent, Atom)
+{
+    return XBell(display, percent) != 0;
 }
 
 XVaNestedList XVaCreateNestedList(int, ...)

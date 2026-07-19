@@ -38,6 +38,182 @@ xcb_extension_t xcb_xfixes_id = {"XFIXES", 0};
 xcb_extension_t xcb_xkb_id = {"XKEYBOARD", 0};
 }
 
+namespace {
+
+xcb_void_cookie_t send_fixed_void_request(
+    xcb_connection_t *connection, std::uint8_t opcode, const void *request,
+    std::size_t request_size, int flags = 0)
+{
+    const xcb_protocol_request_t descriptor{2, nullptr, opcode, 1};
+    struct iovec parts[4];
+    parts[2].iov_base = const_cast<void *>(request);
+    parts[2].iov_len = request_size;
+    parts[3].iov_base = nullptr;
+    parts[3].iov_len = -parts[2].iov_len & 3U;
+    return {xcb_send_request(connection, flags, parts + 2, &descriptor)};
+}
+
+xcb_void_cookie_t send_variable_void_request(
+    xcb_connection_t *connection, std::uint8_t opcode, const void *request,
+    std::size_t request_size, const void *data, std::size_t data_size,
+    int flags = 0)
+{
+    const xcb_protocol_request_t descriptor{4, nullptr, opcode, 1};
+    struct iovec parts[6];
+    parts[2].iov_base = const_cast<void *>(request);
+    parts[2].iov_len = request_size;
+    parts[3].iov_base = nullptr;
+    parts[3].iov_len = -parts[2].iov_len & 3U;
+    parts[4].iov_base = const_cast<void *>(data);
+    parts[4].iov_len = data_size;
+    parts[5].iov_base = nullptr;
+    parts[5].iov_len = -parts[4].iov_len & 3U;
+    return {xcb_send_request(connection, flags, parts + 2, &descriptor)};
+}
+
+} // namespace
+
+/* Additional core requests shared by the focused Xlib facade and XCB clients. */
+extern "C" {
+
+xcb_void_cookie_t xcb_change_save_set(
+    xcb_connection_t *connection, uint8_t mode, xcb_window_t window)
+{
+    xcb_change_save_set_request_t request{};
+    request.mode = mode;
+    request.window = window;
+    return send_fixed_void_request(
+        connection, XCB_CHANGE_SAVE_SET, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_change_save_set_checked(
+    xcb_connection_t *connection, uint8_t mode, xcb_window_t window)
+{
+    xcb_change_save_set_request_t request{};
+    request.mode = mode;
+    request.window = window;
+    return send_fixed_void_request(
+        connection, XCB_CHANGE_SAVE_SET, &request, sizeof(request),
+        XCB_REQUEST_CHECKED);
+}
+
+xcb_void_cookie_t xcb_grab_button(
+    xcb_connection_t *connection, uint8_t owner_events,
+    xcb_window_t grab_window, uint16_t event_mask, uint8_t pointer_mode,
+    uint8_t keyboard_mode, xcb_window_t confine_to, xcb_cursor_t cursor,
+    uint8_t button, uint16_t modifiers)
+{
+    xcb_grab_button_request_t request{};
+    request.owner_events = owner_events;
+    request.grab_window = grab_window;
+    request.event_mask = event_mask;
+    request.pointer_mode = pointer_mode;
+    request.keyboard_mode = keyboard_mode;
+    request.confine_to = confine_to;
+    request.cursor = cursor;
+    request.button = button;
+    request.modifiers = modifiers;
+    return send_fixed_void_request(
+        connection, XCB_GRAB_BUTTON, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_ungrab_button(
+    xcb_connection_t *connection, uint8_t button, xcb_window_t grab_window,
+    uint16_t modifiers)
+{
+    xcb_ungrab_button_request_t request{};
+    request.button = button;
+    request.grab_window = grab_window;
+    request.modifiers = modifiers;
+    return send_fixed_void_request(
+        connection, XCB_UNGRAB_BUTTON, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_grab_key(
+    xcb_connection_t *connection, uint8_t owner_events,
+    xcb_window_t grab_window, uint16_t modifiers, xcb_keycode_t key,
+    uint8_t pointer_mode, uint8_t keyboard_mode)
+{
+    xcb_grab_key_request_t request{};
+    request.owner_events = owner_events;
+    request.grab_window = grab_window;
+    request.modifiers = modifiers;
+    request.key = key;
+    request.pointer_mode = pointer_mode;
+    request.keyboard_mode = keyboard_mode;
+    return send_fixed_void_request(
+        connection, XCB_GRAB_KEY, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_ungrab_key(
+    xcb_connection_t *connection, xcb_keycode_t key,
+    xcb_window_t grab_window, uint16_t modifiers)
+{
+    xcb_ungrab_key_request_t request{};
+    request.key = key;
+    request.grab_window = grab_window;
+    request.modifiers = modifiers;
+    return send_fixed_void_request(
+        connection, XCB_UNGRAB_KEY, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_allow_events(
+    xcb_connection_t *connection, uint8_t mode, xcb_timestamp_t time)
+{
+    xcb_allow_events_request_t request{};
+    request.mode = mode;
+    request.time = time;
+    return send_fixed_void_request(
+        connection, XCB_ALLOW_EVENTS, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_poly_segment(
+    xcb_connection_t *connection, xcb_drawable_t drawable,
+    xcb_gcontext_t gc, uint32_t segments_len, const xcb_segment_t *segments)
+{
+    xcb_poly_segment_request_t request{};
+    request.drawable = drawable;
+    request.gc = gc;
+    return send_variable_void_request(
+        connection, XCB_POLY_SEGMENT, &request, sizeof(request), segments,
+        static_cast<std::size_t>(segments_len) * sizeof(*segments));
+}
+
+xcb_void_cookie_t xcb_poly_text_8(
+    xcb_connection_t *connection, xcb_drawable_t drawable,
+    xcb_gcontext_t gc, int16_t x, int16_t y, uint32_t items_len,
+    const uint8_t *items)
+{
+    xcb_poly_text_8_request_t request{};
+    request.drawable = drawable;
+    request.gc = gc;
+    request.x = x;
+    request.y = y;
+    return send_variable_void_request(
+        connection, XCB_POLY_TEXT_8, &request, sizeof(request), items,
+        items_len);
+}
+
+xcb_void_cookie_t xcb_install_colormap(
+    xcb_connection_t *connection, xcb_colormap_t colormap)
+{
+    xcb_install_colormap_request_t request{};
+    request.cmap = colormap;
+    return send_fixed_void_request(
+        connection, XCB_INSTALL_COLORMAP, &request, sizeof(request));
+}
+
+xcb_void_cookie_t xcb_kill_client(
+    xcb_connection_t *connection, uint32_t resource)
+{
+    xcb_kill_client_request_t request{};
+    request.resource = resource;
+    return send_fixed_void_request(
+        connection, XCB_KILL_CLIENT, &request, sizeof(request));
+}
+
+} // extern "C"
+
 /* xproto.c: xcb_bell */
 xcb_void_cookie_t
 xcb_bell (xcb_connection_t *c,

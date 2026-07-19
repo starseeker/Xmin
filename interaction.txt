@@ -1,0 +1,26 @@
+One (rather ironic) hole in Xmin's lineup is a way for us to get a window
+on and interact with the X environment it creates.  I have no idea how hard
+this would be, but my thought is I would like to submodule GLFW:
+
+https://github.com/glfw/glfw
+
+and compile it against the system X11/OpenGL rather than Xmin.  It will be
+able to interact with the system keyboard and mouse and feed those events
+to Xmin, and then display in its window the ongoing state of the Xmin
+graphics.  This would give us a more interactive way to inspect and test
+than just capturing images, if it is practical.  Even better would be a way
+to have a terminal and minimalist window manager running so we could launch
+programs and move/resize windows within Xmin's minimalist environment.  My
+initial candidates for inclusion were JWM (https://github.com/joewing/jwm/)
+which hopefully could be stripped down to build its core features with just
+Xmin and st for a terminal:  https://git.suckless.org/st/files.html
+
+Rather than require them be set up the traditional way, I was thinking
+minimalist versions of them could be "baked in" to Xmin and jwm could be
+optionally launched when Xmin starts up if given an appropriate option
+flag.  Our GLFW control app could then launch an Xmin --jwm instance of
+Xmin and the st bundled terminal could bake in the necessary preload/env/etc.
+setup so any X11 program launched from within that window uses the correct
+machinery.  That might lead us to needing to provide a few shim libraries
+to point apps to our own minimalist client logic, but at least for a start
+we should be able to test our own demo apps.

@@ -257,6 +257,7 @@ read_reply(int descriptor, std::vector<std::uint8_t> &reply)
 bool
 check_setup_success(int descriptor, bool little, std::uint32_t &resource_base)
 {
+    constexpr std::array<std::uint8_t, 5> advertised_depths{1, 4, 8, 24, 32};
     std::vector<std::uint8_t> prefix(8);
     if (!read_all(descriptor, prefix) || prefix[0] != 1 ||
         get16(prefix, 2, little) != 11 || get16(prefix, 4, little) != 0) {
@@ -267,15 +268,45 @@ check_setup_success(int descriptor, bool little, std::uint32_t &resource_base)
     if (!read_all(descriptor, setup) || setup.size() < 100)
         return false;
     const auto vendor_size = get16(setup, 16, little);
-    const std::size_t root_offset = 32 + ((vendor_size + 3) & ~std::size_t{3}) +
+    const std::size_t formats_offset =
+        32 + ((vendor_size + 3) & ~std::size_t{3});
+    const std::size_t root_offset = formats_offset +
         static_cast<std::size_t>(setup[21]) * 8;
     resource_base = get32(setup, 4, little);
-    return vendor_size == 4 && setup[20] == 1 && setup[21] == 4 &&
-        root_offset + 40 <= setup.size() &&
-        get32(setup, root_offset, little) == root_window &&
-        get16(setup, root_offset + 20, little) == 320 &&
-        get16(setup, root_offset + 22, little) == 240 &&
-        setup[root_offset + 38] == 24 && setup[root_offset + 39] == 1;
+    if (vendor_size != 4 || setup[20] != 1 || setup[21] != 5 ||
+        root_offset + 40 > setup.size() ||
+        get32(setup, root_offset, little) != root_window ||
+        get16(setup, root_offset + 20, little) != 320 ||
+        get16(setup, root_offset + 22, little) != 240 ||
+        setup[root_offset + 38] != 24 ||
+        setup[root_offset + 39] != advertised_depths.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0; index < advertised_depths.size(); ++index) {
+        if (formats_offset + index * 8 + 8 > setup.size() ||
+            setup[formats_offset + index * 8] != advertised_depths[index]) {
+            return false;
+        }
+    }
+
+    std::size_t depth_offset = root_offset + 40;
+    for (const auto depth : advertised_depths) {
+        if (depth_offset + 8 > setup.size() || setup[depth_offset] != depth)
+            return false;
+        const auto visual_count = get16(setup, depth_offset + 2, little);
+        if (visual_count != (depth == 24 ? 1 : 0) ||
+            visual_count > (setup.size() - depth_offset - 8) / 24) {
+            return false;
+        }
+        if (depth == 24 &&
+            get32(setup, depth_offset + 8, little) !=
+                get32(setup, root_offset + 32, little)) {
+            return false;
+        }
+        depth_offset += 8 + static_cast<std::size_t>(visual_count) * 24;
+    }
+    return depth_offset == setup.size();
 }
 
 bool
@@ -1224,8 +1255,30 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 16, 6, little);
     put32(request, 20, 12, little);
     put32(request, 24, 9, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 22 || get16(reply, 2, little) != 16 ||
+        get32(reply, 4, little) != child ||
+        get32(reply, 8, little) != child ||
+        get32(reply, 12, little) != 0 ||
+        get16(reply, 16, little) != 5 ||
+        get16(reply, 18, little) != 6 ||
+        get16(reply, 20, little) != 12 ||
+        get16(reply, 22, little) != 9 ||
+        get16(reply, 24, little) != 2 || reply[26] != 0) {
+        std::cerr << "ConfigureNotify check failed: type="
+                  << static_cast<unsigned>(reply[0])
+                  << " size=" << reply.size()
+                  << " sequence=" << get16(reply, 2, little)
+                  << " event=" << get32(reply, 4, little)
+                  << " window=" << get32(reply, 8, little)
+                  << " above=" << get32(reply, 12, little)
+                  << " geometry=" << get16(reply, 16, little) << ','
+                  << get16(reply, 18, little) << ' '
+                  << get16(reply, 20, little) << 'x'
+                  << get16(reply, 22, little) << " border="
+                  << get16(reply, 24, little) << '\n';
         return false;
+    }
 
     request.assign(8, 0);
     request[0] = 14; // GetGeometry after configure
@@ -1874,7 +1927,8 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
             pixel_at(7, 0) != stroke || pixel_at(8, 0) != stroke ||
             pixel_at(6, 1) != stroke || pixel_at(8, 1) != stroke ||
             pixel_at(6, 2) != stroke || pixel_at(7, 2) != stroke ||
-            pixel_at(8, 2) != stroke || pixel_at(7, 1) != 0) {
+            pixel_at(8, 2) != stroke ||
+            pixel_at(7, 1) != 0x0020252bU) {
             return false;
         }
     }
@@ -2109,7 +2163,7 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     for (std::size_t x = 0; x < 8; ++x) {
         const std::uint32_t expected = x >= 1 && x < 6
             ? 0x00abcdefU
-            : 0;
+            : 0x0020252bU;
         if (get32(reply, 32 + x * 4, image_little) != expected)
             return false;
     }
@@ -4603,10 +4657,24 @@ run_success_case(const char *server, bool little, bool fragmented)
     if (child.process < 0 || child.socket < 0)
         return false;
     std::uint32_t resource_base = 0;
-    const bool passed = send_setup(child.socket, little, true, 11, fragmented) &&
-        check_setup_success(child.socket, little, resource_base) &&
-        check_request_sequence(child.socket, little, fragmented) &&
-        check_core_objects(child.socket, little, resource_base);
+    bool passed = send_setup(child.socket, little, true, 11, fragmented);
+    if (!passed)
+        std::cerr << "setup request write failed\n";
+    if (passed &&
+        !(passed = check_setup_success(
+              child.socket, little, resource_base))) {
+        std::cerr << "setup reply check failed\n";
+    }
+    if (passed &&
+        !(passed = check_request_sequence(
+              child.socket, little, fragmented))) {
+        std::cerr << "initial request sequence check failed\n";
+    }
+    if (passed &&
+        !(passed = check_core_objects(
+              child.socket, little, resource_base))) {
+        std::cerr << "core object check failed\n";
+    }
     static_cast<void>(::shutdown(child.socket, SHUT_WR));
     ::close(child.socket);
     const bool exited = wait_for_success(child.process);

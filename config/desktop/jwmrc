@@ -1,0 +1,82 @@
+<?xml version="1.0"?>
+<JWM>
+  <RootMenu onroot="12">
+    <Program label="Terminal">xmin-st</Program>
+    <Separator/>
+    <Restart label="Restart desktop"/>
+    <Exit label="End session" confirm="false"/>
+  </RootMenu>
+
+  <Tray x="0" y="-1" autohide="off">
+    <TrayButton label="Xmin">root:1</TrayButton>
+    <Spacer width="4"/>
+    <TaskList maxwidth="320"/>
+    <Clock format="%H:%M"/>
+  </Tray>
+
+  <WindowStyle decorations="flat">
+    <Font>Go Sans-12</Font>
+    <Width>6</Width>
+    <Foreground>#f2f2f2</Foreground>
+    <Background>#48515c</Background>
+    <Active>
+      <Foreground>#ffffff</Foreground>
+      <Background>#276aa5</Background>
+    </Active>
+  </WindowStyle>
+  <TrayStyle decorations="flat">
+    <Font>Go Sans-12</Font>
+    <Foreground>#f2f2f2</Foreground>
+    <Background>#30363d</Background>
+  </TrayStyle>
+  <TaskListStyle list="all" group="false">
+    <Font>Go Sans-12</Font>
+    <Foreground>#f2f2f2</Foreground>
+    <Background>#30363d</Background>
+    <Active>
+      <Foreground>#ffffff</Foreground>
+      <Background>#276aa5</Background>
+    </Active>
+  </TaskListStyle>
+  <MenuStyle decorations="flat">
+    <Font>Go Sans-12</Font>
+    <Foreground>#f2f2f2</Foreground>
+    <Background>#30363d</Background>
+    <Active>
+      <Foreground>#ffffff</Foreground>
+      <Background>#276aa5</Background>
+    </Active>
+  </MenuStyle>
+  <PopupStyle>
+    <Font>Go Sans-11</Font>
+    <Foreground>#ffffff</Foreground>
+    <Background>#48515c</Background>
+  </PopupStyle>
+
+  <Desktops width="1" height="1">
+    <Background type="solid">#20252b</Background>
+  </Desktops>
+  <FocusModel>click</FocusModel>
+  <MoveMode>opaque</MoveMode>
+  <ResizeMode>opaque</ResizeMode>
+  <SnapMode distance="8">border</SnapMode>
+
+  <Key key="Up">up</Key>
+  <Key key="Down">down</Key>
+  <Key key="Right">right</Key>
+  <Key key="Left">left</Key>
+  <Key key="Return">select</Key>
+  <Key key="Escape">escape</Key>
+  <Key mask="A" key="Tab">nextstacked</Key>
+  <Key mask="A" key="F4">close</Key>
+  <Key mask="A" key="F1">root:1</Key>
+  <Key mask="A" key="F10">maximize</Key>
+
+  <Mouse context="root" button="1">root:1</Mouse>
+  <Mouse context="title" button="1">move</Mouse>
+  <Mouse context="title" button="3">window</Mouse>
+  <Mouse context="border" button="1">resize</Mouse>
+  <Mouse context="close" button="-1">close</Mouse>
+  <Mouse context="maximize" button="-1">maximize</Mouse>
+  <Mouse context="minimize" button="-1">minimize</Mouse>
+</JWM>

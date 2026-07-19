@@ -55,6 +55,10 @@ usage(FILE *stream)
             "  focus|raise|activate WINDOW          control a window\n"
             "  move WINDOW X Y                      move a window\n"
             "  resize WINDOW WIDTH HEIGHT           resize a window\n"
+            "  stress-resize [OPTIONS] WINDOW       seeded resize stress test\n"
+            "    --iterations N --seed N --delay MS\n"
+            "  stress-window [OPTIONS] WINDOW       mixed geometry/map stress\n"
+            "    --iterations N --seed N --delay MS\n"
             "  map|unmap|close WINDOW               change window state\n"
             "\n"
             "Input commands (XTEST):\n"
@@ -882,12 +886,71 @@ cleanup:
     return result;
 }
 
+static uint8_t *
+get_image_tiled(controller *ctl, xcb_drawable_t drawable,
+                uint16_t width, uint16_t height, uint8_t depth,
+                size_t *data_size)
+{
+    const xcb_format_t *format = find_format(ctl, depth);
+    const size_t maximum_tile_bytes = 512U * 1024U;
+    size_t stride;
+    size_t total;
+    size_t rows_per_tile;
+    uint8_t *pixels;
+    uint32_t y;
+
+    if (format == NULL || format->scanline_pad == 0)
+        return NULL;
+    stride = ((size_t) width * format->bits_per_pixel +
+              format->scanline_pad - 1) / format->scanline_pad;
+    stride *= format->scanline_pad / 8U;
+    if (stride == 0 || height > SIZE_MAX / stride)
+        return NULL;
+    total = stride * height;
+    pixels = static_cast<uint8_t *>(malloc(total));
+    if (pixels == NULL)
+        return NULL;
+    rows_per_tile = maximum_tile_bytes / stride;
+    if (rows_per_tile == 0)
+        rows_per_tile = 1;
+
+    for (y = 0; y < height;) {
+        const uint16_t rows = static_cast<uint16_t>(
+            rows_per_tile < height - y ? rows_per_tile : height - y);
+        xcb_generic_error_t *error = NULL;
+        xcb_get_image_reply_t *reply = xcb_get_image_reply(
+            ctl->session.connection,
+            xcb_get_image(ctl->session.connection,
+                          XCB_IMAGE_FORMAT_Z_PIXMAP, drawable,
+                          0, static_cast<int16_t>(y), width, rows,
+                          UINT32_MAX),
+            &error);
+        const size_t expected = stride * rows;
+
+        if (reply == NULL || error != NULL ||
+            xcb_get_image_data_length(reply) < 0 ||
+            (size_t) xcb_get_image_data_length(reply) < expected) {
+            free(error);
+            free(reply);
+            free(pixels);
+            return NULL;
+        }
+        memcpy(pixels + stride * y, xcb_get_image_data(reply), expected);
+        free(error);
+        free(reply);
+        y += rows;
+    }
+    *data_size = total;
+    return pixels;
+}
+
 static int
 capture_window(controller *ctl, xcb_window_t window, const char *path)
 {
     xcb_get_geometry_reply_t *geometry;
     xcb_get_window_attributes_reply_t *attributes;
-    xcb_get_image_reply_t *image = NULL;
+    uint8_t *image = NULL;
+    size_t image_size = 0;
     xcb_drawable_t drawable = window;
     xcb_pixmap_t pixmap = XCB_PIXMAP_NONE;
     bool redirected = false;
@@ -939,20 +1002,15 @@ capture_window(controller *ctl, xcb_window_t window, const char *path)
         }
     }
 
-    image = xcb_get_image_reply(
-        ctl->session.connection,
-        xcb_get_image(ctl->session.connection, XCB_IMAGE_FORMAT_Z_PIXMAP,
-                      drawable, 0, 0, geometry->width, geometry->height,
-                      UINT32_MAX),
-        NULL);
+    image = get_image_tiled(ctl, drawable, geometry->width,
+                            geometry->height, geometry->depth, &image_size);
     if (image == NULL) {
         fprintf(stderr, "xminctl: X11 GetImage failed\n");
         goto cleanup;
     }
     result = write_ppm(ctl, path, geometry->width, geometry->height,
                        geometry->depth, attributes->visual,
-                       xcb_get_image_data(image),
-                       (size_t) xcb_get_image_data_length(image));
+                       image, image_size);
 
 cleanup:
     free(image);
@@ -1115,6 +1173,195 @@ configure_window(controller *ctl, xcb_window_t window, uint16_t mask,
     return sync_connection(ctl);
 }
 
+static uint32_t
+stress_random(uint32_t *state)
+{
+    uint32_t value = *state;
+
+    value ^= value << 13;
+    value ^= value >> 17;
+    value ^= value << 5;
+    *state = value;
+    return value;
+}
+
+static int
+stress_resize(controller *ctl, xcb_window_t window, long iterations,
+              uint32_t seed, long delay_milliseconds)
+{
+    const uint32_t minimum_width = ctl->session.screen->width_in_pixels < 200 ?
+        32U : 160U;
+    const uint32_t minimum_height = ctl->session.screen->height_in_pixels < 140 ?
+        24U : 100U;
+    const uint32_t maximum_width =
+        ctl->session.screen->width_in_pixels > 40 ?
+        ctl->session.screen->width_in_pixels - 40U :
+        ctl->session.screen->width_in_pixels;
+    const uint32_t maximum_height =
+        ctl->session.screen->height_in_pixels > 60 ?
+        ctl->session.screen->height_in_pixels - 60U :
+        ctl->session.screen->height_in_pixels;
+    uint32_t state = seed == 0 ? 0x6d2b79f5U : seed;
+    long index;
+
+    if (window == ctl->session.screen->root ||
+        maximum_width < minimum_width || maximum_height < minimum_height) {
+        fprintf(stderr, "xminctl: screen is too small for resize stress\n");
+        return -1;
+    }
+    fprintf(stderr,
+            "xminctl: stress-resize seed=%" PRIu32 " iterations=%ld\n",
+            seed, iterations);
+    for (index = 0; index < iterations; ++index) {
+        uint32_t values[2];
+
+        if (index % 16 == 0) {
+            values[0] = maximum_width;
+            values[1] = maximum_height;
+        }
+        else if (index % 16 == 1) {
+            values[0] = minimum_width;
+            values[1] = minimum_height;
+        }
+        else {
+            values[0] = minimum_width +
+                stress_random(&state) % (maximum_width - minimum_width + 1U);
+            values[1] = minimum_height +
+                stress_random(&state) % (maximum_height - minimum_height + 1U);
+        }
+        if (configure_window(
+                ctl, window,
+                XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT,
+                values, "stress resize") != 0) {
+            fprintf(stderr, "xminctl: stress-resize failed at iteration %ld\n",
+                    index);
+            return -1;
+        }
+        if (delay_milliseconds != 0)
+            sleep_milliseconds(delay_milliseconds);
+    }
+    return 0;
+}
+
+static int
+stress_window(controller *ctl, xcb_window_t window, long iterations,
+              uint32_t seed, long delay_milliseconds)
+{
+    const uint32_t screen_width = ctl->session.screen->width_in_pixels;
+    const uint32_t screen_height = ctl->session.screen->height_in_pixels;
+    const uint32_t minimum_width = screen_width < 200U ? 32U : 120U;
+    const uint32_t minimum_height = screen_height < 140U ? 24U : 80U;
+    const uint32_t maximum_width = screen_width > 40U
+        ? screen_width - 40U
+        : screen_width;
+    const uint32_t maximum_height = screen_height > 60U
+        ? screen_height - 60U
+        : screen_height;
+    uint32_t state = seed == 0 ? 0x6d2b79f5U : seed;
+    long index;
+
+    if (window == ctl->session.screen->root ||
+        maximum_width < minimum_width || maximum_height < minimum_height) {
+        fprintf(stderr, "xminctl: screen is too small for window stress\n");
+        return -1;
+    }
+    fprintf(stderr,
+            "xminctl: stress-window seed=%" PRIu32 " iterations=%ld\n",
+            seed, iterations);
+    for (index = 0; index < iterations; ++index) {
+        const uint32_t operation = stress_random(&state) % 8U;
+        uint32_t values[4];
+        uint16_t mask;
+
+        if (operation <= 2U) {
+            if (operation == 0U) {
+                values[0] = maximum_width;
+                values[1] = maximum_height;
+            }
+            else if (operation == 1U) {
+                values[0] = minimum_width;
+                values[1] = minimum_height;
+            }
+            else {
+                values[0] = minimum_width + stress_random(&state) %
+                    (maximum_width - minimum_width + 1U);
+                values[1] = minimum_height + stress_random(&state) %
+                    (maximum_height - minimum_height + 1U);
+            }
+            mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+            if (configure_window(ctl, window, mask, values,
+                                 "stress window resize") != 0)
+                goto failed;
+        }
+        else if (operation == 3U) {
+            values[0] = stress_random(&state) % screen_width;
+            values[1] = stress_random(&state) % screen_height;
+            mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y;
+            if (configure_window(ctl, window, mask, values,
+                                 "stress window move") != 0)
+                goto failed;
+        }
+        else if (operation == 4U) {
+            values[2] = minimum_width + stress_random(&state) %
+                (maximum_width - minimum_width + 1U);
+            values[3] = minimum_height + stress_random(&state) %
+                (maximum_height - minimum_height + 1U);
+            values[0] = stress_random(&state) %
+                (screen_width - values[2] + 1U);
+            values[1] = stress_random(&state) %
+                (screen_height - values[3] + 1U);
+            mask = XCB_CONFIG_WINDOW_X | XCB_CONFIG_WINDOW_Y |
+                XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+            if (configure_window(ctl, window, mask, values,
+                                 "stress window geometry") != 0)
+                goto failed;
+        }
+        else if (operation == 5U) {
+            values[0] = XCB_STACK_MODE_ABOVE;
+            if (configure_window(ctl, window, XCB_CONFIG_WINDOW_STACK_MODE,
+                                 values, "stress window raise") != 0)
+                goto failed;
+        }
+        else if (operation == 6U) {
+            if (check_request(
+                    ctl, xcb_unmap_window_checked(
+                        ctl->session.connection, window),
+                    "stress window unmap") != 0 ||
+                sync_connection(ctl) != 0 ||
+                check_request(
+                    ctl, xcb_map_window_checked(
+                        ctl->session.connection, window),
+                    "stress window map") != 0 ||
+                sync_connection(ctl) != 0) {
+                goto failed;
+            }
+        }
+        else {
+            values[0] = index % 2 == 0 ? minimum_width : maximum_width;
+            values[1] = index % 2 == 0 ? maximum_height : minimum_height;
+            mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
+            if (configure_window(ctl, window, mask, values,
+                                 "stress window aspect") != 0)
+                goto failed;
+        }
+        if (delay_milliseconds != 0)
+            sleep_milliseconds(delay_milliseconds);
+    }
+
+    if (check_request(
+            ctl, xcb_map_window_checked(ctl->session.connection, window),
+            "restore stressed window") != 0 ||
+        sync_connection(ctl) != 0) {
+        goto failed;
+    }
+    return 0;
+
+failed:
+    fprintf(stderr, "xminctl: stress-window failed at iteration %ld\n",
+            index);
+    return -1;
+}
+
 static int
 close_window(controller *ctl, xcb_window_t window)
 {
@@ -1267,6 +1514,47 @@ dispatch(controller *ctl, int argc, char **argv)
             mask = XCB_CONFIG_WINDOW_WIDTH | XCB_CONFIG_WINDOW_HEIGHT;
         }
         return configure_window(ctl, window, mask, values, command) == 0 ? 0 : 1;
+    }
+    if (strcmp(command, "stress-resize") == 0 ||
+        strcmp(command, "stress-window") == 0) {
+        const char *selector = NULL;
+        long iterations = 500;
+        long seed = 1;
+        long delay = 0;
+        int index;
+
+        for (index = 1; index < argc; ++index) {
+            if (strcmp(argv[index], "--iterations") == 0 && index + 1 < argc) {
+                if (parse_long(argv[++index], 1, 1000000, &iterations) != 0)
+                    return 2;
+            }
+            else if (strcmp(argv[index], "--seed") == 0 && index + 1 < argc) {
+                if (parse_long(argv[++index], 0, INT32_MAX, &seed) != 0)
+                    return 2;
+            }
+            else if (strcmp(argv[index], "--delay") == 0 && index + 1 < argc) {
+                if (parse_long(argv[++index], 0, INT32_MAX, &delay) != 0)
+                    return 2;
+            }
+            else if (selector == NULL)
+                selector = argv[index];
+            else
+                return 2;
+        }
+        if (selector == NULL)
+            return 2;
+        window = resolve_window(ctl, selector, true);
+        if (window == XCB_WINDOW_NONE) {
+            fprintf(stderr, "xminctl: cannot find mapped window '%s'\n",
+                    selector);
+            return 1;
+        }
+        if (strcmp(command, "stress-resize") == 0) {
+            return stress_resize(ctl, window, iterations, (uint32_t) seed,
+                                 delay) == 0 ? 0 : 1;
+        }
+        return stress_window(ctl, window, iterations, (uint32_t) seed,
+                             delay) == 0 ? 0 : 1;
     }
     if (strcmp(command, "mouse-move") == 0) {
         if (argc != 4 ||

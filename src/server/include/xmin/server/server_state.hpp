@@ -467,6 +467,22 @@ struct ActiveGrab {
     std::uint32_t xi2_event_mask = 0;
 };
 
+struct FrozenPointerEvent {
+    struct PendingInput {
+        std::uint8_t type = 0;
+        std::uint8_t detail = 0;
+        std::int32_t root_x = 0;
+        std::int32_t root_y = 0;
+    };
+
+    CoreInputEvent event;
+    std::uint32_t mask = 0;
+    std::uint32_t source = 0;
+    std::uint32_t propagation_stop = 0;
+    std::uint32_t pointer_window = 0;
+    std::deque<PendingInput> pending;
+};
+
 enum class PassiveGrabKind : std::uint8_t {
     button,
     key,
@@ -631,6 +647,7 @@ struct InputState {
     FocusState focus;
     std::optional<ActiveGrab> pointer_grab;
     std::optional<ActiveGrab> keyboard_grab;
+    std::optional<FrozenPointerEvent> frozen_pointer_event;
     std::uint32_t pointer_grab_time = 1;
     std::uint32_t keyboard_grab_time = 1;
     bool global_auto_repeat = default_global_auto_repeat;
@@ -646,6 +663,12 @@ enum class SelectionUpdate {
 enum class EventDelivery {
     delivered,
     no_recipient,
+    queue_full,
+};
+
+enum class RedirectDelivery {
+    not_redirected,
+    redirected,
     queue_full,
 };
 
@@ -783,9 +806,23 @@ public:
         std::uint16_t width, std::uint16_t height,
         std::uint16_t border_width,
         std::optional<std::uint32_t> sibling,
+        std::optional<std::uint8_t> stack_mode,
+        std::uint32_t requester = 0,
+        std::uint16_t value_mask = 0);
+    [[nodiscard]] RedirectDelivery redirect_map_request(
+        std::uint32_t requester, const WindowRecord &window);
+    [[nodiscard]] RedirectDelivery redirect_configure_request(
+        std::uint32_t requester, const WindowRecord &window,
+        std::int16_t x, std::int16_t y,
+        std::uint16_t width, std::uint16_t height,
+        std::uint16_t border_width, std::uint16_t value_mask,
+        std::optional<std::uint32_t> sibling,
         std::optional<std::uint8_t> stack_mode);
-    [[nodiscard]] bool circulate_window(std::uint32_t parent,
-                                        bool raise_lowest);
+    [[nodiscard]] RedirectDelivery redirect_circulate_request(
+        std::uint32_t requester, const WindowRecord &parent,
+        bool raise_lowest);
+    [[nodiscard]] EventDelivery circulate_window(std::uint32_t parent,
+                                                 bool raise_lowest);
     [[nodiscard]] PixmapRecord *pixmap(std::uint32_t id);
     [[nodiscard]] const PixmapRecord *pixmap(std::uint32_t id) const;
     [[nodiscard]] bool add_pixmap(PixmapRecord pixmap, std::uint32_t owner);
@@ -858,6 +895,8 @@ public:
     [[nodiscard]] Surface *drawable_surface(std::uint32_t id);
     [[nodiscard]] const Surface *drawable_surface(std::uint32_t id) const;
     [[nodiscard]] Surface *readable_surface(std::uint32_t id);
+    [[nodiscard]] Surface *readable_surface(std::uint32_t id,
+                                            const Rectangle &area);
     [[nodiscard]] std::uint8_t drawable_depth(std::uint32_t id) const;
     [[nodiscard]] std::uint32_t pointer_window() const noexcept;
     [[nodiscard]] std::shared_ptr<CursorImage>
@@ -1079,6 +1118,8 @@ public:
         std::uint32_t time);
     [[nodiscard]] EventDelivery activate_pointer_grab(ActiveGrab grab);
     [[nodiscard]] EventDelivery deactivate_pointer_grab();
+    [[nodiscard]] EventDelivery allow_events(
+        std::uint32_t owner, std::uint8_t mode, std::uint32_t time);
     [[nodiscard]] EventDelivery activate_keyboard_grab(ActiveGrab grab);
     [[nodiscard]] EventDelivery deactivate_keyboard_grab();
     void disconnect_client(std::uint32_t owner);
@@ -1270,6 +1311,7 @@ private:
                                        std::int32_t &new_y) const noexcept;
     void revert_focus_from(std::uint32_t window) noexcept;
     void composite_scene();
+    void composite_scene(const Rectangle &area);
     void composite_window(std::uint32_t id, std::int64_t parent_x,
                           std::int64_t parent_y, std::int64_t clip_left,
                           std::int64_t clip_top, std::int64_t clip_right,
