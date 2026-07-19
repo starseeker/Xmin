@@ -122,7 +122,9 @@ session=$build_dir/bin/xmin-session
 viewer=$build_dir/bin/xmin-viewer
 terminal=$build_dir/bin/xmin-st
 control=$build_dir/bin/xminctl
-for program in "$session" "$viewer" "$terminal" "$control"; do
+feedback_target=$build_dir/bin/xminctl_target
+for program in "$session" "$viewer" "$terminal" "$control" \
+    "$feedback_target"; do
     if [ ! -x "$program" ]; then
         echo "desktop_stress.sh: missing executable: $program" >&2
         exit 1
@@ -132,28 +134,36 @@ done
 temporary_root=${TMPDIR:-/tmp}
 session_info=$(mktemp "$temporary_root/xmin-desktop-stress-XXXXXX")
 capture=$session_info.ppm
+viewer_before=$session_info-viewer-before.ppm
+viewer_after=$session_info-viewer-after.ppm
+guest_before=$session_info-guest-before.ppm
+guest_after=$session_info-guest-after.ppm
 session_pid=
 viewer_pid=
 terminal_pid=
+terminal_window=
+feedback_pid=
+feedback_window=
 host_stress_pid=
 lifecycle_pid=
 
 cleanup()
 {
     trap - EXIT HUP INT TERM
-    for pid in "$host_stress_pid" "$lifecycle_pid" "$viewer_pid" \
-        "$terminal_pid" "$session_pid"; do
+    for pid in "$host_stress_pid" "$lifecycle_pid" "$feedback_pid" \
+        "$viewer_pid" "$terminal_pid" "$session_pid"; do
         if [ -n "$pid" ]; then
             kill -TERM "$pid" 2>/dev/null || :
         fi
     done
-    for pid in "$host_stress_pid" "$lifecycle_pid" "$viewer_pid" \
-        "$terminal_pid" "$session_pid"; do
+    for pid in "$host_stress_pid" "$lifecycle_pid" "$feedback_pid" \
+        "$viewer_pid" "$terminal_pid" "$session_pid"; do
         if [ -n "$pid" ]; then
             wait "$pid" 2>/dev/null || :
         fi
     done
-    rm -f "$session_info" "$capture"
+    rm -f "$session_info" "$capture" "$viewer_before" "$viewer_after" \
+        "$guest_before" "$guest_after"
 }
 
 trap cleanup EXIT
@@ -227,13 +237,81 @@ start_viewer
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
     "$terminal" -t xmin-st-stress &
 terminal_pid=$!
-DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
-    "$control" wait-window --timeout 5000 xmin-st-stress >/dev/null
+terminal_window=$(DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" wait-window --timeout 5000 xmin-st-stress)
 
 if ! kill -0 "$viewer_pid" 2>/dev/null; then
     echo "desktop_stress.sh: viewer exited before stress began" >&2
     exit 1
 fi
+
+# Exercise the path a person uses: the viewer is already attached when st is
+# created.  A deterministic XCB target repaints on each KeyPress so GLFW input,
+# guest DAMAGE, and successive host frames can be asserted independently of a
+# shell's PTY echo timing.  Capturing only the guest would miss a viewer stuck
+# on its initial MapNotify frame.
+DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$feedback_target" --feedback &
+feedback_pid=$!
+feedback_window=$(DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" wait-window --timeout 5000 xmin-viewer-feedback-target)
+DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" activate "$feedback_window"
+DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" wait-stable --quiet 50 --timeout 5000 "$feedback_window"
+"$control" activate "Xmin Viewer"
+"$control" wait-stable --quiet 50 --timeout 5000 "Xmin Viewer"
+sleep 0.1
+"$control" capture-window "Xmin Viewer" "$viewer_before"
+DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" capture-window "$feedback_window" "$guest_before"
+feedback_source=host
+for feedback_key in x m i n f e e x; do
+    if [ "$feedback_source" = host ]; then
+        "$control" type "$feedback_key"
+        feedback_source=guest
+    else
+        DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+            "$control" type "$feedback_key"
+    fi
+    attempt=0
+    while :; do
+        DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+            "$control" capture-window "$feedback_window" "$guest_after"
+        if ! cmp -s "$guest_before" "$guest_after"; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 50 ]; then
+            echo "desktop_stress.sh: feedback key '$feedback_key' did not repaint the guest" >&2
+            exit 1
+        fi
+        sleep 0.02
+    done
+    attempt=0
+    while :; do
+        "$control" capture-window "Xmin Viewer" "$viewer_after"
+        if ! cmp -s "$viewer_before" "$viewer_after"; then
+            break
+        fi
+        attempt=$((attempt + 1))
+        if [ "$attempt" -ge 50 ]; then
+            echo "desktop_stress.sh: viewer missed a successive feedback repaint" >&2
+            exit 1
+        fi
+        sleep 0.02
+    done
+    cp "$guest_after" "$guest_before"
+    cp "$viewer_after" "$viewer_before"
+done
+DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
+    "$control" close "$feedback_window"
+if ! wait "$feedback_pid"; then
+    echo "desktop_stress.sh: feedback target exited unsuccessfully" >&2
+    feedback_pid=
+    exit 1
+fi
+feedback_pid=
 
 if [ "$host_resize" -ne 0 ] && [ "$host_iterations" -gt 0 ]; then
     "$control" stress-resize --iterations "$host_iterations" \
@@ -247,7 +325,7 @@ if [ "$resize_only" -ne 0 ]; then
 fi
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
     "$control" "$guest_stress" --iterations "$iterations" --seed "$seed" \
-        --delay "$delay" xmin-st-stress
+        --delay "$delay" "$terminal_window"
 
 if [ -n "$host_stress_pid" ]; then
     if ! wait "$host_stress_pid"; then
@@ -297,15 +375,15 @@ while [ "$cycle" -lt "$reattach" ]; do
 done
 
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
-    "$control" map xmin-st-stress
+    "$control" map "$terminal_window"
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
-    "$control" activate xmin-st-stress
+    "$control" activate "$terminal_window"
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
     "$control" type "printf XMIN_STRESS_OK"
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
     "$control" key enter
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
-    "$control" wait-stable --quiet 50 --timeout 5000 xmin-st-stress
+    "$control" wait-stable --quiet 50 --timeout 5000 "$terminal_window"
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
     "$control" capture-root "$capture"
 
@@ -314,6 +392,6 @@ if ! kill -0 "$viewer_pid" 2>/dev/null; then
     exit 1
 fi
 DISPLAY=$XMIN_DISPLAY XAUTHORITY=$XMIN_XAUTHORITY \
-    "$control" geometry xmin-st-stress >/dev/null
+    "$control" geometry "$terminal_window" >/dev/null
 echo "desktop_stress.sh: passed seed=$seed guest=$iterations "\
 "host=$host_iterations lifecycle=$lifecycle reattach=$reattach"

@@ -2,9 +2,12 @@
 #include <xcb/xcb.h>
 #include <xcb/xfixes.h>
 
+#include <errno.h>
+#include <poll.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <time.h>
 
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
@@ -76,10 +79,87 @@ region_is(xcb_connection_t *connection, xcb_xfixes_region_t region,
     return result;
 }
 
+static int64_t
+monotonic_milliseconds(void)
+{
+    struct timespec time;
+    if (clock_gettime(CLOCK_MONOTONIC, &time) != 0)
+        return -1;
+    return (int64_t) time.tv_sec * 1000 + time.tv_nsec / 1000000;
+}
+
+static int
+wait_for_damage_count(xcb_connection_t *connection, uint8_t first_event,
+                      xcb_drawable_t drawable, xcb_damage_damage_t damage,
+                      unsigned expected, int timeout_milliseconds)
+{
+    const int64_t started = monotonic_milliseconds();
+    unsigned count = 0;
+    if (started < 0)
+        return 0;
+    while (count < expected) {
+        xcb_generic_event_t *event;
+        while ((event = xcb_poll_for_event(connection)) != NULL) {
+            if ((event->response_type & 0x7fU) == first_event) {
+                const xcb_damage_notify_event_t *notify =
+                    (const xcb_damage_notify_event_t *) event;
+                if (notify->drawable == drawable &&
+                    notify->damage == damage) {
+                    if ((notify->level & 0x7fU) !=
+                            XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES ||
+                        notify->area.x != 0 || notify->area.y != 0 ||
+                        notify->area.width != 30 ||
+                        notify->area.height != 20) {
+                        fprintf(stderr,
+                                "unexpected raw DAMAGE event %u: level=%u "
+                                "area=%d,%d %ux%u\n",
+                                count, notify->level, notify->area.x,
+                                notify->area.y, notify->area.width,
+                                notify->area.height);
+                        free(event);
+                        return 0;
+                    }
+                    ++count;
+                }
+            }
+            free(event);
+        }
+        if (count >= expected)
+            return 1;
+        if (xcb_connection_has_error(connection) != 0)
+            return 0;
+        {
+            const int64_t now = monotonic_milliseconds();
+            struct pollfd descriptor;
+            int wait_for;
+            int result;
+            if (now < 0 || now - started >= timeout_milliseconds) {
+                fprintf(stderr, "received %u of %u raw DAMAGE events\n",
+                        count, expected);
+                return 0;
+            }
+            wait_for = timeout_milliseconds - (int) (now - started);
+            descriptor.fd = xcb_get_file_descriptor(connection);
+            descriptor.events = POLLIN;
+            descriptor.revents = 0;
+            do {
+                result = poll(&descriptor, 1, wait_for);
+            } while (result < 0 && errno == EINTR);
+            if (result <= 0) {
+                fprintf(stderr, "received %u of %u raw DAMAGE events\n",
+                        count, expected);
+                return 0;
+            }
+        }
+    }
+    return 1;
+}
+
 int
 main(void)
 {
     xcb_connection_t *connection = xcb_connect(NULL, NULL);
+    xcb_connection_t *observer = NULL;
     xcb_screen_t *screen = xcb_setup_roots_iterator(
         xcb_get_setup(connection)).data;
     const xcb_query_extension_reply_t *damage_extension;
@@ -89,6 +169,7 @@ main(void)
     xcb_pixmap_t pixmap = XCB_NONE;
     xcb_gcontext_t gc = XCB_NONE;
     xcb_damage_damage_t damage = XCB_NONE;
+    xcb_damage_damage_t raw_damage = XCB_NONE;
     xcb_xfixes_region_t repair = XCB_NONE;
     xcb_xfixes_region_t parts = XCB_NONE;
     xcb_rectangle_t rectangle = {2, 3, 8, 6};
@@ -237,6 +318,54 @@ main(void)
             goto cleanup;
     }
 
+    stage = "delivering successive raw damage to another client";
+    observer = xcb_connect(NULL, NULL);
+    if (observer == NULL || xcb_connection_has_error(observer) != 0)
+        goto cleanup;
+    {
+        xcb_generic_error_t *observer_error = NULL;
+        xcb_damage_query_version_reply_t *observer_version =
+            xcb_damage_query_version_reply(
+                observer, xcb_damage_query_version(observer, 1, 1),
+                &observer_error);
+        int valid = observer_error == NULL && observer_version != NULL &&
+            observer_version->major_version == 1;
+        free(observer_error);
+        free(observer_version);
+        if (!valid)
+            goto cleanup;
+    }
+    raw_damage = xcb_generate_id(observer);
+    if (!checked(observer,
+                 xcb_damage_create_checked(
+                     observer, raw_damage, pixmap,
+                     XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES),
+                 "raw DAMAGE Create"))
+        goto cleanup;
+    rectangle.x = 4;
+    rectangle.y = 5;
+    rectangle.width = 6;
+    rectangle.height = 7;
+    {
+        unsigned index;
+        for (index = 0; index < 31; ++index)
+            xcb_poly_fill_rectangle(connection, pixmap, gc, 1, &rectangle);
+        if (!checked(connection,
+                     xcb_poly_fill_rectangle_checked(
+                         connection, pixmap, gc, 1, &rectangle),
+                     "final burst PolyFillRectangle"))
+            goto cleanup;
+    }
+    if (!wait_for_damage_count(
+            observer, damage_extension->first_event, pixmap, raw_damage,
+            32, 2000))
+        goto cleanup;
+    if (!checked(observer,
+                 xcb_damage_destroy_checked(observer, raw_damage),
+                 "raw DAMAGE Destroy"))
+        goto cleanup;
+    raw_damage = XCB_NONE;
+
     stage = "destroying the DAMAGE object";
     if (!checked(connection,
                  xcb_damage_destroy_checked(connection, damage),
@@ -266,6 +395,11 @@ cleanup:
         if (pixmap != XCB_NONE)
             xcb_free_pixmap(connection, pixmap);
         xcb_disconnect(connection);
+    }
+    if (observer != NULL) {
+        if (raw_damage != XCB_NONE)
+            xcb_damage_destroy(observer, raw_damage);
+        xcb_disconnect(observer);
     }
     return passed ? 0 : 1;
 }

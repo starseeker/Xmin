@@ -77,6 +77,8 @@ usage(FILE *stream)
             "\n"
             "Observation commands:\n"
             "  wait-stable [--quiet MS] [--timeout MS] WINDOW\n"
+            "  watch-damage [--duration MS] WINDOW\n"
+            "                                       timestamp DAMAGE events\n"
             "  capture-root FILE.ppm\n"
             "  capture-window WINDOW FILE.ppm\n"
             "\n"
@@ -1133,6 +1135,112 @@ cleanup:
 }
 
 static int
+watch_damage(controller *ctl, xcb_window_t window, long duration_milliseconds)
+{
+    const xcb_query_extension_reply_t *extension =
+        xcb_get_extension_data(ctl->session.connection, &xcb_damage_id);
+    xcb_damage_damage_t damage;
+    xcb_generic_error_t *version_error = NULL;
+    xcb_damage_query_version_reply_t *version;
+    int64_t start;
+    int result = -1;
+
+    if (extension == NULL || !extension->present) {
+        fprintf(stderr, "xminctl: the display does not provide DAMAGE\n");
+        return -1;
+    }
+    version = xcb_damage_query_version_reply(
+        ctl->session.connection,
+        xcb_damage_query_version(ctl->session.connection, 1, 1),
+        &version_error);
+    if (version == NULL || version_error != NULL) {
+        fprintf(stderr, "xminctl: cannot negotiate the DAMAGE extension\n");
+        free(version_error);
+        free(version);
+        return -1;
+    }
+    free(version);
+    damage = xcb_generate_id(ctl->session.connection);
+    if (check_request(
+            ctl,
+            xcb_damage_create_checked(
+                ctl->session.connection, damage, window,
+                XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES),
+            "DAMAGE subscription") != 0) {
+        return -1;
+    }
+    xcb_flush(ctl->session.connection);
+    start = monotonic_milliseconds();
+    if (start < 0)
+        goto cleanup;
+    printf("elapsed_ms\tdrawable\tarea\tgeometry\tlevel\n");
+    fflush(stdout);
+
+    for (;;) {
+        xcb_generic_event_t *event;
+        int64_t now;
+        struct pollfd descriptor;
+        int poll_result;
+        long wait_for;
+
+        while ((event = xcb_poll_for_event(ctl->session.connection)) != NULL) {
+            const uint8_t type = event->response_type & 0x7f;
+            if (type == extension->first_event + XCB_DAMAGE_NOTIFY) {
+                const xcb_damage_notify_event_t *notify =
+                    (const xcb_damage_notify_event_t *) event;
+                if (notify->damage == damage) {
+                    now = monotonic_milliseconds();
+                    if (now < 0) {
+                        free(event);
+                        goto cleanup;
+                    }
+                    printf(
+                        "%" PRId64 "\t0x%08" PRIx32
+                        "\t%d,%d %ux%u\t%d,%d %ux%u\t%u\n",
+                        now - start, notify->drawable,
+                        notify->area_x, notify->area_y,
+                        (unsigned) notify->area_width,
+                        (unsigned) notify->area_height,
+                        notify->geometry_x, notify->geometry_y,
+                        (unsigned) notify->geometry_width,
+                        (unsigned) notify->geometry_height,
+                        (unsigned) notify->level);
+                    fflush(stdout);
+                }
+            }
+            free(event);
+        }
+        if (xcb_connection_has_error(ctl->session.connection) != 0) {
+            fprintf(stderr, "xminctl: X11 connection lost while watching\n");
+            goto cleanup;
+        }
+        now = monotonic_milliseconds();
+        if (now < 0)
+            goto cleanup;
+        if (now - start >= duration_milliseconds) {
+            result = 0;
+            break;
+        }
+        wait_for = duration_milliseconds - (long) (now - start);
+        descriptor.fd = xcb_get_file_descriptor(ctl->session.connection);
+        descriptor.events = POLLIN;
+        descriptor.revents = 0;
+        do {
+            poll_result = poll(&descriptor, 1, (int) wait_for);
+        } while (poll_result < 0 && errno == EINTR);
+        if (poll_result < 0) {
+            fprintf(stderr, "xminctl: poll failed: %s\n", strerror(errno));
+            goto cleanup;
+        }
+    }
+
+cleanup:
+    xcb_damage_destroy(ctl->session.connection, damage);
+    xcb_flush(ctl->session.connection);
+    return result;
+}
+
+static int
 wait_for_window(controller *ctl, const char *name, long timeout_milliseconds)
 {
     int64_t start = monotonic_milliseconds();
@@ -1788,6 +1896,29 @@ release_drag:
         if (window == XCB_WINDOW_NONE)
             return 1;
         return wait_stable(ctl, window, quiet, timeout) == 0 ? 0 : 1;
+    }
+    if (strcmp(command, "watch-damage") == 0) {
+        long duration = 5000;
+        const char *selector = NULL;
+        int index;
+
+        for (index = 1; index < argc; ++index) {
+            if (strcmp(argv[index], "--duration") == 0 &&
+                index + 1 < argc) {
+                if (parse_long(argv[++index], 0, INT32_MAX, &duration) != 0)
+                    return 2;
+            }
+            else if (selector == NULL)
+                selector = argv[index];
+            else
+                return 2;
+        }
+        if (selector == NULL)
+            return 2;
+        window = resolve_window(ctl, selector, true);
+        if (window == XCB_WINDOW_NONE)
+            return 1;
+        return watch_damage(ctl, window, duration) == 0 ? 0 : 1;
     }
     if (strcmp(command, "capture-root") == 0) {
         if (argc != 2)

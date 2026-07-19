@@ -159,8 +159,9 @@ xvfb-run -a tests/desktop_stress.sh --build-dir .build --seed 1 --no-shm
 ```
 
 It mixes guest geometry and map state, resizes the GLFW host window, cycles
-terminal processes, detaches and reattaches the viewer, then checks input and
-capture. `--resize-only` is available for narrow regression bisection.
+terminal processes, detaches and reattaches the viewer, then forwards input
+through GLFW and checks successive updates in both the guest and host
+framebuffers. `--resize-only` is available for narrow regression bisection.
 
 See `BUILDING.md` for options, installation, and dependency refreshes. The
 completed fork plan and measured outcome are recorded in `modernize.txt`.

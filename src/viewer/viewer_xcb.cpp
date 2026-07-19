@@ -175,9 +175,23 @@ public:
                     damages_.erase(destroyed->window);
                     mark_full_frame();
                 }
-                else if (type == XCB_MAP_NOTIFY ||
-                         type == XCB_UNMAP_NOTIFY ||
-                         type == XCB_REPARENT_NOTIFY ||
+                else if (type == XCB_MAP_NOTIFY) {
+                    const auto *mapped =
+                        reinterpret_cast<xcb_map_notify_event_t *>(event);
+                    // CreateNotify is the normal discovery path, but also
+                    // attach here so a late viewer or an imperfect server
+                    // cannot leave a newly mapped window permanently
+                    // outside DAMAGE tracking.
+                    watch_window_tree(mapped->window);
+                    mark_full_frame();
+                }
+                else if (type == XCB_REPARENT_NOTIFY) {
+                    const auto *reparented =
+                        reinterpret_cast<xcb_reparent_notify_event_t *>(event);
+                    watch_window_tree(reparented->window);
+                    mark_full_frame();
+                }
+                else if (type == XCB_UNMAP_NOTIFY ||
                          type == XCB_CONFIGURE_NOTIFY ||
                          type == XCB_GRAVITY_NOTIFY ||
                          type == XCB_CIRCULATE_NOTIFY) {
@@ -343,35 +357,69 @@ private:
     }
 
 #if XMIN_VIEWER_HAVE_DAMAGE
+    bool watch_window(xcb_window_t window)
+    {
+        xcb_generic_error_t *protocol_error = nullptr;
+        auto *attributes = xcb_get_window_attributes_reply(
+            connection_, xcb_get_window_attributes(connection_, window),
+            &protocol_error);
+        if (attributes == nullptr || protocol_error != nullptr) {
+            std::free(protocol_error);
+            std::free(attributes);
+            return false;
+        }
+
+        const std::uint32_t event_mask =
+            XCB_EVENT_MASK_STRUCTURE_NOTIFY |
+            XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
+        protocol_error = xcb_request_check(
+            connection_, xcb_change_window_attributes_checked(
+                connection_, window, XCB_CW_EVENT_MASK, &event_mask));
+        if (protocol_error != nullptr) {
+            std::free(protocol_error);
+            std::free(attributes);
+            return false;
+        }
+
+        xcb_damage_damage_t damage = XCB_NONE;
+        if (attributes->_class == XCB_WINDOW_CLASS_INPUT_OUTPUT) {
+            damage = xcb_generate_id(connection_);
+            protocol_error = xcb_request_check(
+                connection_, xcb_damage_create_checked(
+                    connection_, damage, window,
+                    XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES));
+            if (protocol_error != nullptr) {
+                std::free(protocol_error);
+                std::free(attributes);
+                return false;
+            }
+        }
+        std::free(attributes);
+
+        try {
+            if (damage != XCB_NONE)
+                damages_.emplace(window, damage);
+            watched_windows_.insert(window);
+        }
+        catch (const std::bad_alloc &) {
+            if (damage != XCB_NONE) {
+                damages_.erase(window);
+                xcb_damage_destroy(connection_, damage);
+            }
+            watched_windows_.erase(window);
+            return false;
+        }
+        return true;
+    }
+
     void watch_window_tree(xcb_window_t first)
     {
         std::vector<xcb_window_t> pending{first};
         while (!pending.empty()) {
             const xcb_window_t window = pending.back();
             pending.pop_back();
-            if (watched_windows_.insert(window).second) {
-                auto *attributes = xcb_get_window_attributes_reply(
-                    connection_,
-                    xcb_get_window_attributes(connection_, window), nullptr);
-                if (attributes == nullptr) {
-                    watched_windows_.erase(window);
-                    continue;
-                }
-                const std::uint32_t event_mask =
-                    XCB_EVENT_MASK_STRUCTURE_NOTIFY |
-                    XCB_EVENT_MASK_SUBSTRUCTURE_NOTIFY;
-                xcb_change_window_attributes(
-                    connection_, window, XCB_CW_EVENT_MASK, &event_mask);
-                if (attributes->_class == XCB_WINDOW_CLASS_INPUT_OUTPUT) {
-                    const xcb_damage_damage_t damage =
-                        xcb_generate_id(connection_);
-                    xcb_damage_create(
-                        connection_, damage, window,
-                        XCB_DAMAGE_REPORT_LEVEL_RAW_RECTANGLES);
-                    damages_.emplace(window, damage);
-                }
-                std::free(attributes);
-            }
+            if (watched_windows_.count(window) == 0)
+                static_cast<void>(watch_window(window));
 
             auto *tree = xcb_query_tree_reply(
                 connection_, xcb_query_tree(connection_, window), nullptr);

@@ -68,9 +68,18 @@ fill_window(xcb_connection_t *connection, xcb_window_t window,
 }
 
 int
-main(void)
+main(int argc, char **argv)
 {
-    static const char title[] = "xminctl-automation-target";
+    static const char automation_title[] = "xminctl-automation-target";
+    static const char feedback_title[] = "xmin-viewer-feedback-target";
+    static const uint32_t feedback_colors[] = {
+        0x00ff0000U, 0x0000ffffU, 0x0000ff00U, 0x00ff00ffU,
+        0x000000ffU, 0x00ffff00U, 0x00ffffffU, 0x00804020U,
+        0x00208040U, 0x00402080U, 0x00c06020U, 0x0020c060U,
+    };
+    const char *title;
+    size_t title_length;
+    int feedback_mode;
     int screen_number = 0;
     xcb_connection_t *connection;
     xcb_screen_t *screen;
@@ -92,6 +101,18 @@ main(void)
     int got_key = 0;
     int painted_success = 0;
     int result = 1;
+    size_t feedback_color = 0;
+
+    if (argc == 1)
+        feedback_mode = 0;
+    else if (argc == 2 && strcmp(argv[1], "--feedback") == 0)
+        feedback_mode = 1;
+    else {
+        fprintf(stderr, "usage: %s [--feedback]\n", argv[0]);
+        return 2;
+    }
+    title = feedback_mode ? feedback_title : automation_title;
+    title_length = strlen(title);
 
     connection = xcb_connect(NULL, &screen_number);
     if (connection == NULL || xcb_connection_has_error(connection) != 0) {
@@ -131,7 +152,7 @@ main(void)
     }
     xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window,
                         XCB_ATOM_WM_NAME, XCB_ATOM_STRING, 8,
-                        sizeof(title) - 1, title);
+                        (uint32_t) title_length, title);
     xcb_change_property(connection, XCB_PROP_MODE_REPLACE, window,
                         wm_protocols, XCB_ATOM_ATOM, 32, 1,
                         &wm_delete_window);
@@ -150,7 +171,9 @@ main(void)
         type = event->response_type & 0x7f;
         if (type == XCB_EXPOSE)
             (void) fill_window(connection, window, graphics,
-                               painted_success ? 0x0000ff00U : 0x000000ffU);
+                               feedback_mode ?
+                               feedback_colors[feedback_color] :
+                               (painted_success ? 0x0000ff00U : 0x000000ffU));
         else if (type == XCB_BUTTON_PRESS) {
             xcb_button_press_event_t *button = (xcb_button_press_event_t *) event;
 
@@ -172,6 +195,15 @@ main(void)
 
             if (key->detail == a_keycode)
                 got_key = 1;
+            if (feedback_mode) {
+                feedback_color = (feedback_color + 1) %
+                    (sizeof(feedback_colors) / sizeof(feedback_colors[0]));
+                if (fill_window(connection, window, graphics,
+                                feedback_colors[feedback_color]) != 0) {
+                    free(event);
+                    goto cleanup_window;
+                }
+            }
         }
         else if (type == XCB_CLIENT_MESSAGE) {
             xcb_client_message_event_t *message =
@@ -180,11 +212,14 @@ main(void)
             if (message->type == wm_protocols && message->format == 32 &&
                 message->data.data32[0] == wm_delete_window) {
                 free(event);
-                result = got_button && got_drag && got_key && painted_success ? 0 : 1;
+                result = feedback_mode ||
+                    (got_button && got_drag && got_key && painted_success)
+                    ? 0 : 1;
                 break;
             }
         }
-        if (got_button && got_drag && got_key && !painted_success) {
+        if (!feedback_mode && got_button && got_drag && got_key &&
+            !painted_success) {
             painted_success =
                 fill_window(connection, window, graphics, 0x0000ff00U) == 0;
         }

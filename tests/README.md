@@ -65,8 +65,11 @@ The interactive stack has a reproducible lifecycle workload which starts an
 authenticated Xmin session, JWM, st, and the separate GLFW viewer. By default
 it mixes guest moves, resizes, map/unmap cycles, stacking changes, concurrently
 resizes the GLFW host window, creates and closes temporary terminals, detaches
-and reattaches the viewer, injects a final terminal command, and captures the
-composed root. Run both capture transports when changing the viewer, event
+and reattaches the viewer, forwards input through the host GLFW
+window, verifies that a deterministic client created after viewer attachment
+changes the actual host framebuffer after every key in a sequence, injects a
+final terminal command, and captures the composed root. Run both capture
+transports when changing the viewer, event
 ordering, window lifecycle, geometry, or image paths:
 
 ```sh

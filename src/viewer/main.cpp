@@ -44,6 +44,21 @@ struct ViewerState {
     bool pointer_inside = false;
 };
 
+std::int64_t
+trace_milliseconds()
+{
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+void
+trace_frame(bool enabled, std::string_view message)
+{
+    if (enabled)
+        std::cerr << "xmin-viewer-trace " << trace_milliseconds() << ' '
+                  << message << '\n';
+}
+
 void
 usage(std::ostream &stream, std::string_view program)
 {
@@ -324,6 +339,12 @@ key_callback(GLFWwindow *window, int key, int, int action, int)
     if (state == nullptr)
         return;
     const std::uint8_t code = guest_keycode(key);
+    if (std::getenv("XMIN_VIEWER_TRACE") != nullptr) {
+        std::cerr << "xmin-viewer-trace " << trace_milliseconds()
+                  << " key host=" << key
+                  << " guest=" << static_cast<unsigned>(code)
+                  << " action=" << action << '\n';
+    }
     if (code == 0)
         return;
     const bool pressed = action != GLFW_RELEASE;
@@ -564,22 +585,45 @@ run(int argc, char **argv)
     const auto frame_period = std::chrono::duration_cast<FrameClock::duration>(
         std::chrono::duration<double>(1.0 / options.frames_per_second));
     auto next_frame = FrameClock::now();
+    const bool trace_frames = std::getenv("XMIN_VIEWER_TRACE") != nullptr;
     while (glfwWindowShouldClose(window) == GLFW_FALSE) {
         const auto now = FrameClock::now();
         if (now >= next_frame) {
-            if (guest->frame_pending()) {
+            const bool pending = guest->frame_pending();
+            if (pending)
+                trace_frame(trace_frames, "pending");
+            if (pending) {
                 bool more = false;
                 do {
                     xmin::viewer::FrameView frame;
+                    const auto capture_started = trace_milliseconds();
                     if (!guest->capture(frame)) {
                         std::cerr << "xmin-viewer: " << guest->error()
                                   << '\n';
                         glfwSetWindowShouldClose(window, GLFW_TRUE);
                         break;
                     }
+                    if (trace_frames) {
+                        std::cerr
+                            << "xmin-viewer-trace "
+                            << trace_milliseconds() << " captured "
+                            << frame.x << ',' << frame.y << ' '
+                            << frame.width << 'x' << frame.height
+                            << " in "
+                            << trace_milliseconds() - capture_started
+                            << " ms more=" << frame.more << '\n';
+                    }
                     more = frame.more;
+                    const auto draw_started = trace_milliseconds();
                     draw_frame(window, texture, frame, guest->width(),
                                guest->height(), converted);
+                    if (trace_frames && !frame.more) {
+                        std::cerr
+                            << "xmin-viewer-trace "
+                            << trace_milliseconds() << " presented in "
+                            << trace_milliseconds() - draw_started
+                            << " ms\n";
+                    }
                 } while (more);
             }
             next_frame += frame_period;

@@ -112,7 +112,10 @@ exists for isolated tests that must redirect `/tmp/.X11-unix` and lock files.
 
 `xminctl --help` lists window, input, synchronization, and PPM capture
 commands. It accepts `--display :N`; otherwise it uses `DISPLAY` and
-`XAUTHORITY`.
+`XAUTHORITY`. For live redraw diagnosis,
+`xminctl watch-damage --duration 5000 WINDOW` timestamps raw DAMAGE events;
+setting `XMIN_VIEWER_TRACE=1` on `xmin-viewer` logs forwarded keys, dirty
+rectangles, and capture/presentation times.
 
 For a reproducible full-desktop lifecycle workload, run both the shared-memory
 and portable capture paths:
@@ -123,8 +126,9 @@ xvfb-run -a tests/desktop_stress.sh --build-dir .build --seed 1 --no-shm
 ```
 
 This stresses guest geometry, map/unmap and stacking state, the GLFW host
-window, terminal creation/destruction, viewer detach/reattach, final input,
-and capture. `--resize-only` retains the narrower original workload; see
+window, terminal creation/destruction, viewer detach/reattach, successive
+client redraw feedback, and capture. `--resize-only` retains the narrower
+original workload; see
 `tests/desktop_stress.sh --help` for individual iteration controls.
 
 See `tests/README.md` for the layered test design and the policy for translating
