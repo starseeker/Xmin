@@ -1,32 +1,37 @@
 diff --git a/unix/configure b/unix/configure
-index 0109b09..7352d3f 100755
+index 0109b0928..bf0fcc6da 100755
 --- a/unix/configure
 +++ b/unix/configure
-@@ -796,6 +796,7 @@ enable_load
+@@ -795,6 +795,7 @@ enable_corefoundation
+ enable_load
  enable_symbols
  enable_aqua
- with_x
 +with_xmin
+ with_x
  enable_xft
  enable_libcups
- enable_xss
-@@ -1464,6 +1465,7 @@ Optional Packages:
+@@ -1463,6 +1464,8 @@ Optional Packages:
+   --with-tcl              directory containing tcl configuration
                            (tclConfig.sh)
    --with-encoding         encoding for configuration values (default: utf-8)
++  --with-xmin=DIR         use the minimalist Xmin X11 client SDK installed in
++                          DIR
    --with-x                use the X Window System
-+  --with-xmin=DIR         use the minimalist Xmin X11 client SDK installed in DIR
  
  Some influential environment variables:
-   CC          C compiler command
-@@ -7952,6 +7954,32 @@ else
+@@ -7952,6 +7955,84 @@ else
      #--------------------------------------------------------------------
  
  
-+    if test ${with_xmin+y}; then
-+	tk_xmin_prefix=$with_xmin
-+    else
-+	tk_xmin_prefix=""
-+    fi
++# Check whether --with-xmin was given.
++if test ${with_xmin+y}
++then :
++  withval=$with_xmin; tk_xmin_prefix=$withval
++else case e in #(
++  e) tk_xmin_prefix="" ;;
++esac
++fi
++
 +    if test "x$tk_xmin_prefix" != "x" -a "x$tk_xmin_prefix" != "xno"; then
 +	tk_xmin_libdir=""
 +	for tk_xmin_library in \
@@ -45,21 +50,81 @@ index 0109b09..7352d3f 100755
 +	XLIBSW="-L$tk_xmin_libdir -Wl,-rpath,$tk_xmin_libdir -lXminClient"
 +	x_includes="$tk_xmin_prefix/include"
 +	x_libraries="$tk_xmin_libdir"
++	tk_oldCFlags=$CFLAGS
++	tk_oldLibs=$LIBS
++	CFLAGS="$CFLAGS $XINCLUDES"
++	LIBS="$LIBS $XLIBSW"
++	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking whether the Xmin SDK provides a usable X11 client facade" >&5
++printf %s "checking whether the Xmin SDK provides a usable X11 client facade... " >&6; }
++	cat confdefs.h - <<_ACEOF >conftest.$ac_ext
++/* end confdefs.h.  */
++
++	    #include <X11/Xlib.h>
++	    #include <X11/Xft/Xft.h>
++	    #ifndef XMIN_X11_CLIENT_FACADE
++	    #error Xlib.h is not from the selected Xmin SDK
++	    #endif
++	    #ifndef XMIN_XFT_CLIENT_FACADE
++	    #error Xft.h is not from the selected Xmin SDK
++	    #endif
++	    #ifndef XMIN_CLIENT_FONTCONFIG_H
++	    #error fontconfig.h is not from the selected Xmin SDK
++	    #endif
++
++int
++main (void)
++{
++
++	    Display *display = XOpenDisplay(0);
++	    if (display) XCloseDisplay(display);
++
++  ;
++  return 0;
++}
++_ACEOF
++if ac_fn_c_try_link "$LINENO"
++then :
++  { printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: yes" >&5
++printf '%s\n' "yes" >&6; }
++else case e in #(
++  e)
++	    { printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: no" >&5
++printf '%s\n' "no" >&6; }
++	    as_fn_error $? "the Xmin SDK in $tk_xmin_prefix cannot compile and link an X11 client" "$LINENO" 5
++	 ;;
++esac
++fi
++rm -f core conftest.err conftest.$ac_objext conftest.beam \
++    conftest$ac_exeext conftest.$ac_ext
++	CFLAGS=$tk_oldCFlags
++	LIBS=$tk_oldLibs
 +	tk_xmin=yes
 +    else
-+	tk_xmin=no
++
      { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for X" >&5
  printf %s "checking for X... " >&6; }
  
-@@ -8320,6 +8335,7 @@ fi
- printf '%s\n' "could not find any!  Using -lX11." >&6; }
+@@ -8321,5 +8402,7 @@ printf '%s\n' "could not find any!  Using -lX11." >&6; }
  	XLIBSW=-lX11
      fi
-+    fi
  
++	tk_xmin=no
++    fi
      TK_WINDOWINGSYSTEM=X11
  fi
-@@ -8480,6 +8496,12 @@ fi
+@@ -8368,4 +8451,4 @@ fi
+-if test $tk_aqua = no; then
++if test $tk_aqua = no -a "$tk_xmin" != yes; then
+     { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking for main in -lXbsd" >&5
+ printf %s "checking for main in -lXbsd... " >&6; }
+ if test ${ac_cv_lib_Xbsd_main+y}
+@@ -8421,4 +8504,4 @@ fi
+-if test -d /usr/include/mit -a $tk_aqua = no; then
++if test -d /usr/include/mit -a $tk_aqua = no -a "$tk_xmin" != yes; then
+     { printf '%s\n' "$as_me:${as_lineno-$LINENO}: checking MIT X libraries" >&5
+ printf %s "checking MIT X libraries... " >&6; }
+     tk_oldCFlags=$CFLAGS
+@@ -8480,6 +8563,12 @@ fi
      if test "$enable_xft" = "no" ; then
  	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $enable_xft" >&5
  printf '%s\n' "$enable_xft" >&6; }
@@ -72,7 +137,7 @@ index 0109b09..7352d3f 100755
      else
  	found_xft="yes"
  			XFT_CFLAGS=`xft-config --cflags 2>/dev/null` || found_xft="no"
-@@ -8745,6 +8767,9 @@ else case e in #(
+@@ -8745,6 +8834,9 @@ else case e in #(
  esac
  fi
  
@@ -82,17 +147,11 @@ index 0109b09..7352d3f 100755
      if test "$enable_xss" = "no" ; then
  	{ printf '%s\n' "$as_me:${as_lineno-$LINENO}: result: $enable_xss" >&5
  printf '%s\n' "$enable_xss" >&6; }
-@@ -10546,5 +10571,3 @@ if test -n "$ac_unrecognized_opts" && test "$enable_option_checking" != no; then
- printf '%s\n' "$as_me: WARNING: unrecognized options: $ac_unrecognized_opts" >&2;}
- fi
- 
--
--
 diff --git a/unix/configure.ac b/unix/configure.ac
-index ad782ff..8ce6f8f 100644
+index ad782ffe4..3288363bd 100644
 --- a/unix/configure.ac
 +++ b/unix/configure.ac
-@@ -259,7 +259,33 @@ else
+@@ -259,6 +259,58 @@ else
      #	no include files, so double-check its result just to be safe.
      #--------------------------------------------------------------------
  
@@ -119,6 +178,32 @@ index ad782ff..8ce6f8f 100644
 +	XLIBSW="-L$tk_xmin_libdir -Wl,-rpath,$tk_xmin_libdir -lXminClient"
 +	x_includes="$tk_xmin_prefix/include"
 +	x_libraries="$tk_xmin_libdir"
++	tk_oldCFlags=$CFLAGS
++	tk_oldLibs=$LIBS
++	CFLAGS="$CFLAGS $XINCLUDES"
++	LIBS="$LIBS $XLIBSW"
++	AC_MSG_CHECKING([whether the Xmin SDK provides a usable X11 client facade])
++	AC_LINK_IFELSE([AC_LANG_PROGRAM([[
++	    #include <X11/Xlib.h>
++	    #include <X11/Xft/Xft.h>
++	    #ifndef XMIN_X11_CLIENT_FACADE
++	    #error Xlib.h is not from the selected Xmin SDK
++	    #endif
++	    #ifndef XMIN_XFT_CLIENT_FACADE
++	    #error Xft.h is not from the selected Xmin SDK
++	    #endif
++	    #ifndef XMIN_CLIENT_FONTCONFIG_H
++	    #error fontconfig.h is not from the selected Xmin SDK
++	    #endif
++	]], [[
++	    Display *display = XOpenDisplay(0);
++	    if (display) XCloseDisplay(display);
++	]])], [AC_MSG_RESULT([yes])], [
++	    AC_MSG_RESULT([no])
++	    AC_MSG_ERROR([the Xmin SDK in $tk_xmin_prefix cannot compile and link an X11 client])
++	])
++	CFLAGS=$tk_oldCFlags
++	LIBS=$tk_oldLibs
 +	tk_xmin=yes
 +    else
 +	SC_PATH_X
@@ -126,8 +211,19 @@ index ad782ff..8ce6f8f 100644
 +    fi
      TK_WINDOWINGSYSTEM=X11
  fi
+@@ -307,4 +359,4 @@ fi
+-if test $tk_aqua = no; then
++if test $tk_aqua = no -a "$tk_xmin" != yes; then
+     AC_CHECK_LIB(Xbsd, main, [LIBS="$LIBS -lXbsd"])
+ fi
  
-@@ -352,6 +365,11 @@ if test $tk_aqua = no; then
+@@ -322,4 +374,4 @@ fi
+-if test -d /usr/include/mit -a $tk_aqua = no; then
++if test -d /usr/include/mit -a $tk_aqua = no -a "$tk_xmin" != yes; then
+     AC_MSG_CHECKING([MIT X libraries])
+     tk_oldCFlags=$CFLAGS
+     CFLAGS="$CFLAGS -I/usr/include/mit"
+@@ -352,6 +404,11 @@ if test $tk_aqua = no; then
      XFT_LIBS=""
      if test "$enable_xft" = "no" ; then
  	AC_MSG_RESULT([$enable_xft])
@@ -139,7 +235,7 @@ index ad782ff..8ce6f8f 100644
      else
  	found_xft="yes"
  	dnl make sure package configurator (xft-config or pkg-config
-@@ -490,6 +508,9 @@ if test $tk_aqua = no; then
+@@ -490,6 +547,9 @@ if test $tk_aqua = no; then
  	AS_HELP_STRING([--enable-xss],
  	    [use XScreenSaver for activity timer (default: on)]),
  	[enable_xss=$enableval], [enable_xss=yes])

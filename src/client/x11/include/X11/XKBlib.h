@@ -27,6 +27,8 @@ THE USE OR PERFORMANCE OF THIS SOFTWARE.
 #ifndef _X11_XKBLIB_H_
 #define _X11_XKBLIB_H_
 
+#define XMIN_XKB_CLIENT_FACADE 1
+
 #include <X11/Xlib.h>
 #include <X11/extensions/XKBstr.h>
 

@@ -25,6 +25,8 @@
 #ifndef _XFT_H_
 #define _XFT_H_
 
+#define XMIN_XFT_CLIENT_FACADE 1
+
 /*
  * Current Xft version number, set from version in the Xft configure.ac file.
  */

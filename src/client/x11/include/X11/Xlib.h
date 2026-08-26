@@ -33,6 +33,8 @@ in this Software without prior written authorization from The Open Group.
 #ifndef _X11_XLIB_H_
 #define _X11_XLIB_H_
 
+#define XMIN_X11_CLIENT_FACADE 1
+
 #define XlibSpecificationRelease 6
 
 #include <sys/types.h>
