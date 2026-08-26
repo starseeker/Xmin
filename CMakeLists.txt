@@ -71,6 +71,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
 endif()
 
 xmin_configure_platform()
+xmin_configure_viewer()
 
 xmin_verify_protocol_profile(
   "${PROJECT_SOURCE_DIR}/profiles/protocol.json"

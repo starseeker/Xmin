@@ -38,24 +38,36 @@ constexpr std::size_t maximum_buffered_output = 1024U * 1024U;
 constexpr std::size_t maximum_pending_descriptors = 16;
 constexpr std::uint8_t bitmap_scanline_unit = 32;
 constexpr std::uint8_t bitmap_scanline_pad = 32;
-// SCM_RIGHTS payloads use the socket ABI's word alignment.  In particular,
-// FreeBSD's cmsghdr type itself has four-byte alignment on 64-bit systems,
-// while CMSG_DATA is still aligned to an eight-byte machine word.
+// Prefer the platform's ancillary-data sizing macros where visible. Under
+// FreeBSD's strict POSIX feature view they are hidden, so use the socket ABI's
+// machine-word alignment as a narrow fallback. In particular, FreeBSD's
+// cmsghdr type itself has four-byte alignment on 64-bit systems, while
+// CMSG_DATA is still aligned to an eight-byte machine word.
+#if !defined(CMSG_LEN) || !defined(CMSG_SPACE)
 constexpr std::size_t ancillary_alignment = sizeof(std::size_t);
 constexpr std::size_t
 align_ancillary(std::size_t size) noexcept
 {
     return (size + ancillary_alignment - 1) & ~(ancillary_alignment - 1);
 }
+#endif
 constexpr std::size_t
 ancillary_length(std::size_t payload) noexcept
 {
+#if defined(CMSG_LEN)
+    return CMSG_LEN(payload);
+#else
     return align_ancillary(sizeof(cmsghdr)) + payload;
+#endif
 }
 constexpr std::size_t
 ancillary_space(std::size_t payload) noexcept
 {
+#if defined(CMSG_SPACE)
+    return CMSG_SPACE(payload);
+#else
     return align_ancillary(sizeof(cmsghdr)) + align_ancillary(payload);
+#endif
 }
 constexpr std::string_view cookie_protocol = "MIT-MAGIC-COOKIE-1";
 constexpr std::uint32_t all_event_masks = 0x01ffffffU;

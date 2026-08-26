@@ -72,7 +72,7 @@ cmake --preset minimal --fresh
 | `XMIN_BUILD_QT_CLIENT` | `OFF` | Build and install the Xmin-native C++17 XCB/xkbcommon client SDK used by patched Qt qxcb. |
 | `XMIN_BUILD_TOOLKIT_CLIENT` | `OFF` | Add the focused Xlib/Xft/Fontconfig facade and embedded Go fonts used by patched FLTK and Tk. |
 | `XMIN_BUILD_LAUNCHER` | `ON` | Build authenticated process supervisor `xmin-run`. |
-| `XMIN_BUILD_VIEWER` | Unix except macOS: `ON` | Build the separate GLFW host viewer and guest-input bridge. |
+| `XMIN_BUILD_VIEWER` | `AUTO` | Build the separate GLFW host viewer and guest-input bridge when host OpenGL, X11/GLFW headers, XCB, and XTEST are available; `ON` requires them. |
 | `XMIN_BUILD_DESKTOP` | Unix except macOS: `ON` | Build the JWM/st desktop and `xmin-session` supervisor. |
 | `XMIN_BUILD_BUNDLED_SHELL` | Unix: `ON` | Build the imported dash sources as `xmin-sh` for desktop sessions. |
 | `XMIN_BUILD_TESTS` | top-level `ON` | Build the self-tests and independent client gates. |

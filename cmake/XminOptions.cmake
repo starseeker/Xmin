@@ -23,8 +23,10 @@ set(xmin_interactive_default OFF)
 if(UNIX AND NOT APPLE)
   set(xmin_interactive_default ON)
 endif()
-option(XMIN_BUILD_VIEWER
-  "Build the host GLFW viewer and input bridge" ${xmin_interactive_default})
+set(XMIN_BUILD_VIEWER "AUTO" CACHE STRING
+  "Build the host GLFW viewer and input bridge when its dependencies exist")
+xmin_normalize_tristate(XMIN_BUILD_VIEWER)
+set(XMIN_BUILD_VIEWER_REQUEST "${XMIN_BUILD_VIEWER}")
 option(XMIN_BUILD_DESKTOP
   "Build the minimalist Unix JWM/st desktop session" ${xmin_interactive_default})
 set(xmin_bundled_shell_default OFF)

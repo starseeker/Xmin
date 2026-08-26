@@ -24,6 +24,36 @@ namespace {
 
 constexpr std::string_view authentication_protocol = "MIT-MAGIC-COOKIE-1";
 constexpr std::size_t maximum_packet_size = 64U * 1024U * 1024U;
+// CMSG_SPACE and CMSG_LEN are hidden by FreeBSD's strict POSIX feature view.
+// Prefer the platform definitions where visible, with the socket ABI's
+// machine-word alignment as a narrow fallback instead of enabling every BSD
+// extension.
+#if !defined(CMSG_LEN) || !defined(CMSG_SPACE)
+constexpr std::size_t ancillary_alignment = sizeof(std::size_t);
+constexpr std::size_t
+align_ancillary(std::size_t size) noexcept
+{
+    return (size + ancillary_alignment - 1) & ~(ancillary_alignment - 1);
+}
+#endif
+constexpr std::size_t
+ancillary_length(std::size_t payload) noexcept
+{
+#if defined(CMSG_LEN)
+    return CMSG_LEN(payload);
+#else
+    return align_ancillary(sizeof(cmsghdr)) + payload;
+#endif
+}
+constexpr std::size_t
+ancillary_space(std::size_t payload) noexcept
+{
+#if defined(CMSG_SPACE)
+    return CMSG_SPACE(payload);
+#else
+    return align_ancillary(sizeof(cmsghdr)) + align_ancillary(payload);
+#endif
+}
 
 bool
 host_is_little_endian() noexcept
@@ -356,7 +386,7 @@ bool
 Connection::read_packet(Packet &packet)
 {
     std::array<std::uint8_t, 32> header{};
-    std::array<std::uint8_t, CMSG_SPACE(sizeof(int) * 8)> control{};
+    std::array<std::uint8_t, ancillary_space(sizeof(int) * 8)> control{};
     iovec vector{header.data(), header.size()};
     msghdr message{};
     message.msg_iov = &vector;
@@ -371,9 +401,10 @@ Connection::read_packet(Packet &packet)
         return false;
     for (cmsghdr *item = CMSG_FIRSTHDR(&message); item != nullptr;
          item = CMSG_NXTHDR(&message, item)) {
-        if (item->cmsg_level != SOL_SOCKET || item->cmsg_type != SCM_RIGHTS)
+        if (item->cmsg_level != SOL_SOCKET || item->cmsg_type != SCM_RIGHTS ||
+            item->cmsg_len < ancillary_length(0))
             continue;
-        const std::size_t bytes = item->cmsg_len - CMSG_LEN(0);
+        const std::size_t bytes = item->cmsg_len - ancillary_length(0);
         const auto descriptor_count = bytes / sizeof(int);
         const auto *descriptors = reinterpret_cast<const int *>(
             CMSG_DATA(item));
@@ -525,7 +556,7 @@ Connection::send_bytes(
         written = write_all(socket_.get(), bytes.data(), bytes.size());
     }
     else {
-        std::vector<std::uint8_t> control(CMSG_SPACE(
+        std::vector<std::uint8_t> control(ancillary_space(
             sizeof(int) * descriptor_count));
         iovec vector{bytes.data(), bytes.size()};
         msghdr message{};
@@ -536,7 +567,7 @@ Connection::send_bytes(
         auto *item = CMSG_FIRSTHDR(&message);
         item->cmsg_level = SOL_SOCKET;
         item->cmsg_type = SCM_RIGHTS;
-        item->cmsg_len = CMSG_LEN(sizeof(int) * descriptor_count);
+        item->cmsg_len = ancillary_length(sizeof(int) * descriptor_count);
         std::memcpy(CMSG_DATA(item), descriptors,
                     sizeof(int) * descriptor_count);
         ssize_t count;

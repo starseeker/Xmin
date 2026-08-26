@@ -5,6 +5,77 @@ include(CheckSymbolExists)
 include(CheckTypeSize)
 include(TestBigEndian)
 
+# Resolve the optional host viewer before adding GLFW. GLFW's own X11 checks
+# are intentionally strict and fatal, which is appropriate for an explicitly
+# requested viewer but made the default build fail on headless and partially
+# provisioned hosts. Keep the complete dependency policy here so AUTO can
+# omit only the viewer without weakening GLFW or adding host-X dependencies to
+# the core product graph.
+function(xmin_configure_viewer)
+  if(XMIN_BUILD_VIEWER_REQUEST STREQUAL "OFF")
+    set(XMIN_BUILD_VIEWER OFF PARENT_SCOPE)
+    return()
+  endif()
+  if(XMIN_BUILD_VIEWER_REQUEST STREQUAL "AUTO" AND
+      (NOT UNIX OR APPLE))
+    set(XMIN_BUILD_VIEWER OFF PARENT_SCOPE)
+    return()
+  endif()
+
+  set(xmin_viewer_missing)
+  find_package(OpenGL QUIET)
+  if(NOT TARGET OpenGL::GL)
+    list(APPEND xmin_viewer_missing "OpenGL")
+  endif()
+  find_package(Threads QUIET)
+  if(NOT TARGET Threads::Threads)
+    list(APPEND xmin_viewer_missing "threads")
+  endif()
+
+  if(UNIX AND NOT APPLE)
+    find_package(X11 QUIET)
+    if(NOT X11_FOUND)
+      list(APPEND xmin_viewer_missing "X11")
+    else()
+      foreach(xmin_x11_requirement IN ITEMS
+          X11_Xrandr_INCLUDE_PATH
+          X11_Xinerama_INCLUDE_PATH
+          X11_Xkb_INCLUDE_PATH
+          X11_Xcursor_INCLUDE_PATH
+          X11_Xi_INCLUDE_PATH
+          X11_Xshape_INCLUDE_PATH)
+        if(NOT ${xmin_x11_requirement})
+          string(REGEX REPLACE "^X11_(.*)_INCLUDE_PATH$" "\\1 headers"
+            xmin_x11_description "${xmin_x11_requirement}")
+          list(APPEND xmin_viewer_missing "${xmin_x11_description}")
+        endif()
+      endforeach()
+    endif()
+
+    find_package(PkgConfig QUIET)
+    if(PkgConfig_FOUND)
+      pkg_check_modules(XMIN_VIEWER_XCB QUIET IMPORTED_TARGET xcb xcb-xtest)
+    endif()
+    if(NOT TARGET PkgConfig::XMIN_VIEWER_XCB)
+      list(APPEND xmin_viewer_missing "xcb and xcb-xtest")
+    endif()
+  endif()
+
+  if(xmin_viewer_missing)
+    list(JOIN xmin_viewer_missing ", " xmin_viewer_missing_text)
+    if(XMIN_BUILD_VIEWER_REQUEST STREQUAL "ON")
+      message(FATAL_ERROR
+        "XMIN_BUILD_VIEWER=ON, but host viewer dependencies are missing: "
+        "${xmin_viewer_missing_text}")
+    endif()
+    message(STATUS
+      "Host viewer disabled (missing: ${xmin_viewer_missing_text})")
+    set(XMIN_BUILD_VIEWER OFF PARENT_SCOPE)
+  else()
+    set(XMIN_BUILD_VIEWER ON PARENT_SCOPE)
+  endif()
+endfunction()
+
 # Probe only facilities used by Xmin itself or by its retained pixman build.
 # Every result exported from this function feeds a generated configuration
 # header; there are deliberately no compatibility variables for Xorg/xtrans.
