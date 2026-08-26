@@ -5,6 +5,8 @@
  */
 #include "xlib_internal.hpp"
 
+#include "client_connection.hpp"
+
 #include <X11/Xutil.h>
 #include <X11/Xlib-xcb.h>
 #include <X11/Xlibint.h>
@@ -423,7 +425,7 @@ Display *XOpenDisplay(const char *display_name)
     screen.save_unders = xcb_screen->save_unders;
     screen.root_input_mask = xcb_screen->current_input_masks;
 
-    storage->fd = xcb_get_file_descriptor(connection);
+    storage->fd = connection->implementation->event_descriptor();
     storage->proto_major_version = setup->protocol_major_version;
     storage->proto_minor_version = setup->protocol_minor_version;
     storage->release = static_cast<int>(setup->release_number);
@@ -488,10 +490,7 @@ int XCloseDisplay(Display *display)
 
 int XConnectionNumber(Display *display)
 {
-    const auto *display_state = state(display);
-    return display_state == nullptr
-        ? -1
-        : xcb_get_file_descriptor(display_state->connection);
+    return display == nullptr ? -1 : private_display(display)->fd;
 }
 
 char *XDisplayString(Display *display)

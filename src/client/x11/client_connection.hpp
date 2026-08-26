@@ -41,6 +41,7 @@ public:
 
     [[nodiscard]] int error() const noexcept;
     [[nodiscard]] int descriptor() const noexcept;
+    [[nodiscard]] int event_descriptor() const noexcept;
     [[nodiscard]] const xcb_setup_t *setup() const noexcept;
     [[nodiscard]] std::uint32_t maximum_request_length();
     [[nodiscard]] std::uint32_t generate_id() noexcept;
@@ -65,10 +66,14 @@ private:
 
     bool open_display(const char *display_name, int *screen_number);
     bool perform_setup(const xcb_auth_info_t *authorization);
+    bool initialize_event_notification();
     void start_reader();
     void reader_loop();
     bool read_packet(Packet &packet);
     void queue_packet(Packet packet);
+    void queue_event(Packet packet);
+    void signal_event_available() noexcept;
+    void clear_event_notification() noexcept;
     std::uint64_t widen_sequence(std::uint16_t sequence) const noexcept;
 
     std::uint64_t send_bytes(
@@ -83,6 +88,9 @@ private:
     static xcb_generic_error_t *allocate_error(Packet packet);
 
     server::UniqueFd socket_;
+    server::UniqueFd event_read_;
+    server::UniqueFd event_write_;
+    bool event_notification_pending_ = false;
     std::vector<std::uint8_t> setup_bytes_;
     std::atomic<int> error_code_{XCB_CONN_ERROR};
     std::atomic<bool> stopping_{false};

@@ -7,9 +7,12 @@
 #include <X11/keysym.h>
 
 #include <algorithm>
+#include <chrono>
 #include <cstdlib>
 #include <iostream>
 #include <iterator>
+#include <poll.h>
+#include <thread>
 
 extern "C" int _XInitImageFuncPtrs(XImage *image);
 
@@ -319,6 +322,32 @@ int main()
     XSync(display, True);
     if (QLength(display) != 0)
         return fail(display, "XSync did not discard queued events", 9);
+
+    Display *event_sender = XOpenDisplay(nullptr);
+    if (event_sender == nullptr)
+        return fail(display, "could not open the event sender display", 9);
+    XChangeProperty(
+        event_sender, screen->root, event_property, XA_INTEGER, 8,
+        PropModeReplace, &property_value, 1);
+    XSync(event_sender, False);
+    constexpr auto reader_settle_time = std::chrono::milliseconds{100};
+    std::this_thread::sleep_for(reader_settle_time);
+    pollfd event_descriptor{XConnectionNumber(display), POLLIN, 0};
+    constexpr int event_timeout_milliseconds = 1000;
+    const int event_ready = ::poll(
+        &event_descriptor, 1, event_timeout_milliseconds);
+    XCloseDisplay(event_sender);
+    if (event_ready != 1 || (event_descriptor.revents & POLLIN) == 0) {
+        return fail(
+            display, "cross-client event did not wake the Xlib descriptor",
+            9);
+    }
+    XEvent cross_client_event{};
+    if (XNextEvent(display, &cross_client_event) != 0 ||
+        cross_client_event.type != PropertyNotify ||
+        cross_client_event.xproperty.atom != event_property) {
+        return fail(display, "cross-client property event was not queued", 9);
+    }
 
     XErrorHandler previous_handler = XSetErrorHandler(record_protocol_error);
     if (previous_handler == nullptr)

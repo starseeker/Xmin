@@ -244,7 +244,8 @@ Connection::connect(const char *display_name, int *screen_number)
         }
     }
     if (!connection->perform_setup(
-            authorization.namelen == 0 ? nullptr : &authorization)) {
+            authorization.namelen == 0 ? nullptr : &authorization) ||
+        !connection->initialize_event_notification()) {
         connection->socket_.reset();
         return connection;
     }
@@ -258,7 +259,8 @@ Connection::connect_to_fd(int descriptor, const xcb_auth_info_t *authorization)
 {
     auto connection = std::unique_ptr<Connection>(new Connection);
     connection->socket_.reset(descriptor);
-    if (!connection->perform_setup(authorization)) {
+    if (!connection->perform_setup(authorization) ||
+        !connection->initialize_event_notification()) {
         connection->socket_.reset();
         return connection;
     }
@@ -362,6 +364,29 @@ Connection::perform_setup(const xcb_auth_info_t *authorization)
     return true;
 }
 
+bool
+Connection::initialize_event_notification()
+{
+    int descriptors[2];
+    if (::pipe(descriptors) != 0)
+        return false;
+    server::UniqueFd read_descriptor(descriptors[0]);
+    server::UniqueFd write_descriptor(descriptors[1]);
+    for (const auto descriptor : {read_descriptor.get(),
+                                  write_descriptor.get()}) {
+        const int status_flags = ::fcntl(descriptor, F_GETFL);
+        const int descriptor_flags = ::fcntl(descriptor, F_GETFD);
+        if (status_flags < 0 || descriptor_flags < 0 ||
+            ::fcntl(descriptor, F_SETFL, status_flags | O_NONBLOCK) < 0 ||
+            ::fcntl(descriptor, F_SETFD, descriptor_flags | FD_CLOEXEC) < 0) {
+            return false;
+        }
+    }
+    event_read_ = std::move(read_descriptor);
+    event_write_ = std::move(write_descriptor);
+    return true;
+}
+
 void
 Connection::start_reader()
 {
@@ -377,8 +402,11 @@ Connection::reader_loop()
             break;
         queue_packet(std::move(packet));
     }
-    if (!stopping_.load())
+    if (!stopping_.load()) {
+        std::lock_guard<std::mutex> lock(state_mutex_);
         error_code_.store(XCB_CONN_ERROR);
+        signal_event_available();
+    }
     state_changed_.notify_all();
 }
 
@@ -449,15 +477,51 @@ Connection::queue_packet(Packet packet)
             reply_requests_.count(packet.sequence) != 0) {
             errors_[packet.sequence] = std::move(packet);
         }
-        else {
-            events_.push_back(std::move(packet));
-        }
+        else
+            queue_event(std::move(packet));
         reply_requests_.erase(packet.sequence);
     }
-    else {
-        events_.push_back(std::move(packet));
-    }
+    else
+        queue_event(std::move(packet));
     state_changed_.notify_all();
+}
+
+void
+Connection::queue_event(Packet packet)
+{
+    const bool was_empty = events_.empty();
+    events_.push_back(std::move(packet));
+    if (was_empty)
+        signal_event_available();
+}
+
+void
+Connection::signal_event_available() noexcept
+{
+    if (event_notification_pending_ || !event_write_)
+        return;
+    const std::uint8_t byte = 1;
+    ssize_t count;
+    do {
+        count = ::write(event_write_.get(), &byte, sizeof(byte));
+    } while (count < 0 && errno == EINTR);
+    if (count == static_cast<ssize_t>(sizeof(byte)) ||
+        (count < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))) {
+        event_notification_pending_ = true;
+    }
+}
+
+void
+Connection::clear_event_notification() noexcept
+{
+    if (!event_notification_pending_ || !event_read_)
+        return;
+    std::array<std::uint8_t, 16> bytes{};
+    ssize_t count;
+    do {
+        count = ::read(event_read_.get(), bytes.data(), bytes.size());
+    } while (count > 0 || (count < 0 && errno == EINTR));
+    event_notification_pending_ = false;
 }
 
 std::uint64_t
@@ -664,10 +728,14 @@ Connection::wait_for_event()
     state_changed_.wait(lock, [this] {
         return !events_.empty() || error() != 0 || stopping_.load();
     });
-    if (events_.empty())
+    if (events_.empty()) {
+        clear_event_notification();
         return nullptr;
+    }
     Packet packet = std::move(events_.front());
     events_.pop_front();
+    if (events_.empty())
+        clear_event_notification();
     lock.unlock();
     return allocate_event(std::move(packet));
 }
@@ -676,10 +744,15 @@ xcb_generic_event_t *
 Connection::poll_for_event()
 {
     std::lock_guard<std::mutex> lock(state_mutex_);
-    if (events_.empty())
+    if (events_.empty()) {
+        if (error() != 0)
+            clear_event_notification();
         return nullptr;
+    }
     Packet packet = std::move(events_.front());
     events_.pop_front();
+    if (events_.empty())
+        clear_event_notification();
     return allocate_event(std::move(packet));
 }
 
@@ -757,6 +830,12 @@ int
 Connection::descriptor() const noexcept
 {
     return socket_ ? socket_.get() : -1;
+}
+
+int
+Connection::event_descriptor() const noexcept
+{
+    return event_read_ ? event_read_.get() : -1;
 }
 
 const xcb_setup_t *

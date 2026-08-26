@@ -1,9 +1,9 @@
 # Qt Xmin integration patch
 
-`qt_xmin.patch` adds the explicit `-xmin-x11` Qt configure option. In this
-mode Qt consumes `Xmin::QtX11` instead of discovering the conventional XCB,
-Xlib, xcb-util, and xkbcommon libraries. Configuration is unchanged when the
-option is absent.
+The versioned patches in this directory add the explicit `-xmin-x11` Qt
+configure option. In this mode Qt consumes `Xmin::QtX11` instead of
+discovering the conventional XCB, Xlib, xcb-util, and xkbcommon libraries.
+Configuration is unchanged when the option is absent.
 
 The option supports two profiles:
 
@@ -24,18 +24,23 @@ family into Qt's standard `lib/fonts` directory. Regular, bold, italic, and
 bold-italic faces (plus their monospaced variants) are therefore available in
 both the Qt build tree and an installed Qt without host font discovery.
 
-## Validated source
+## Validated sources
 
-The patch was made and build-tested on 2026-07-18 against this `qtbase` tree:
-
-- Qt module version: 6.10.2 (`alpha1` prerelease segment)
-- commit: `0c0a85eb92267bbd7e8c3cbd18590735871dc687`
-- tree: `399d2c3e70c329d9ad59a98110234c232a4b16ef`
+- `qt_xmin.patch` targets Qt 6.10.2 (`alpha1` prerelease segment), commit
+  `0c0a85eb92267bbd7e8c3cbd18590735871dc687`, `qtbase` tree
+  `399d2c3e70c329d9ad59a98110234c232a4b16ef`. It was build-tested on
+  2026-07-18.
+- `qt-6.11.1-xmin.patch` targets Qt 6.11.1 (`alpha1` prerelease segment),
+  commit `692cacdb1d6eea560daac0339ca8c45a89ae7c37`, `qtbase` tree
+  `eaedabb16aee6fc1d71441c9be92bc7dd5055a50`. It was build- and
+  runtime-tested on FreeBSD on 2026-08-26, including Qt Widgets,
+  OpenGLWidgets, the stock qxcb platform plugin, and the stock `xcb_glx`
+  integration plugin.
 
 Apply it from an unmodified copied `qtbase` root:
 
 ```sh
-patch -p1 < /path/to/Xmin/patches/qt/qt_xmin.patch
+patch -p1 < /path/to/Xmin/patches/qt/qt-6.11.1-xmin.patch
 ```
 
 Forward and reverse dry runs should be checked when moving to a new Qt
@@ -64,6 +69,10 @@ cmake --install /path/to/xmin-sdk-build
 surface qxcb actually uses. It does not link the system XCB, xkbcommon, Xau,
 or Xlib libraries. The installed standard headers define the public ABI; they
 do not bring the upstream implementations into the build.
+
+The Xmin profile omits Qt's optional Compose input-context plugin. That plugin
+uses the larger `xkbcommon-compose` API, which is outside qxcb's required
+surface and is not supplied by `Xmin::QtX11`.
 
 ## Qt configuration
 
