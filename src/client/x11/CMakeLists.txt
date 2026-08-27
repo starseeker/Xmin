@@ -94,6 +94,7 @@ if(XMIN_BUILD_QT_CLIENT OR XMIN_BUILD_TOOLKIT_CLIENT)
     xlib_region.cpp
     xlib_wm.cpp
     xlib_minimal.cpp
+    xrender_minimal.cpp
   )
 endif()
 if(TARGET Xmin::FontEngine)

@@ -1058,6 +1058,11 @@ public:
     [[nodiscard]] bool has_pending_event(std::uint32_t client) const;
     [[nodiscard]] const ClientEvent *next_event(std::uint32_t client) const;
     void pop_event(std::uint32_t client);
+    [[nodiscard]] bool queue_client_event(
+        std::uint32_t client, ClientEvent event)
+    {
+        return queue_event(client, std::move(event));
+    }
     [[nodiscard]] EventDelivery set_property(
         WindowRecord &window, AtomId property, PropertyValue value);
     [[nodiscard]] EventDelivery delete_property(

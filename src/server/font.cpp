@@ -53,9 +53,23 @@ matches_font(std::string_view pattern, const EmbeddedFont &font) noexcept
     if (matches(pattern, font.alias) || matches(pattern, font.canonical_name))
         return true;
     if (&font == &generated::fixed_font) {
-        return matches(pattern, "6x13") ||
-            matches(pattern,
-                "-misc-fixed-medium-r-semicondensed--13-100-100-100-c-60-iso8859-1");
+        constexpr std::array<std::string_view, 8> compatible_names{{
+            "5x7", "6x10", "6x13", "7x13", "8x13", "9x15", "10x20",
+            "12x24",
+        }};
+        if (std::any_of(
+                compatible_names.begin(), compatible_names.end(),
+                [pattern](std::string_view name) {
+                    return matches(pattern, name);
+                })) {
+            return true;
+        }
+        return matches(
+                   pattern,
+                   "-misc-fixed-medium-r-semicondensed--13-100-100-100-c-60-iso8859-1") ||
+            matches(
+                pattern,
+                "-adobe-courier-medium-r-normal--10-100-75-75-m-60-iso8859-1");
     }
     return false;
 }

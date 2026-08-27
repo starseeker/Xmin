@@ -164,6 +164,12 @@ Window event_window(const xcb_generic_event_t *generic)
         return reinterpret_cast<const xcb_focus_in_event_t *>(generic)->event;
     case Expose:
         return reinterpret_cast<const xcb_expose_event_t *>(generic)->window;
+    case GraphicsExpose:
+        return reinterpret_cast<
+            const xcb_graphics_exposure_event_t *>(generic)->drawable;
+    case NoExpose:
+        return reinterpret_cast<
+            const xcb_no_exposure_event_t *>(generic)->drawable;
     case VisibilityNotify:
         return reinterpret_cast<
             const xcb_visibility_notify_event_t *>(generic)->window;
@@ -290,6 +296,27 @@ bool convert(Display *display, const xcb_generic_event_t *generic, XEvent *event
         event->xexpose.width = source.width;
         event->xexpose.height = source.height;
         event->xexpose.count = source.count;
+        break;
+    }
+    case GraphicsExpose: {
+        const auto &source = *reinterpret_cast<
+            const xcb_graphics_exposure_event_t *>(generic);
+        event->xgraphicsexpose.drawable = source.drawable;
+        event->xgraphicsexpose.x = source.x;
+        event->xgraphicsexpose.y = source.y;
+        event->xgraphicsexpose.width = source.width;
+        event->xgraphicsexpose.height = source.height;
+        event->xgraphicsexpose.count = source.count;
+        event->xgraphicsexpose.major_code = source.major_opcode;
+        event->xgraphicsexpose.minor_code = source.minor_opcode;
+        break;
+    }
+    case NoExpose: {
+        const auto &source = *reinterpret_cast<
+            const xcb_no_exposure_event_t *>(generic);
+        event->xnoexpose.drawable = source.drawable;
+        event->xnoexpose.major_code = source.major_opcode;
+        event->xnoexpose.minor_code = source.minor_opcode;
         break;
     }
     case VisibilityNotify: {

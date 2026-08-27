@@ -493,6 +493,16 @@ int XConnectionNumber(Display *display)
     return display == nullptr ? -1 : private_display(display)->fd;
 }
 
+int XDisplayWidth(Display *display, int screen_number)
+{
+    return display == nullptr ? 0 : ScreenOfDisplay(display, screen_number)->width;
+}
+
+int XDisplayHeight(Display *display, int screen_number)
+{
+    return display == nullptr ? 0 : ScreenOfDisplay(display, screen_number)->height;
+}
+
 char *XDisplayString(Display *display)
 {
     return display == nullptr ? nullptr : private_display(display)->display_name;

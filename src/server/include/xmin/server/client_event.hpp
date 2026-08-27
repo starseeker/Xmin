@@ -97,6 +97,13 @@ struct ExposeEvent {
     std::uint16_t sequence = 0;
 };
 
+struct NoExposeEvent {
+    std::uint32_t drawable = 0;
+    std::uint16_t minor_opcode = 0;
+    std::uint8_t major_opcode = 0;
+    std::uint16_t sequence = 0;
+};
+
 struct ConfigureNotifyEvent {
     std::uint32_t event = 0;
     std::uint32_t window = 0;
@@ -454,7 +461,7 @@ using ClientEvent = std::variant<
     SelectionClearEvent, SelectionRequestEvent, SelectionNotifyEvent,
     ClientMessageEvent, PropertyNotifyEvent, MappingNotifyEvent,
     CreateNotifyEvent, MapNotifyEvent, MapRequestEvent, UnmapNotifyEvent,
-    VisibilityNotifyEvent, ExposeEvent,
+    VisibilityNotifyEvent, ExposeEvent, NoExposeEvent,
     ConfigureNotifyEvent, ConfigureRequestEvent, ResizeRequestEvent,
     CirculateNotifyEvent, CirculateRequestEvent, ShapeNotifyEvent,
     SyncCounterNotifyEvent, SyncAlarmNotifyEvent,

@@ -4,6 +4,7 @@
 #include <X11/Xproto.h>
 #include <X11/Xutil.h>
 #include <X11/cursorfont.h>
+#include <X11/extensions/Xrender.h>
 #include <X11/keysym.h>
 
 #include <algorithm>
@@ -44,6 +45,32 @@ int main()
     Display *display = XOpenDisplay(nullptr);
     if (display == nullptr)
         return fail(nullptr, "could not open the Xmin display", 1);
+
+    int extension_opcode = 0;
+    int extension_event = 0;
+    int extension_error = 0;
+    XVisualInfo visual_info{};
+    XRenderPictFormat *render_format = XRenderFindVisualFormat(
+        display, DefaultVisual(display, DefaultScreen(display)));
+    if (XDisplayWidth(display, 0) != 96 ||
+        XDisplayHeight(display, 0) != 72 ||
+        !XQueryExtension(display, "GLX", &extension_opcode,
+                         &extension_event, &extension_error) ||
+        extension_opcode == 0 ||
+        XQueryExtension(display, "XMIN_NOT_AN_EXTENSION", nullptr,
+                        nullptr, nullptr) ||
+        !XMatchVisualInfo(display, 0, DefaultDepth(display, 0),
+                          TrueColor, &visual_info) ||
+        visual_info.visual != DefaultVisual(display, 0) ||
+        render_format == nullptr || render_format->direct.alphaMask != 0) {
+        return fail(display, "display capability queries failed", 2);
+    }
+
+    unsigned long writable_pixel = 0;
+    if (XAllocColorCells(display, DefaultColormap(display, 0), False,
+                         nullptr, 0, &writable_pixel, 1)) {
+        return fail(display, "TrueColor visual exposed writable cells", 2);
+    }
 
     XColor color{};
     if (!XParseColor(display, DefaultColormap(display, 0),

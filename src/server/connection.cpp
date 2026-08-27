@@ -633,6 +633,17 @@ Connection::encode_event(const ClientEvent &event) const
         return writer.data();
     }
 
+    if (const auto *no_expose = std::get_if<NoExposeEvent>(&event)) {
+        writer.u8(14); // NoExpose
+        writer.u8(0);
+        writer.u16(no_expose->sequence);
+        writer.u32(no_expose->drawable);
+        writer.u16(no_expose->minor_opcode);
+        writer.u8(no_expose->major_opcode);
+        writer.pad(21);
+        return writer.data();
+    }
+
     if (const auto *configure = std::get_if<ConfigureNotifyEvent>(&event)) {
         writer.u8(22); // ConfigureNotify
         writer.u8(0);
@@ -4224,6 +4235,14 @@ Connection::handle_copy_area(const RequestContext &context)
                            signed_word(*destination_y), *width, *height,
                            graphics->function, graphics->plane_mask,
                            graphics->clip());
+    if (graphics->graphics_exposures &&
+        !server_.queue_client_event(
+            config_.resource_base,
+            NoExposeEvent{*destination_id, 0, context.opcode,
+                          context.sequence})) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
     return finish_draw(context, *destination_id);
 }
 
@@ -4278,6 +4297,14 @@ Connection::handle_copy_plane(const RequestContext &context)
         signed_word(*destination_x), signed_word(*destination_y), *width,
         *height, *bit_plane, graphics->foreground, graphics->background,
         graphics->function, graphics->plane_mask, graphics->clip());
+    if (graphics->graphics_exposures &&
+        !server_.queue_client_event(
+            config_.resource_base,
+            NoExposeEvent{*destination_id, 0, context.opcode,
+                          context.sequence})) {
+        return send_error(context.order, bad_alloc, context.opcode,
+                          context.sequence);
+    }
     return finish_draw(context, *destination_id);
 }
 

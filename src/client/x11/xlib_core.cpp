@@ -4,6 +4,7 @@
 #include <X11/Xatom.h>
 #include <X11/Xutil.h>
 #include <xcb/xcb_image.h>
+#include <xcb/xcbext.h>
 #include <xcb/xproto.h>
 
 #include <algorithm>
@@ -860,6 +861,27 @@ Atom XInternAtom(Display *display, const char *name, Bool only_if_exists)
     return reply == nullptr ? None : reply->atom;
 }
 
+Bool XQueryExtension(
+    Display *display, const char *name, int *major_opcode,
+    int *first_event, int *first_error)
+{
+    auto *xcb = connection(display);
+    if (xcb == nullptr || name == nullptr)
+        return False;
+    xcb_extension_t extension{name, 0};
+    const xcb_query_extension_reply_t *reply =
+        xcb_get_extension_data(xcb, &extension);
+    if (reply == nullptr || !reply->present)
+        return False;
+    if (major_opcode != nullptr)
+        *major_opcode = reply->major_opcode;
+    if (first_event != nullptr)
+        *first_event = reply->first_event;
+    if (first_error != nullptr)
+        *first_error = reply->first_error;
+    return True;
+}
+
 int XGetWindowProperty(
     Display *display, Window window, Atom property, long offset, long length,
     Bool delete_property, Atom requested_type, Atom *actual_type,
@@ -1007,6 +1029,36 @@ XVisualInfo *XGetVisualInfo(
     if (result != nullptr)
         *result = candidate;
     return result;
+}
+
+Status XGetStandardColormap(
+    Display *, Window, XStandardColormap *, Atom)
+{
+    // Xmin's fixed TrueColor visual does not need legacy standard colormaps.
+    return 0;
+}
+
+Status XMatchVisualInfo(
+    Display *display, int screen, int depth, int visual_class,
+    XVisualInfo *result)
+{
+    if (result == nullptr)
+        return 0;
+    XVisualInfo wanted{};
+    wanted.screen = screen;
+    wanted.depth = depth;
+    wanted.c_class = visual_class;
+    int count = 0;
+    XVisualInfo *match = XGetVisualInfo(
+        display, VisualScreenMask | VisualDepthMask | VisualClassMask,
+        &wanted, &count);
+    if (match == nullptr || count == 0) {
+        std::free(match);
+        return 0;
+    }
+    *result = *match;
+    std::free(match);
+    return 1;
 }
 
 XPixmapFormatValues *XListPixmapFormats(Display *display, int *count)
@@ -1218,6 +1270,27 @@ Status XAllocColor(Display *display, Colormap, XColor *color)
                    scale_component(color->green, visual->green_mask) |
                    scale_component(color->blue, visual->blue_mask);
     color->flags = DoRed | DoGreen | DoBlue;
+    return 1;
+}
+
+Status XAllocColorCells(
+    Display *, Colormap, Bool, unsigned long *, unsigned int,
+    unsigned long *, unsigned int)
+{
+    // Xmin exposes a single TrueColor visual.  Writable colormap cells are a
+    // PseudoColor/DirectColor facility and are deliberately unavailable.
+    return 0;
+}
+
+int XStoreColor(Display *, Colormap, XColor *)
+{
+    // TrueColor pixels encode their components directly; there is no mutable
+    // server-side color table to update.
+    return 1;
+}
+
+int XStoreColors(Display *, Colormap, XColor *, int)
+{
     return 1;
 }
 
@@ -1807,6 +1880,20 @@ int XStoreName(Display *display, Window window, const char *name)
     return XChangeProperty(
         display, window, XA_WM_NAME, XA_STRING, 8, PropModeReplace, value,
         static_cast<int>(std::strlen(reinterpret_cast<const char *>(value))));
+}
+
+int XSetStandardProperties(
+    Display *display, Window window, const char *window_name,
+    const char *icon_name, Pixmap, char **, int, XSizeHints *hints)
+{
+
+    if ((window_name != nullptr && !XStoreName(display, window, window_name)) ||
+	(icon_name != nullptr && !XSetIconName(display, window, icon_name))) {
+        return 0;
+    }
+    if (hints != nullptr)
+        XSetWMNormalHints(display, window, hints);
+    return 1;
 }
 
 int XSetIconName(Display *display, Window window, const char *name)
