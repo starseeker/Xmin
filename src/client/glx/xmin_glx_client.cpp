@@ -1131,6 +1131,10 @@ glXMakeContextCurrent(Display *display, GLXDrawable draw, GLXDrawable read,
 {
     GLXContext previous = xmin_current_context;
 
+    /* Finish submitting writes before another context can use shared state. */
+    if (previous != NULL && previous != context)
+        glFlush();
+
     if (context == NULL) {
         OSMesaMakeCurrent(NULL, NULL, GL_UNSIGNED_BYTE, 0, 0);
         xmin_current_context = NULL;
@@ -1141,8 +1145,6 @@ glXMakeContextCurrent(Display *display, GLXDrawable draw, GLXDrawable read,
         xmin_release_context_surfaces(previous);
         return True;
     }
-    if (previous != NULL && previous != context)
-        glFlush();
     if (!xmin_bind_context_surfaces(context, display, draw, read))
         return False;
     if (previous != NULL && previous != context)
