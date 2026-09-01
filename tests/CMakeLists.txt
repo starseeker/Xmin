@@ -363,11 +363,21 @@ endif()
 
 # The direct client library is intentionally independent of server-side GLX.
 if(TARGET Xmin::gl_client)
+  find_package(Threads REQUIRED)
+
   add_executable(xmin_osmesa_separate glx/osmesa_separate.c)
   target_compile_features(xmin_osmesa_separate PRIVATE c_std_11)
   target_link_libraries(xmin_osmesa_separate PRIVATE Xmin::gl_client)
   xmin_enable_warnings(xmin_osmesa_separate)
   add_test(NAME xmin.osmesa-separate COMMAND xmin_osmesa_separate)
+
+  add_executable(xmin_osmesa_thread glx/osmesa_thread.cpp)
+  target_compile_features(xmin_osmesa_thread PRIVATE cxx_std_17)
+  target_link_libraries(xmin_osmesa_thread PRIVATE
+    Xmin::gl_client Threads::Threads
+  )
+  xmin_enable_warnings(xmin_osmesa_thread)
+  add_test(NAME xmin.osmesa-thread COMMAND xmin_osmesa_thread)
 
   add_executable(xmin_software_direct_glsl glx/software_direct_glsl.c)
   target_compile_features(xmin_software_direct_glsl PRIVATE c_std_11)

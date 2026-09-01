@@ -58,6 +58,9 @@ target_compile_features(xmin_gl_client PRIVATE c_std_11 cxx_std_17)
 target_compile_definitions(xmin_gl_client PRIVATE
   LIBRARYBUILD
   GL_DLL_EXPORTS
+  # Some Mesa sources include glapi.h before glthread.h derives this macro.
+  # Define it target-wide so direct entry points use thread-local contexts.
+  THREADS
 )
 if(WIN32)
   target_compile_definitions(xmin_gl_client PRIVATE WIN32_THREADS)
