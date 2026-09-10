@@ -1568,8 +1568,13 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put32(request, 12, graphics, little);
     put16(request, 24, 4, little);
     put16(request, 26, 4, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 14 || get16(reply, 2, little) != 40 ||
+        get32(reply, 4, little) != root_window ||
+        get16(reply, 8, little) != 0 || reply[10] != 62) {
+        std::cerr << "CopyArea NoExposure event check failed\n";
         return false;
+    }
 
     request.assign(20, 0);
     request[0] = 73; // GetImage
@@ -1748,8 +1753,13 @@ check_core_objects(int descriptor, bool little, std::uint32_t resource_base)
     put16(request, 24, 9, little);
     put16(request, 26, 1, little);
     put32(request, 28, 1, little);
-    if (!write_all(descriptor, request))
+    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
+        reply[0] != 14 || get16(reply, 2, little) != 57 ||
+        get32(reply, 4, little) != root_window ||
+        get16(reply, 8, little) != 0 || reply[10] != 63) {
+        std::cerr << "CopyPlane NoExposure event check failed\n";
         return false;
+    }
 
     request.assign(20, 0);
     request[0] = 73;
