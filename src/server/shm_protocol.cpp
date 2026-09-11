@@ -242,7 +242,8 @@ Connection::handle_shm(const RequestContext &context)
         destination += *offset;
         const auto stride = *size / *height;
         const bool little = host_byte_order() == ByteOrder::little;
-        if (little && surface->depth() >= 24) {
+        if (little && surface->depth() >= 24 &&
+            surface->has_contiguous_storage()) {
             const std::uint32_t depth_mask = surface->depth() == 32
                 ? 0xffffffffU
                 : 0x00ffffffU;

@@ -247,6 +247,8 @@ private:
 
     [[nodiscard]] bool build_surface(Surface &surface, bool writable)
     {
+        if (!surface.has_contiguous_storage())
+            return false;
         pixman_format_code_t format = PIXMAN_x8r8g8b8;
         std::uint32_t *bits = surface.data();
         int stride = static_cast<int>(surface.stride_bytes());

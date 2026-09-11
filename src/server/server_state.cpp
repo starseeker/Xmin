@@ -139,6 +139,50 @@ resize_preservation(
     return result;
 }
 
+std::optional<Rectangle>
+visible_content_area(const ServerState &server,
+                     const WindowRecord &candidate,
+                     std::int16_t x, std::int16_t y,
+                     std::uint16_t width, std::uint16_t height,
+                     std::uint16_t border_width) noexcept
+{
+    std::int64_t left = 0;
+    std::int64_t top = 0;
+    std::int64_t right = width;
+    std::int64_t bottom = height;
+    std::int64_t origin_x =
+        static_cast<std::int64_t>(x) + border_width;
+    std::int64_t origin_y =
+        static_cast<std::int64_t>(y) + border_width;
+    const WindowRecord *ancestor = server.window(candidate.parent);
+    while (ancestor != nullptr) {
+        if (ancestor->id != root_window_id && !ancestor->mapped)
+            return std::nullopt;
+        left = std::max(left, -origin_x);
+        top = std::max(top, -origin_y);
+        right = std::min(
+            right, static_cast<std::int64_t>(ancestor->width) - origin_x);
+        bottom = std::min(
+            bottom, static_cast<std::int64_t>(ancestor->height) - origin_y);
+        if (left >= right || top >= bottom)
+            return std::nullopt;
+        if (ancestor->parent == 0)
+            break;
+        origin_x += static_cast<std::int64_t>(ancestor->x) +
+            ancestor->border_width;
+        origin_y += static_cast<std::int64_t>(ancestor->y) +
+            ancestor->border_width;
+        ancestor = server.window(ancestor->parent);
+    }
+    if (ancestor == nullptr)
+        return std::nullopt;
+    return Rectangle{
+        static_cast<std::int32_t>(left),
+        static_cast<std::int32_t>(top),
+        static_cast<std::uint32_t>(right - left),
+        static_cast<std::uint32_t>(bottom - top)};
+}
+
 std::uint32_t
 redirect_recipient(const WindowRecord &window, std::uint32_t mask,
                    std::uint32_t requester) noexcept
@@ -714,8 +758,8 @@ ServerState::resize_window_surface(WindowRecord &candidate,
 {
     if (!candidate.surface)
         return true;
-    auto replacement = Surface::create(
-        width, height, candidate.surface->depth());
+    auto replacement = Surface::create_window_backing(
+        width, height, candidate.surface->depth(), width_, height_);
     if (!replacement)
         return false;
     replacement->copy_from(
@@ -918,6 +962,31 @@ ServerState::configure_window(
             if ((selection.second & substructure_notify_mask) != 0)
                 events.emplace_back(selection.first, substructure_event);
         }
+
+        // Sparse backing retains one viewport rather than the entire logical
+        // window.  Moving it can reveal pixels that were deliberately
+        // discarded, so expose the new visible area for the client to repaint.
+        if (candidate.surface &&
+            !candidate.surface->has_contiguous_storage() &&
+            candidate.mapped && map_state(candidate.id) == 2 &&
+            (x != candidate.x || y != candidate.y)) {
+            const auto exposed = visible_content_area(
+                *this, candidate, x, y, width, height, border_width);
+            if (exposed) {
+                for (const auto &selection : candidate.event_masks) {
+                    if ((selection.second & exposure_mask) != 0) {
+                        events.emplace_back(
+                            selection.first,
+                            ExposeEvent{
+                                candidate.id,
+                                static_cast<std::uint16_t>(exposed->x),
+                                static_cast<std::uint16_t>(exposed->y),
+                                static_cast<std::uint16_t>(exposed->width),
+                                static_cast<std::uint16_t>(exposed->height), 0});
+                    }
+                }
+            }
+        }
     }
     catch (const std::bad_alloc &) {
         return EventDelivery::queue_full;
@@ -927,8 +996,8 @@ ServerState::configure_window(
     ResizePreservation preservation;
     if (candidate.surface &&
         (candidate.width != width || candidate.height != height)) {
-        auto surface = Surface::create(width, height,
-                                       candidate.surface->depth());
+        auto surface = Surface::create_window_backing(
+            width, height, candidate.surface->depth(), width_, height_);
         if (!surface)
             return EventDelivery::queue_full;
         surface->fill(
@@ -1640,9 +1709,9 @@ ServerState::unredirect_window(
             });
         if (!named)
             return true;
-        auto copied = Surface::create(
+        auto copied = Surface::create_window_backing(
             candidate->surface->width(), candidate->surface->height(),
-            candidate->surface->depth());
+            candidate->surface->depth(), width_, height_);
         if (!copied)
             return false;
         copied->copy_from(

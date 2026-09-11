@@ -2361,6 +2361,62 @@ test_resize_exposures()
 }
 
 bool
+test_sparse_move_exposure()
+{
+    constexpr std::uint32_t owner = 0x00200000;
+    constexpr std::uint32_t window_id = owner | 1U;
+    constexpr std::uint32_t exposure_mask = 1U << 15;
+    constexpr std::uint16_t virtual_extent = 30000;
+    constexpr std::int16_t moved_x = -5;
+    constexpr std::int16_t moved_y = -7;
+    constexpr std::uint16_t screen_width = 32;
+    constexpr std::uint16_t screen_height = 24;
+    xmin::server::ServerState server(screen_width, screen_height);
+    if (!expect(server.register_client(owner),
+                "sparse-move client registration failed")) {
+        return false;
+    }
+    auto surface = xmin::server::Surface::create_window_backing(
+        virtual_extent, virtual_extent, 24, screen_width, screen_height);
+    if (!expect(surface && !surface->has_contiguous_storage(),
+                "sparse-move surface creation failed")) {
+        return false;
+    }
+    xmin::server::WindowRecord window;
+    window.id = window_id;
+    window.parent = xmin::server::root_window_id;
+    window.width = virtual_extent;
+    window.height = virtual_extent;
+    window.mapped = true;
+    window.surface = server.adopt_surface(std::move(*surface));
+    window.event_masks.emplace(owner, exposure_mask);
+    if (!expect(window.surface &&
+                    server.add_window(std::move(window), owner),
+                "sparse-move window insertion failed")) {
+        return false;
+    }
+    auto *stored = server.window(window_id);
+    if (!expect(stored &&
+                    server.configure_window(
+                        *stored, moved_x, moved_y,
+                        virtual_extent, virtual_extent, 0,
+                        std::nullopt, std::nullopt) ==
+                        xmin::server::EventDelivery::delivered,
+                "moving sparse window did not deliver an exposure")) {
+        return false;
+    }
+    const auto *queued = server.next_event(owner);
+    const auto *expose = queued == nullptr
+        ? nullptr
+        : std::get_if<xmin::server::ExposeEvent>(queued);
+    return expect(expose && expose->window == window_id &&
+                      expose->x == -moved_x && expose->y == -moved_y &&
+                      expose->width == screen_width &&
+                      expose->height == screen_height && expose->count == 0,
+                  "sparse-move exposure area is malformed");
+}
+
+bool
 test_mapping_lifecycle_events()
 {
     constexpr std::uint32_t owner = 0x00200000;
@@ -3385,6 +3441,44 @@ test_surface_raster_and_overlap()
 {
     if (!expect(!xmin::server::Surface::create(65535, 65535, 24),
                 "oversized surface was accepted")) {
+        return false;
+    }
+    constexpr std::uint16_t virtual_extent = 30000;
+    constexpr std::uint16_t viewport_width = 1280;
+    constexpr std::uint16_t viewport_height = 960;
+    constexpr std::uint32_t sparse_background = 0x00112233U;
+    constexpr std::uint32_t sparse_foreground = 0x00abcdefU;
+    auto sparse = xmin::server::Surface::create_window_backing(
+        virtual_extent, virtual_extent, 24,
+        viewport_width, viewport_height);
+    auto sparse_source = xmin::server::Surface::create(2, 1, 24);
+    if (!expect(sparse && sparse_source,
+                "sparse window backing creation failed") ||
+        !expect(!sparse->has_contiguous_storage() &&
+                    sparse->width() == virtual_extent &&
+                    sparse->height() == virtual_extent &&
+                    sparse->storage_bytes() <=
+                        xmin::server::maximum_surface_bytes,
+                "sparse window backing geometry or storage is wrong")) {
+        return false;
+    }
+    sparse->fill(
+        {0, 0, virtual_extent, virtual_extent}, sparse_background,
+        3, 0xffffffffU);
+    sparse->draw_pixel(
+        virtual_extent - 1, virtual_extent - 1, sparse_foreground,
+        3, 0xffffffffU);
+    sparse_source->draw_pixel(0, 0, 0x00010203U, 3, 0xffffffffU);
+    sparse_source->draw_pixel(1, 0, 0x00040506U, 3, 0xffffffffU);
+    sparse->copy_from(
+        *sparse_source, 0, 0, virtual_extent - 2, 12345, 2, 1,
+        3, 0xffffffffU);
+    if (!expect(sparse->pixel(42, 42) == sparse_background &&
+                    sparse->pixel(virtual_extent - 1,
+                                  virtual_extent - 1) == sparse_foreground &&
+                    sparse->pixel(virtual_extent - 2, 12345) == 0x00010203U &&
+                    sparse->pixel(virtual_extent - 1, 12345) == 0x00040506U,
+                "sparse window backing did not preserve virtual pixels")) {
         return false;
     }
     auto surface = xmin::server::Surface::create(4, 2, 24);
@@ -5491,6 +5585,7 @@ main()
             test_structure_mapping_notifications() &&
             test_window_manager_redirects() &&
             test_resize_exposures() &&
+            test_sparse_move_exposure() &&
             test_mapping_lifecycle_events() &&
             test_reparent_lifecycle_events() &&
             test_grab_transitions() &&

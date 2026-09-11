@@ -1543,8 +1543,9 @@ Connection::handle_create_window(const RequestContext &context)
             return send_error(context.order, bad_match, context.opcode,
                               context.sequence);
         }
-        auto surface = Surface::create(window.width, window.height,
-                                       window.depth);
+        auto surface = Surface::create_window_backing(
+            window.width, window.height, window.depth,
+            server_.width(), server_.height());
         if (!surface)
             return send_error(context.order, bad_alloc, context.opcode,
                               context.sequence);

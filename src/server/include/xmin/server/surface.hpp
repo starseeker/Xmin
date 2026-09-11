@@ -20,6 +20,9 @@ class Surface {
 public:
     static std::optional<Surface>
     create(std::uint16_t width, std::uint16_t height, std::uint8_t depth);
+    static std::optional<Surface> create_window_backing(
+        std::uint16_t width, std::uint16_t height, std::uint8_t depth,
+        std::uint16_t viewport_width, std::uint16_t viewport_height);
     static std::optional<Surface> create_shared(
         std::uint16_t width, std::uint16_t height, std::uint8_t depth,
         std::shared_ptr<SharedMemory> memory, std::size_t offset);
@@ -27,11 +30,8 @@ public:
     [[nodiscard]] std::uint16_t width() const noexcept { return width_; }
     [[nodiscard]] std::uint16_t height() const noexcept { return height_; }
     [[nodiscard]] std::uint8_t depth() const noexcept { return depth_; }
-    [[nodiscard]] std::size_t storage_bytes() const noexcept
-    {
-        return static_cast<std::size_t>(width_) * height_ *
-            sizeof(std::uint32_t);
-    }
+    [[nodiscard]] std::size_t storage_bytes() const noexcept;
+    [[nodiscard]] bool has_contiguous_storage() const noexcept;
 
     bool resize(std::uint16_t width, std::uint16_t height);
     void fill(const Rectangle &rectangle, std::uint32_t source,
@@ -61,10 +61,14 @@ public:
                                       std::uint16_t y) const noexcept;
     [[nodiscard]] std::uint32_t *data() noexcept
     {
+        if (sparse_)
+            return nullptr;
         return shared_pixels_ != nullptr ? shared_pixels_ : pixels_.data();
     }
     [[nodiscard]] const std::uint32_t *data() const noexcept
     {
+        if (sparse_)
+            return nullptr;
         return shared_pixels_ != nullptr ? shared_pixels_ : pixels_.data();
     }
     [[nodiscard]] std::size_t stride_bytes() const noexcept
@@ -78,9 +82,18 @@ private:
     Surface(std::uint16_t width, std::uint16_t height, std::uint8_t depth,
             std::shared_ptr<SharedMemory> memory,
             std::uint32_t *shared_pixels) noexcept;
+    Surface(std::uint16_t width, std::uint16_t height, std::uint8_t depth,
+            std::uint16_t tile_columns,
+            std::vector<std::uint32_t> tile_indices,
+            std::vector<std::uint32_t> slot_tiles,
+            std::vector<std::uint32_t> pixels) noexcept;
 
     [[nodiscard]] std::uint32_t depth_mask() const noexcept;
-    void store(std::size_t index, std::uint32_t source, std::uint8_t function,
+    [[nodiscard]] std::uint32_t allocate_sparse_tile(
+        std::uint16_t x, std::uint16_t y) noexcept;
+    void reset_sparse(std::uint32_t value) noexcept;
+    void store(std::uint16_t x, std::uint16_t y,
+               std::uint32_t source, std::uint8_t function,
                std::uint32_t plane_mask) noexcept;
 
     std::uint16_t width_;
@@ -89,6 +102,13 @@ private:
     std::vector<std::uint32_t> pixels_;
     std::shared_ptr<SharedMemory> shared_memory_;
     std::uint32_t *shared_pixels_ = nullptr;
+    std::vector<std::uint32_t> tile_indices_;
+    std::vector<std::uint32_t> slot_tiles_;
+    std::uint32_t default_pixel_ = 0;
+    std::uint32_t allocated_tiles_ = 0;
+    std::uint32_t next_tile_slot_ = 0;
+    std::uint16_t tile_columns_ = 0;
+    bool sparse_ = false;
 };
 
 } // namespace xmin::server

@@ -4,6 +4,7 @@
 #include "xmin/server/shared_memory.hpp"
 
 #include <algorithm>
+#include <cassert>
 #include <cstdint>
 #include <cstring>
 #include <new>
@@ -11,6 +12,11 @@
 
 namespace xmin::server {
 namespace {
+
+constexpr std::uint16_t sparse_tile_size = 64;
+constexpr std::size_t sparse_tile_pixels =
+    static_cast<std::size_t>(sparse_tile_size) * sparse_tile_size;
+constexpr std::uint32_t unused_sparse_tile = 0xffffffffU;
 
 std::optional<std::size_t>
 pixel_count(std::uint16_t width, std::uint16_t height)
@@ -25,6 +31,20 @@ pixel_count(std::uint16_t width, std::uint16_t height)
     if (!count || !bytes || *bytes > maximum_surface_bytes)
         return std::nullopt;
     return count;
+}
+
+bool
+valid_depth(std::uint8_t depth) noexcept
+{
+    return depth == 1 || depth == 4 || depth == 8 || depth == 24 ||
+        depth == 32;
+}
+
+std::size_t
+tile_extent(std::uint16_t extent) noexcept
+{
+    return (static_cast<std::size_t>(extent) + sparse_tile_size - 1U) /
+        sparse_tile_size;
 }
 
 std::uint32_t
@@ -177,10 +197,21 @@ Surface::Surface(std::uint16_t width, std::uint16_t height,
       shared_memory_(std::move(memory)), shared_pixels_(shared_pixels)
 {}
 
+Surface::Surface(std::uint16_t width, std::uint16_t height,
+                 std::uint8_t depth, std::uint16_t tile_columns,
+                 std::vector<std::uint32_t> tile_indices,
+                 std::vector<std::uint32_t> slot_tiles,
+                 std::vector<std::uint32_t> pixels) noexcept
+    : width_(width), height_(height), depth_(depth),
+      pixels_(std::move(pixels)), tile_indices_(std::move(tile_indices)),
+      slot_tiles_(std::move(slot_tiles)), tile_columns_(tile_columns),
+      sparse_(true)
+{}
+
 std::optional<Surface>
 Surface::create(std::uint16_t width, std::uint16_t height, std::uint8_t depth)
 {
-    if (depth != 1 && depth != 4 && depth != 8 && depth != 24 && depth != 32)
+    if (!valid_depth(depth))
         return std::nullopt;
     const auto count = pixel_count(width, height);
     if (!count)
@@ -188,6 +219,68 @@ Surface::create(std::uint16_t width, std::uint16_t height, std::uint8_t depth)
     try {
         return Surface(width, height, depth,
                        std::vector<std::uint32_t>(*count, 0));
+    }
+    catch (const std::bad_alloc &) {
+        return std::nullopt;
+    }
+}
+
+std::optional<Surface>
+Surface::create_window_backing(std::uint16_t width, std::uint16_t height,
+                               std::uint8_t depth,
+                               std::uint16_t viewport_width,
+                               std::uint16_t viewport_height)
+{
+    if (!valid_depth(depth) || width == 0 || height == 0 ||
+        viewport_width == 0 || viewport_height == 0)
+        return std::nullopt;
+    const auto count = checked_multiply(
+        static_cast<std::size_t>(width), static_cast<std::size_t>(height));
+    const auto bytes = count
+        ? checked_multiply(*count, sizeof(std::uint32_t))
+        : std::optional<std::size_t>{};
+    if (!bytes)
+        return std::nullopt;
+    if (*bytes <= maximum_surface_bytes)
+        return create(width, height, depth);
+
+    const std::size_t tile_columns = tile_extent(width);
+    const std::size_t tile_rows = tile_extent(height);
+    const auto tile_count = checked_multiply(tile_columns, tile_rows);
+    const auto index_bytes = tile_count
+        ? checked_multiply(*tile_count, sizeof(std::uint32_t))
+        : std::optional<std::size_t>{};
+    if (!tile_count || !index_bytes ||
+        *index_bytes >= maximum_surface_bytes) {
+        return std::nullopt;
+    }
+    // A viewport can straddle tile boundaries on both axes.  One additional
+    // tile per axis is therefore sufficient to retain every currently
+    // visible pixel without sizing storage from the virtual window geometry.
+    const std::size_t visible_tile_columns = std::min(
+        tile_columns, tile_extent(viewport_width) + 1U);
+    const std::size_t visible_tile_rows = std::min(
+        tile_rows, tile_extent(viewport_height) + 1U);
+    const auto visible_tile_count = checked_multiply(
+        visible_tile_columns, visible_tile_rows);
+    const std::size_t bytes_per_slot =
+        sparse_tile_pixels * sizeof(std::uint32_t) + sizeof(std::uint32_t);
+    if (!visible_tile_count)
+        return std::nullopt;
+    const std::size_t slot_count = std::min({
+        *tile_count, *visible_tile_count,
+        (maximum_surface_bytes - *index_bytes) / bytes_per_slot});
+    const auto stored_pixels = checked_multiply(slot_count,
+                                                sparse_tile_pixels);
+    if (slot_count == 0 || !stored_pixels) {
+        return std::nullopt;
+    }
+    try {
+        return Surface(
+            width, height, depth, static_cast<std::uint16_t>(tile_columns),
+            std::vector<std::uint32_t>(*tile_count, unused_sparse_tile),
+            std::vector<std::uint32_t>(slot_count, unused_sparse_tile),
+            std::vector<std::uint32_t>(*stored_pixels, 0));
     }
     catch (const std::bad_alloc &) {
         return std::nullopt;
@@ -216,6 +309,24 @@ Surface::create_shared(std::uint16_t width, std::uint16_t height,
                    reinterpret_cast<std::uint32_t *>(address));
 }
 
+std::size_t
+Surface::storage_bytes() const noexcept
+{
+    if (!sparse_) {
+        return static_cast<std::size_t>(width_) * height_ *
+            sizeof(std::uint32_t);
+    }
+    return pixels_.size() * sizeof(std::uint32_t) +
+        tile_indices_.size() * sizeof(std::uint32_t) +
+        slot_tiles_.size() * sizeof(std::uint32_t);
+}
+
+bool
+Surface::has_contiguous_storage() const noexcept
+{
+    return !sparse_;
+}
+
 std::uint32_t
 Surface::depth_mask() const noexcept
 {
@@ -225,14 +336,63 @@ Surface::depth_mask() const noexcept
 }
 
 void
-Surface::store(std::size_t index, std::uint32_t source,
+Surface::reset_sparse(std::uint32_t value) noexcept
+{
+    assert(sparse_);
+    default_pixel_ = value & depth_mask();
+    std::fill(tile_indices_.begin(), tile_indices_.end(),
+              unused_sparse_tile);
+    std::fill(slot_tiles_.begin(), slot_tiles_.end(), unused_sparse_tile);
+    allocated_tiles_ = 0;
+    next_tile_slot_ = 0;
+}
+
+std::uint32_t
+Surface::allocate_sparse_tile(std::uint16_t x, std::uint16_t y) noexcept
+{
+    assert(sparse_);
+    const std::uint32_t tile =
+        (static_cast<std::uint32_t>(y) / sparse_tile_size) * tile_columns_ +
+        static_cast<std::uint32_t>(x) / sparse_tile_size;
+    std::uint32_t &slot = tile_indices_[tile];
+    if (slot != unused_sparse_tile)
+        return slot;
+
+    if (allocated_tiles_ < slot_tiles_.size()) {
+        slot = allocated_tiles_++;
+    }
+    else {
+        slot = next_tile_slot_;
+        next_tile_slot_ = (next_tile_slot_ + 1U) % slot_tiles_.size();
+        tile_indices_[slot_tiles_[slot]] = unused_sparse_tile;
+    }
+    slot_tiles_[slot] = tile;
+    std::fill_n(
+        pixels_.begin() + static_cast<std::ptrdiff_t>(slot) *
+            sparse_tile_pixels,
+        sparse_tile_pixels, default_pixel_);
+    return slot;
+}
+
+void
+Surface::store(std::uint16_t x, std::uint16_t y, std::uint32_t source,
                std::uint8_t function, std::uint32_t plane_mask) noexcept
 {
     const std::uint32_t mask = plane_mask & depth_mask();
-    auto *pixels = data();
-    const std::uint32_t destination = pixels[index];
+    const std::uint32_t destination = pixel(x, y);
     const std::uint32_t result = raster(function, source, destination);
-    pixels[index] = ((result & mask) | (destination & ~mask)) & depth_mask();
+    const std::uint32_t value =
+        ((result & mask) | (destination & ~mask)) & depth_mask();
+    if (!sparse_) {
+        data()[static_cast<std::size_t>(y) * width_ + x] = value;
+        return;
+    }
+    const std::uint32_t slot = allocate_sparse_tile(x, y);
+    const std::size_t offset =
+        static_cast<std::size_t>(slot) * sparse_tile_pixels +
+        static_cast<std::size_t>(y % sparse_tile_size) * sparse_tile_size +
+        x % sparse_tile_size;
+    pixels_[offset] = value;
 }
 
 bool
@@ -240,27 +400,13 @@ Surface::resize(std::uint16_t width, std::uint16_t height)
 {
     if (shared_pixels_ != nullptr)
         return width == width_ && height == height_;
-    const auto count = pixel_count(width, height);
-    if (!count)
+    auto replacement = create(width, height, depth_);
+    if (!replacement)
         return false;
-    std::vector<std::uint32_t> replacement;
-    try {
-        replacement.assign(*count, 0);
-    }
-    catch (const std::bad_alloc &) {
-        return false;
-    }
-    const std::uint16_t copied_width = std::min(width_, width);
-    const std::uint16_t copied_height = std::min(height_, height);
-    for (std::uint16_t y = 0; y < copied_height; ++y) {
-        std::copy_n(data() + static_cast<std::ptrdiff_t>(y) * width_,
-                    copied_width,
-                    replacement.begin() +
-                        static_cast<std::ptrdiff_t>(y) * width);
-    }
-    width_ = width;
-    height_ = height;
-    pixels_ = std::move(replacement);
+    replacement->copy_from(
+        *this, 0, 0, 0, 0, std::min(width_, width),
+        std::min(height_, height), 3, 0xffffffffU);
+    *this = std::move(*replacement);
     return true;
 }
 
@@ -272,6 +418,13 @@ Surface::fill(const Rectangle &rectangle, std::uint32_t source,
     const std::int64_t target_top = rectangle.y;
     const std::int64_t target_right = target_left + rectangle.width;
     const std::int64_t target_bottom = target_top + rectangle.height;
+    if (sparse_ && clip.unrestricted() && target_left <= 0 &&
+        target_top <= 0 && target_right >= width_ &&
+        target_bottom >= height_ && function == 3 &&
+        (plane_mask & depth_mask()) == depth_mask()) {
+        reset_sparse(source);
+        return;
+    }
     const auto fill_intersection = [&](std::int64_t clip_left,
                                        std::int64_t clip_top,
                                        std::int64_t clip_right,
@@ -286,9 +439,9 @@ Surface::fill(const Rectangle &rectangle, std::uint32_t source,
             {height_, target_bottom, clip_bottom});
         for (std::int64_t y = top; y < bottom; ++y) {
             for (std::int64_t x = left; x < right; ++x) {
-                store(static_cast<std::size_t>(y) * width_ +
-                          static_cast<std::size_t>(x),
-                      source, function, plane_mask);
+                store(static_cast<std::uint16_t>(x),
+                      static_cast<std::uint16_t>(y), source,
+                      function, plane_mask);
             }
         }
     };
@@ -316,8 +469,7 @@ Surface::draw_pixel(std::int32_t x, std::int32_t y, std::uint32_t source,
         !clip.contains(x, y)) {
         return;
     }
-    store(static_cast<std::size_t>(y) * width_ +
-              static_cast<std::size_t>(x),
+    store(static_cast<std::uint16_t>(x), static_cast<std::uint16_t>(y),
           source, function, plane_mask);
 }
 
@@ -398,7 +550,7 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
     }
 
     const std::uint32_t destination_mask = depth_mask();
-    if (function == 3 &&
+    if (!sparse_ && !source.sparse_ && function == 3 &&
         (plane_mask & destination_mask) == destination_mask &&
         clip.unrestricted()) {
         for (std::int64_t row = first_row; row != after_last_row;
@@ -439,8 +591,11 @@ Surface::copy_from(const Surface &source, std::int32_t source_x,
                 continue;
             }
             const std::uint32_t source_pixel =
-                source.data()[sy * source.width_ + sx];
-            store(dy * width_ + dx, source_pixel, function, plane_mask);
+                source.pixel(static_cast<std::uint16_t>(sx),
+                             static_cast<std::uint16_t>(sy));
+            store(static_cast<std::uint16_t>(dx),
+                  static_cast<std::uint16_t>(dy), source_pixel,
+                  function, plane_mask);
         }
     }
 }
@@ -500,8 +655,10 @@ Surface::copy_plane_from(const Surface &source, std::int32_t source_x,
                 continue;
             }
             const std::uint32_t source_pixel =
-                source.data()[sy * source.width_ + sx];
-            store(dy * width_ + dx,
+                source.pixel(static_cast<std::uint16_t>(sx),
+                             static_cast<std::uint16_t>(sy));
+            store(static_cast<std::uint16_t>(dx),
+                  static_cast<std::uint16_t>(dy),
                   (source_pixel & bit_plane) != 0 ? foreground : background,
                   function, plane_mask);
         }
@@ -513,6 +670,20 @@ Surface::pixel(std::uint16_t x, std::uint16_t y) const noexcept
 {
     if (x >= width_ || y >= height_)
         return 0;
+    if (sparse_) {
+        const std::uint32_t tile =
+            (static_cast<std::uint32_t>(y) / sparse_tile_size) *
+                tile_columns_ +
+            static_cast<std::uint32_t>(x) / sparse_tile_size;
+        const std::uint32_t slot = tile_indices_[tile];
+        if (slot == unused_sparse_tile)
+            return default_pixel_;
+        const std::size_t offset =
+            static_cast<std::size_t>(slot) * sparse_tile_pixels +
+            static_cast<std::size_t>(y % sparse_tile_size) *
+                sparse_tile_size + x % sparse_tile_size;
+        return pixels_[offset];
+    }
     return data()[static_cast<std::size_t>(y) * width_ + x];
 }
 
