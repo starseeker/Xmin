@@ -64,6 +64,7 @@ xcb_connection_t *XGetXCBConnection(Display *) XMIN_WEAK;
 
 enum {
     XMIN_CONFIG_COUNT = 8,
+    XMIN_CLASSIC_CONFIG_INDEX = XMIN_CONFIG_COUNT - 1,
     XMIN_MAX_PBUFFER = 4096,
     XMIN_TRUE_COLOR = 4,
     XMIN_VISUAL_SCREEN_MASK = 0x2,
@@ -1045,6 +1046,7 @@ xmin_install_dispatch_hooks(void)
 XVisualInfo *
 glXChooseVisual(Display *display, int screen, int *attributes)
 {
+    GLXFBConfig config;
     int requested_double = 0;
     int requested_depth = 0;
     int requested_stencil = 0;
@@ -1077,15 +1079,12 @@ glXChooseVisual(Display *display, int screen, int *attributes)
     if (!rgba)
         return NULL;
     std::call_once(xmin_config_once, xmin_init_configs);
-    for (i = 0; i < XMIN_CONFIG_COUNT; ++i) {
-        GLXFBConfig config = &xmin_configs[i];
-
-        if (config->double_buffer == requested_double &&
-            config->depth_bits >= requested_depth &&
-            config->stencil_bits >= requested_stencil)
-            return xmin_visual_info(display, screen);
-    }
-    return NULL;
+    config = &xmin_configs[XMIN_CLASSIC_CONFIG_INDEX];
+    if (config->double_buffer != requested_double ||
+        config->depth_bits < requested_depth ||
+        config->stencil_bits < requested_stencil)
+        return NULL;
+    return xmin_visual_info(display, screen);
 }
 
 GLXContext
@@ -1093,22 +1092,17 @@ glXCreateContext(Display *display, XVisualInfo *visual, GLXContext share,
                  Bool direct)
 {
     GLXContext context;
-    int i;
 
     if (!direct)
         return NULL;
     std::call_once(xmin_config_once, xmin_init_configs);
-    for (i = 0; i < XMIN_CONFIG_COUNT; ++i) {
-        if (xmin_configs[i].double_buffer) {
-            context = xmin_create_context(&xmin_configs[i], share);
-            if (context != NULL) {
-                context->display = display;
-                context->visual = visual != NULL ? visual->visual : NULL;
-            }
-            return context;
-        }
+    context = xmin_create_context(&xmin_configs[XMIN_CLASSIC_CONFIG_INDEX],
+                                  share);
+    if (context != NULL) {
+        context->display = display;
+        context->visual = visual != NULL ? visual->visual : NULL;
     }
-    return NULL;
+    return context;
 }
 
 void
@@ -1290,7 +1284,8 @@ glXGetConfig(Display *display, XVisualInfo *visual, int attribute, int *value)
     (void) display;
     (void) visual;
     std::call_once(xmin_config_once, xmin_init_configs);
-    return xmin_config_attribute(&xmin_configs[4], attribute, value);
+    return xmin_config_attribute(&xmin_configs[XMIN_CLASSIC_CONFIG_INDEX],
+                                 attribute, value);
 }
 
 GLXContext

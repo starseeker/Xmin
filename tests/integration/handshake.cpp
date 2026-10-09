@@ -4027,15 +4027,18 @@ check_xinput(int descriptor, bool little)
 
     constexpr std::uint32_t selection =
         (1U << 6) | (1U << 17); // Motion | RawMotion
-    request.assign(20, 0);
+    request.assign(28, 0);
     request[0] = opcode;
     request[1] = 46; // SelectEvents
-    put16(request, 2, 5, little);
+    put16(request, 2, 7, little);
     put32(request, 4, root_window, little);
-    put16(request, 8, 1, little);
+    put16(request, 8, 2, little);
     put16(request, 12, 1, little); // AllMasterDevices
     put16(request, 14, 1, little);
-    put32(request, 16, selection, little);
+    put32(request, 16, 1U << 2, little); // repeated selectors: last wins
+    put16(request, 20, 1, little);
+    put16(request, 22, 1, little);
+    put32(request, 24, selection, little);
     if (!write_all(descriptor, request))
         return false;
 
@@ -4090,17 +4093,14 @@ check_xinput(int descriptor, bool little)
 
     request.assign(20, 0);
     request[0] = opcode;
-    request[1] = 46; // touch is outside the fixed hardware profile
+    request[1] = 46; // touch subscriptions are valid without touch hardware
     put16(request, 2, 5, little);
     put32(request, 4, root_window, little);
     put16(request, 8, 1, little);
     put16(request, 12, 1, little);
     put16(request, 14, 1, little);
     put32(request, 16, 1U << 18, little);
-    if (!write_all(descriptor, request) || !read_reply(descriptor, reply) ||
-        reply[0] != 0 || reply[1] != 2 ||
-        get16(reply, 2, little) != 8 ||
-        get16(reply, 8, little) != 46 || reply[10] != opcode) {
+    if (!write_all(descriptor, request)) {
         return false;
     }
 

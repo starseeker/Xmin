@@ -11,6 +11,13 @@
 int
 main(void)
 {
+    static int visual_attributes[] = {
+        GLX_RGBA,
+        GLX_DOUBLEBUFFER,
+        GLX_DEPTH_SIZE, 24,
+        GLX_STENCIL_SIZE, 8,
+        0
+    };
     static const int config_attributes[] = {
         GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
         GLX_RENDER_TYPE, GLX_RGBA_BIT,
@@ -35,7 +42,9 @@ main(void)
     GLXFBConfig *configs = NULL;
     GLXFBConfig *single_configs = NULL;
     XVisualInfo *visual = NULL;
+    XVisualInfo *classic_visual = NULL;
     GLXContext context = NULL;
+    GLXContext classic_context = NULL;
     GLXContext single_context = NULL;
     Window window = 0;
     GLXWindow glx_window = 0;
@@ -51,6 +60,7 @@ main(void)
     int screen;
     int config_count = 0;
     int single_config_count = 0;
+    int attribute = 0;
     int result = 1;
 
     if (display == NULL) {
@@ -71,6 +81,29 @@ main(void)
         goto cleanup;
     XMapWindow(display, window);
     XSync(display, False);
+
+    classic_visual = glXChooseVisual(display, screen, visual_attributes);
+    if (classic_visual == NULL ||
+        glXGetConfig(display, classic_visual, GLX_DOUBLEBUFFER,
+                     &attribute) != 0 || attribute != True ||
+        glXGetConfig(display, classic_visual, GLX_DEPTH_SIZE,
+                     &attribute) != 0 || attribute < 24 ||
+        glXGetConfig(display, classic_visual, GLX_STENCIL_SIZE,
+                     &attribute) != 0 || attribute < 8)
+        goto cleanup;
+    classic_context = glXCreateContext(display, classic_visual, NULL, True);
+    if (classic_context == NULL ||
+        !glXMakeCurrent(display, window, classic_context))
+        goto cleanup;
+    glGetIntegerv(GL_DEPTH_BITS, &attribute);
+    if (attribute < 24)
+        goto cleanup;
+    glGetIntegerv(GL_STENCIL_BITS, &attribute);
+    if (attribute < 8)
+        goto cleanup;
+    glXMakeCurrent(display, 0, NULL);
+    glXDestroyContext(display, classic_context);
+    classic_context = NULL;
 
     glx_window = glXCreateWindow(display, configs[0], window, NULL);
     context = glXCreateNewContext(display, configs[0], GLX_RGBA_TYPE,
@@ -211,8 +244,10 @@ main(void)
 cleanup:
     if (image != NULL)
         XDestroyImage(image);
-    if (context != NULL || single_context != NULL)
+    if (context != NULL || single_context != NULL || classic_context != NULL)
         glXMakeCurrent(display, 0, NULL);
+    if (classic_context != NULL)
+        glXDestroyContext(display, classic_context);
     if (single_context != NULL)
         glXDestroyContext(display, single_context);
     if (context != NULL)
@@ -235,6 +270,8 @@ cleanup:
         XFree(single_configs);
     if (visual != NULL)
         XFree(visual);
+    if (classic_visual != NULL)
+        XFree(classic_visual);
     XCloseDisplay(display);
     return result;
 }

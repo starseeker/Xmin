@@ -13,6 +13,11 @@ struct one_mask {
     uint32_t bits;
 };
 
+struct two_word_mask {
+    xcb_input_event_mask_t header;
+    uint32_t bits[2];
+};
+
 static int
 checked(xcb_connection_t *connection, xcb_void_cookie_t cookie,
         const char *operation)
@@ -166,11 +171,14 @@ main(void)
         goto cleanup;
 
     stage = "event selection";
-    struct one_mask mask = {
-        .header = { .deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 1 },
-        .bits = XCB_INPUT_XI_EVENT_MASK_MOTION |
+    struct two_word_mask mask = {
+        .header = { .deviceid = XCB_INPUT_DEVICE_ALL_MASTER, .mask_len = 2 },
+        .bits = { XCB_INPUT_XI_EVENT_MASK_MOTION |
             XCB_INPUT_XI_EVENT_MASK_RAW_MOTION |
-            XCB_INPUT_XI_EVENT_MASK_PROPERTY
+            XCB_INPUT_XI_EVENT_MASK_PROPERTY |
+            XCB_INPUT_XI_EVENT_MASK_TOUCH_BEGIN |
+            XCB_INPUT_XI_EVENT_MASK_TOUCH_UPDATE |
+            XCB_INPUT_XI_EVENT_MASK_TOUCH_END, 0 }
     };
     if (!checked(connection,
                  xcb_input_xi_select_events_checked(

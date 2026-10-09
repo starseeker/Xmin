@@ -25,10 +25,8 @@ enum : std::uint8_t {
     bad_length = 16,
 };
 
-constexpr std::uint32_t supported_event_mask =
-    0x0003ffffU | (1U << 25) | (1U << 26);
-constexpr std::uint32_t unsupported_hardware_event_mask =
-    ((1U << 25) - 1U) & ~((1U << 18) - 1U);
+constexpr std::array<std::uint32_t, 2> selectable_event_masks{
+    std::numeric_limits<std::uint32_t>::max(), 1U};
 
 Result<void>
 malformed_xinput(std::string_view message)
@@ -422,14 +420,7 @@ Connection::handle_xinput(const RequestContext &context)
                     return malformed_xinput("truncated XI event mask");
                 if (!valid_device_selector(*device))
                     return device_error(*device);
-                if (std::any_of(
-                        selection.masks.begin(), selection.masks.end(),
-                        [device](const Xi2EventMask &existing) {
-                            return existing.device == *device;
-                        })) {
-                    return error(bad_value, *device);
-                }
-                if (*words > 1)
+                if (*words > selectable_event_masks.size())
                     return error(bad_value, *words);
                 Xi2EventMask mask;
                 mask.device = *device;
@@ -437,13 +428,19 @@ Connection::handle_xinput(const RequestContext &context)
                     const auto value = reader.u32();
                     if (!value)
                         return malformed_xinput("truncated XI event bits");
-                    if ((*value & ~supported_event_mask) != 0 ||
-                        (*value & unsupported_hardware_event_mask) != 0) {
+                    if ((*value & ~selectable_event_masks[word]) != 0)
                         return error(bad_value, *value);
-                    }
                     mask.words.push_back(*value);
                 }
-                selection.masks.push_back(std::move(mask));
+                const auto existing = std::find_if(
+                    selection.masks.begin(), selection.masks.end(),
+                    [device](const Xi2EventMask &candidate) {
+                        return candidate.device == *device;
+                    });
+                if (existing == selection.masks.end())
+                    selection.masks.push_back(std::move(mask));
+                else
+                    *existing = std::move(mask);
             }
         }
         catch (const std::bad_alloc &) {
@@ -585,7 +582,7 @@ Connection::handle_xinput(const RequestContext &context)
         const auto mask = *mask_words == 0 ? std::optional<std::uint32_t>{0}
                                            : reader.u32();
         if (!mask || reader.remaining() != 0 ||
-            (*mask & ~supported_event_mask) != 0)
+            (*mask & ~selectable_event_masks.front()) != 0)
             return error(bad_length);
         const auto *window = server_.window(*window_id);
         if (window == nullptr)
